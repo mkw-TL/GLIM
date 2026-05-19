@@ -1,0 +1,17 @@
+Package: IMMC
+Title: Valid inference using the Inferential Models Framework
+Version: 0.0.0.1001
+Authors@R: 
+    person("Joseph", "Harrison", email = "jrharr25@ncsu.edu", role = c("aut", "cre"))
+Description: What the package does (one paragraph).
+License: MIT
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+LinkingTo: 
+    Rcpp, RcppArmadillo
+Imports: 
+    Rcpp, RcppArmadillo, pbapply, fastglm
+SystemRequirements: C++14, LAPACK, BLAS
+Config/roxygen2/version: 8.0.0
+RoxygenNote: 8.0.0
+
