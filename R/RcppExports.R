@@ -5,3 +5,19 @@ glm_logis_pl_cpp <- function(X, y, beta_vals, mle_val, m) {
     .Call(`_IMMC_glm_logis_pl_cpp`, X, y, beta_vals, mle_val, m)
 }
 
+glm_gamma_pl_cpp <- function(X, y, beta_vals, mle_val, shape, m) {
+    .Call(`_IMMC_glm_gamma_pl_cpp`, X, y, beta_vals, mle_val, shape, m)
+}
+
+glm_gaussian_pl_cpp <- function(X, y, beta_vals, mle_val, sigma, m) {
+    .Call(`_IMMC_glm_gaussian_pl_cpp`, X, y, beta_vals, mle_val, sigma, m)
+}
+
+glm_poisson_pl_cpp <- function(X, y, beta_vals, mle_val, m) {
+    .Call(`_IMMC_glm_poisson_pl_cpp`, X, y, beta_vals, mle_val, m)
+}
+
+glm_invgauss_pl_cpp <- function(X, y, beta_vals, mle_val, lambda, m) {
+    .Call(`_IMMC_glm_invgauss_pl_cpp`, X, y, beta_vals, mle_val, lambda, m)
+}
+

@@ -7,40 +7,81 @@ NULL
 # After making changes, restart R, get in the package directory
 #devtools::document()
 #devtools::install()
+#So incredibly happy there is a formatter for R now. usethis::use_air()
 
 #' @export
 glim_raw <- function(X, y, family = "gaussian", ll_mle_original_data, betas, m, parallel) {
-  if(is.data.frame(X)) {
+  if (is.data.frame(X)) {
     X <- model.matrix(X)
+  }
+  if (family == "binomial" || family == "logistic") {
+    cpp_fit_glm <- glm_logis_pl_cpp
+  } else if (family == "gamma") {
+    cpp_fit_glm <- glm_gamma_pl_cpp
+  } else if (family == "poisson") {
+    cpp_fit_glm <- glm_pois_pl_cpp
+  } else if (family == "inverse-gaussian") {
+    cpp_fit_glm <- glm_neg_bin_pl_cpp
+  } else if (family == "normal" || "gaussian") {
+    cpp_fit_glm <- glm_gauss_cpp
+  } else {
+    stop("Family not supported")
   }
   if (parallel == TRUE) {
     # if we don't have multiple beta that we want to evaluate it over, then we don't
     # want to allocate clusters
     if (is.vector(betas)) {
-      result_vector <- as.matrix(glm_logis_pl_cpp(X = X, y = y, beta_vals = betas, mle_val = ll_mle_original_data, m = m))
+      result_vector <- as.matrix(cpp_fit_glm(
+        X = X,
+        y = y,
+        beta_vals = betas,
+        mle_val = ll_mle_original_data,
+        m = m
+      ))
     } else {
+      num_cores <- parallel::detectCores() - 1
+      cl <- parallel::makeCluster(num_cores)
 
-    num_cores <- parallel::detectCores() - 1
-    cl <- parallel::makeCluster(num_cores)
+      parallel::clusterCall(cl, function() library(IMMC))
+      # Export the DATA to the workers
+      parallel::clusterExport(
+        cl,
+        varlist = c("X", "y", "ll_mle_original_data", "m"),
+        envir = environment()
+      )
 
-    parallel::clusterCall(cl, function() library(IMMC))
-    # Export the DATA to the workers
-    parallel::clusterExport(cl, varlist = c("X", "y", "ll_mle_original_data", "m"), envir = environment())
-
-    result_vector <- pbapply::pbapply(betas, 1, function(b) {
-      glm_logis_pl_cpp(X = X, y = y, beta_vals = as.numeric(b), mle_val = ll_mle_original_data, m = m)
-    }, cl = cl)
+      result_vector <- pbapply::pbapply(
+        betas,
+        1,
+        function(b) {
+          cpp_fit_glm(
+            X = X,
+            y = y,
+            beta_vals = as.numeric(b),
+            mle_val = ll_mle_original_data,
+            m = m
+          )
+        },
+        cl = cl
+      )
     }
     parallel::stopCluster(cl)
   } else {
     if (is.vector(betas)) {
-      result_vector <- as.matrix(glm_logis_pl_cpp(X = X, y = y, beta_vals = betas, mle_val = ll_mle_original_data, m = m))
+      result_vector <- as.matrix(cpp_fit_glm(
+        X = X,
+        y = y,
+        beta_vals = betas,
+        mle_val = ll_mle_original_data,
+        m = m
+      ))
     } else {
       result_vector <- pbapply::pbapply(betas, 1, function(b) {
-        glm_logis_pl_cpp(X = X, y = y, beta_vals = as.numeric(b), mle_val = ll_mle_original_data, m = m) })
-      }
+        cpp_fit_glm(X = X, y = y, beta_vals = as.numeric(b), mle_val = ll_mle_original_data, m = m)
+      })
     }
-return(result_vector)
+  }
+  return(result_vector)
 }
 
 #' Generates all random numbers at once, so doesn't need to use the slow apply
@@ -53,15 +94,22 @@ generate_unit_matrix <- function(n, d) {
 }
 
 #' @export
-imvar <- function(xi, alpha, pl, mle, J, parallel, tol=1e-2, a=1, b=1, max.it=25) {
+imvar <- function(xi, alpha, pl, mle, J, parallel, tol = 1e-2, a = 1, b = 1, max.it = 25) {
+  # tol <- 1e-2
+  # a <- 5
+  # b <- 1
+  # max.it <- 20
+  # xi <- 0
+  # mle <- mle_coefs
+  # alpha <- .4
+  # J <- eJ
   D <- length(mle)
-  if(D == 1) {
-    posts <- sqrt(qchisq(1 - alpha, 1) / J)
-  } else {
-    posts <- as.vector(t(J$vectors) %*% sqrt(qchisq(1 - alpha, D) / abs(J$values))) # Our current best Q, and Cholesky decomp (R^1/2) (although without the scaling xi)
-    # These are the directions to go
-  }
-  maxpl <- function(v) max( c(pl(as.vector(mle) + v), pl(as.vector(mle) - v)) )
+  # removed a case where D = 1
+  posts <- as.vector(J$vectors %*% sqrt(qchisq(1 - alpha, D) / abs(J$values))) # Our current best Q, and Cholesky decomp (R^1/2) (although without the scaling xi)
+  # These are the directions to go
+  # Don't I need Qsigma^-1/2 Qt? I am very confused at why we have t(J$vectors). Shouldn't we have just J$vectors as our Q matrix?
+  # no longer working....
+  maxpl <- function(v) max(c(pl(as.vector(mle) + v), pl(as.vector(mle) - v)))
   w <- function(s) a / (1 + s)**b # our weighting function, dampens over time
   it <- 1
   repeat {
@@ -69,27 +117,57 @@ imvar <- function(xi, alpha, pl, mle, J, parallel, tol=1e-2, a=1, b=1, max.it=25
     # exp parameterization lets us avoid negative xi (so when we do sqrt(xi) we don't get imaginary)
     # removed an if else that dealt with if D == 1
     g.xi <- maxpl(posts.xi) - alpha
-    if(all(abs(g.xi) <= tol) || (it >= max.it)) break else {
+    if (all(abs(g.xi) <= tol) || (it >= max.it)) {
+      break
+    } else {
       xi <- xi + w(it) * g.xi
       it <- it + 1
     }
-
   }
   # Return the exponential version
   return(exp(xi))
 }
 
-
 #' @export
-glim_inner_prob_approx_samples <- function(X, y, family="gaussian", ll_mle_original_data, m, parallel) {
+glim_inner_prob_approx_samples <- function(
+  X,
+  y,
+  family = "gaussian",
+  ll_mle_original_data,
+  m,
+  parallel
+) {
+  # X <- X_binary
+  # y <- y_binary
+  # m <- 100
   pl <- function(z) glim_raw(X, y, family, ll_mle_original_data, z, m, parallel)
   B <- 100
-  AA <- seq(0.001, 0.999, length=B)
-  family <- "binomial"
-  res <- glm(y~X-1, family = family)
-  p_i <- res$fitted.values
-  J <- crossprod(X, diag(p_i * (1-p_i)) %*% X)
-  J <- (J + t(J))/2 # symmetrize to try to kill some rounding asymmetries -- Gemini's idea
+  AA <- seq(0.001, 0.999, length = B)
+  # Need to find the fisher information for each parameterization TODO
+  if (family == "gaussian" || family == "normal") {
+    res <- lm(y ~ X - 1)
+    J <- crossprod(X, X)
+  } else if (family == "binomial") {
+    res <- glm(y ~ X - 1, family = "binomial")
+    p_i <- res$fitted.values
+    J <- crossprod(X, diag(p_i * (1 - p_i)) %*% X)
+    # canonical link for gamma family is incredibly numerically unstable. If Xb is ever close to zero during the process, we get infinities. Additionally, if xb is ever negative, then we are saying that the mean of a gamma is negative.
+    # Note that the weights are one here.
+  } else if (family == "gamma") {
+    res <- glm(y ~ X - 1, family = Gamma(link = "log"))
+    J <- crossprod(X, X)
+  } else if (family == "inverse.gaussian") {
+    res <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
+    # default link for the inverse gaussian in glm is not the canonical parameter (-1/2mu^2), but rather 1/mu. Additionally, note that the link we are using here is not a canonical link. The constant gets absorbed in a lot of places, and what ends up changing is the scaling factor outside our gradient update.
+    eta <- X_gamma %*% res$coefficients
+    mu_i <- as.vector(sqrt(1 / eta))
+    J <- crossprod(X, diag(mu_i^3) %*% X) # check on this
+  } else if (family == "poisson") {
+    res <- glm(y ~ X - 1, family = poisson(link = "log"))
+    lambda_i <- res$fitted.values
+    J <- crossprod(X, diag(lambda_i) %*% X)
+  }
+  J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries -- Gemini's idea
   eJ <- eigen(J)
   # James' solution to needing to scale along a direction didn't work in my case
   # can't have zeros in the eigvalues because will not be invertible
@@ -97,17 +175,32 @@ glim_inner_prob_approx_samples <- function(X, y, family="gaussian", ll_mle_origi
   mle_coefs <- res$coefficients
 
   i <- 0
-  xi <- rep(0, B)
+  xi <- rep(1, B)
+  prev_xi <- 1
   # finding xi
   parallel <- FALSE
   for (a in AA) {
     i <- i + 1
-    xi[i] <- imvar(1, a, pl, mle = mle_coefs, J = eJ, parallel, tol = 5e-2, a=5, b=1, max.it=20)
+    m <- 100
+    parallel <- FALSE
+    # imvar(log(1), .05, pl, mle_coefs, eJ, parallel, 1e-2, 5, 1, 20)
+    xi[i] <- imvar(
+      prev_xi,
+      a,
+      pl,
+      mle = mle_coefs,
+      J = eJ,
+      parallel,
+      tol = 1e-2,
+      a = 5,
+      b = 1,
+      max.it = 20
+    )
+    prev_xi <- xi[i]
   }
   U <- runif(m)
-
   lerped_xi <- -1
-  samples <- matrix(nrow=length(mle_coefs), ncol=m)
+  samples <- matrix(nrow = length(mle_coefs), ncol = m)
   i <- 0
   for (u in U) {
     i <- i + 1
@@ -117,33 +210,58 @@ glim_inner_prob_approx_samples <- function(X, y, family="gaussian", ll_mle_origi
       lerped_xi <- xi[B]
     } else {
       r <- sum(AA < u)
-      w <- (u - AA[r]) / (AA[r+1] - AA[r])
-      lerped_xi <- (1 - w) * xi[r+1] + w * xi[r]
+      w <- (u - AA[r]) / (AA[r + 1] - AA[r])
+      lerped_xi <- (1 - w) * xi[r] + w * xi[r + 1]
     }
-    samples[,i] <- mle_coefs + (sqrt(qchisq(1-u, length(mle_coefs))) * sqrt(1/eJ$values) *  lerped_xi * eJ$vectors %*% generate_unit_matrix(1, length(mle_coefs))) # Don't need to do diag(sqrt(1/eJ$values)) since can just do element-wise
+
+    rand_dir <- generate_unit_matrix(1, length(mle_coefs))
+    spatial_dir <- eJ$vectors %*% (sqrt(1 / eJ$values) * rand_dir)
+
+    samples[, i] <- mle_coefs +
+      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * lerped_xi * spatial_dir)
   }
   return(samples)
 }
 
 #' @export
-glim <- function(X,y, family="gaussian", betas, m = 1000, parallel = TRUE, approx = FALSE) {
-  ll_mle_original_data <- as.numeric(logLik(glm(y~X-1, family = family)))
+glim <- function(X, y, family = "gaussian", betas, m = 1000, parallel = TRUE, approx = FALSE) {
+  if (family == "binomial" || family == "logistic") {
+    ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
+  } else if (family == "gamma") {
+    ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = Gamma(link = "log"))))
+  } else if (family == "poisson") {
+    ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = poisson(link = "log"))))
+  } else if (family == "inverse-gaussian") {
+    ll_mle_original_data <- as.numeric(logLik(glm(
+      y ~ X - 1,
+      family = inverse.gaussian(link = "1/mu^2")
+    )))
+  } else if (family == "normal" || "gaussian") {
+    ll_mle_original_data <- as.numeric(logLik(lm(y ~ X - 1)))
+  } else {
+    stop("Family not supported")
+  }
   if (approx == FALSE) {
-    return(glim_raw(X, y, family=family, ll_mle_original_data, betas, m, parallel = parallel))
+    return(glim_raw(X, y, family = family, ll_mle_original_data, betas, m, parallel = parallel))
   }
   if (approx == TRUE) {
-    return(glim_inner_prob_approx_samples(X,y, family=family, ll_mle_original_data, m, parallel = parallel))
+    return(glim_inner_prob_approx_samples(
+      X,
+      y,
+      family = family,
+      ll_mle_original_data,
+      m,
+      parallel = parallel
+    ))
   }
 }
 
 #' @export
-prob2poss_logis <- function(X, y, samples,the_compared_theta) {
+prob2poss_logis <- function(X, y, samples, the_compared_theta) {
   # p <- 1/(1 + exp(-eta))
   eta <- X %*% the_compared_theta
   log_term <- log1p(exp(eta))
   ll_val <- y %*% eta - colSums(log_term)
-
-
 
   eta_samps <- X %*% samples
   # p <- 1/(1 + exp(-eta_samps))
@@ -152,6 +270,3 @@ prob2poss_logis <- function(X, y, samples,the_compared_theta) {
 
   return(sapply(ll_val, function(x) sum(ll_val_samps < x)) / length(ll_val_samps))
 }
-
-
-

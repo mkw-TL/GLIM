@@ -26,9 +26,76 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// glm_gamma_pl_cpp
+double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, double mle_val, double shape, int m);
+RcppExport SEXP _IMMC_glm_gamma_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP mle_valSEXP, SEXP shapeSEXP, SEXP mSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
+    Rcpp::traits::input_parameter< double >::type mle_val(mle_valSEXP);
+    Rcpp::traits::input_parameter< double >::type shape(shapeSEXP);
+    Rcpp::traits::input_parameter< int >::type m(mSEXP);
+    rcpp_result_gen = Rcpp::wrap(glm_gamma_pl_cpp(X, y, beta_vals, mle_val, shape, m));
+    return rcpp_result_gen;
+END_RCPP
+}
+// glm_gaussian_pl_cpp
+double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, double mle_val, double sigma, int m);
+RcppExport SEXP _IMMC_glm_gaussian_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP mle_valSEXP, SEXP sigmaSEXP, SEXP mSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
+    Rcpp::traits::input_parameter< double >::type mle_val(mle_valSEXP);
+    Rcpp::traits::input_parameter< double >::type sigma(sigmaSEXP);
+    Rcpp::traits::input_parameter< int >::type m(mSEXP);
+    rcpp_result_gen = Rcpp::wrap(glm_gaussian_pl_cpp(X, y, beta_vals, mle_val, sigma, m));
+    return rcpp_result_gen;
+END_RCPP
+}
+// glm_poisson_pl_cpp
+double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, double mle_val, int m);
+RcppExport SEXP _IMMC_glm_poisson_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP mle_valSEXP, SEXP mSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
+    Rcpp::traits::input_parameter< double >::type mle_val(mle_valSEXP);
+    Rcpp::traits::input_parameter< int >::type m(mSEXP);
+    rcpp_result_gen = Rcpp::wrap(glm_poisson_pl_cpp(X, y, beta_vals, mle_val, m));
+    return rcpp_result_gen;
+END_RCPP
+}
+// glm_invgauss_pl_cpp
+double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, double mle_val, double lambda, int m);
+RcppExport SEXP _IMMC_glm_invgauss_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP mle_valSEXP, SEXP lambdaSEXP, SEXP mSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
+    Rcpp::traits::input_parameter< double >::type mle_val(mle_valSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< int >::type m(mSEXP);
+    rcpp_result_gen = Rcpp::wrap(glm_invgauss_pl_cpp(X, y, beta_vals, mle_val, lambda, m));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_IMMC_glm_logis_pl_cpp", (DL_FUNC) &_IMMC_glm_logis_pl_cpp, 5},
+    {"_IMMC_glm_gamma_pl_cpp", (DL_FUNC) &_IMMC_glm_gamma_pl_cpp, 6},
+    {"_IMMC_glm_gaussian_pl_cpp", (DL_FUNC) &_IMMC_glm_gaussian_pl_cpp, 6},
+    {"_IMMC_glm_poisson_pl_cpp", (DL_FUNC) &_IMMC_glm_poisson_pl_cpp, 5},
+    {"_IMMC_glm_invgauss_pl_cpp", (DL_FUNC) &_IMMC_glm_invgauss_pl_cpp, 6},
     {NULL, NULL, 0}
 };
 
