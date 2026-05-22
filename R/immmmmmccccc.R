@@ -99,16 +99,16 @@ imvar <- function(xi, alpha, pl, mle, J, parallel, tol = 1e-2, a = 1, b = 1, max
   # a <- 5
   # b <- 1
   # max.it <- 20
-  # xi <- 0
+  # xi <- -.425
   # mle <- mle_coefs
-  # alpha <- .4
+  # alpha <- .45
   # J <- eJ
+  xi <- log(xi)
   D <- length(mle)
   # removed a case where D = 1
   posts <- as.vector(J$vectors %*% sqrt(qchisq(1 - alpha, D) / abs(J$values))) # Our current best Q, and Cholesky decomp (R^1/2) (although without the scaling xi)
   # These are the directions to go
   # Don't I need Qsigma^-1/2 Qt? I am very confused at why we have t(J$vectors). Shouldn't we have just J$vectors as our Q matrix?
-  # no longer working....
   maxpl <- function(v) max(c(pl(as.vector(mle) + v), pl(as.vector(mle) - v)))
   w <- function(s) a / (1 + s)**b # our weighting function, dampens over time
   it <- 1
@@ -139,7 +139,7 @@ glim_inner_prob_approx_samples <- function(
 ) {
   # X <- X_binary
   # y <- y_binary
-  # m <- 100
+  m <- 100
   pl <- function(z) glim_raw(X, y, family, ll_mle_original_data, z, m, parallel)
   B <- 100
   AA <- seq(0.001, 0.999, length = B)

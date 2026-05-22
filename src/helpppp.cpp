@@ -7,6 +7,7 @@ using namespace arma;
 
 // IRLS logistic regression solver. Canonical link
 // This completely replaces fastglm for the inner simulation loop
+// [[Rcpp::export]]
 arma::vec fit_logistic_cpp(const arma::mat& X, const arma::vec& y) {
   arma::vec beta = arma::zeros(X.n_cols);
 
@@ -91,6 +92,7 @@ double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y,
 //
 
 // 1. IRLS Gamma regression solver (Log link), fisher weights so just OLS as W = 1.
+// [[Rcpp::export]]
 arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::vec& y) {
   arma::vec beta = arma::zeros(X.n_cols);
 
@@ -119,6 +121,7 @@ arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::vec& y) {
 }
 
 // Helper function to compute full Gamma log-likelihood matching R's logLik()
+// [[Rcpp::export]]
 double compute_gamma_ll(const arma::vec& y, const arma::vec& eta, double shape, int n) {
   double term1 = n * (shape * std::log(shape) - std::lgamma(shape));
   double term2 = (shape - 1.0) * arma::sum(arma::log(y));
@@ -190,6 +193,7 @@ double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y,
 
 // Identity link Gaussian regression is just Ordinary Least Squares (OLS)
 // No IRLS loop is required.
+// [[Rcpp::export]]
 arma::vec fit_gaussian_cpp(const arma::mat& X, const arma::vec& y) {
   arma::vec beta;
   bool success = arma::solve(beta, X, y, arma::solve_opts::fast);
@@ -200,6 +204,7 @@ arma::vec fit_gaussian_cpp(const arma::mat& X, const arma::vec& y) {
 }
 
 // Helper function to compute Gaussian log-likelihood
+// [[Rcpp::export]]
 double compute_gaussian_ll(const arma::vec& y, const arma::vec& mu, double sigma, int n) {
   double ll = -(n / 2.0) * std::log(2.0 * M_PI * sigma * sigma)
   - arma::sum(arma::pow(y - mu, 2)) / (2.0 * sigma * sigma);
@@ -253,6 +258,7 @@ double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y,
 // =====================================================================
 
 // IRLS Poisson regression solver (Log link)
+// [[Rcpp::export]]
 arma::vec fit_poisson_log_cpp(const arma::mat& X, const arma::vec& y) {
   arma::vec beta = arma::zeros(X.n_cols);
 
@@ -282,6 +288,7 @@ arma::vec fit_poisson_log_cpp(const arma::mat& X, const arma::vec& y) {
   return beta;
 }
 
+// [[Rcpp::export]]
 double glm_poisson_ll(arma::vec& eta, arma::vec& mu, const arma::vec& y) {
 
   double term1 = arma::dot(y, eta);
@@ -347,6 +354,7 @@ double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y,
 
 // R does not have a native rinvgauss. Implemented is the Michael,
 // Schucany, and Haas (1976) algorithm to simulate it via C++.
+// [[Rcpp::export]]
 double rinvgauss_single(double mu, double lambda) {
   double v = R::rnorm(0, 1);
   double y_sq = v * v;
@@ -362,6 +370,7 @@ double rinvgauss_single(double mu, double lambda) {
 }
 
 // IRLS Inverse Gaussian regression solver (1/mu^2 link)
+// [[Rcpp::export]]
 arma::vec fit_invgauss_cpp(const arma::mat& X, const arma::vec& y) {
   arma::vec beta = arma::zeros(X.n_cols);
 
@@ -412,6 +421,7 @@ arma::vec fit_invgauss_cpp(const arma::mat& X, const arma::vec& y) {
 }
 
 // Helper function to compute Inverse Gaussian log-likelihood
+// [[Rcpp::export]]
 double compute_invgauss_ll(const arma::vec& y, const arma::vec& mu, double lambda, int n) {
   double term1 = 0.5 * n * std::log(lambda / (2.0 * M_PI));
   double term2 = -1.5 * arma::sum(arma::log(y));
