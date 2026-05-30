@@ -7,23 +7,37 @@ NULL
 # After making changes, restart R, get in the package directory
 #devtools::document()
 #devtools::install()
-#So incredibly happy there is a formatter for R now. usethis::use_air()
 
 #' @export
-glim_raw <- function(X, y, family = "gaussian", ll_mle_original_data, betas, m, parallel) {
+glim_raw <- function(
+  X,
+  y,
+  family = "gaussian",
+  betas,
+  dispersions,
+  mle_coefs,
+  mle_val,
+  m,
+  parallel
+) {
   if (is.data.frame(X)) {
     X <- model.matrix(X)
   }
   if (family == "binomial" || family == "logistic") {
     cpp_fit_glm <- glm_logis_pl_cpp
+    dispersion <- 1 # Not needed, only doing this to
   } else if (family == "gamma") {
     cpp_fit_glm <- glm_gamma_pl_cpp
+    dispersion <- pearson_estimate_dispersion_gamma(y, exp(X * mle_coefs), length(mle_coefs))
   } else if (family == "poisson") {
-    cpp_fit_glm <- glm_pois_pl_cpp
-  } else if (family == "inverse-gaussian") {
-    cpp_fit_glm <- glm_neg_bin_pl_cpp
-  } else if (family == "normal" || "gaussian") {
-    cpp_fit_glm <- glm_gauss_cpp
+    cpp_fit_glm <- glm_poisson_pl_cpp
+    dispersion <- 1
+  } else if (family == "inverse-gaussian" || family == "inverse.gaussian") {
+    cpp_fit_glm <- glm_invgauss_pl_cpp
+    dispersion <- 1
+  } else if (family == "normal" || family == "gaussian") {
+    cpp_fit_glm <- glm_gaussian_pl_cpp
+    dispersion <- 1
   } else {
     stop("Family not supported")
   }
@@ -35,7 +49,9 @@ glim_raw <- function(X, y, family = "gaussian", ll_mle_original_data, betas, m, 
         X = X,
         y = y,
         beta_vals = betas,
-        mle_val = ll_mle_original_data,
+        dispersion,
+        mle_coefs,
+        mle_val,
         m = m
       ))
     } else {
@@ -58,7 +74,9 @@ glim_raw <- function(X, y, family = "gaussian", ll_mle_original_data, betas, m, 
             X = X,
             y = y,
             beta_vals = as.numeric(b),
-            mle_val = ll_mle_original_data,
+            dispersion,
+            mle_coefs,
+            mle_val,
             m = m
           )
         },
@@ -72,12 +90,22 @@ glim_raw <- function(X, y, family = "gaussian", ll_mle_original_data, betas, m, 
         X = X,
         y = y,
         beta_vals = betas,
+        dispersion,
+        mle_coefs,
         mle_val = ll_mle_original_data,
         m = m
       ))
     } else {
       result_vector <- pbapply::pbapply(betas, 1, function(b) {
-        cpp_fit_glm(X = X, y = y, beta_vals = as.numeric(b), mle_val = ll_mle_original_data, m = m)
+        cpp_fit_glm(
+          X = X,
+          y = y,
+          beta_vals = as.numeric(b),
+          dispersion,
+          mle_coefs,
+          mle_val = ll_mle_original_data,
+          m = m
+        )
       })
     }
   }
@@ -109,14 +137,16 @@ imvar <- function(xi, alpha, pl, mle, J, parallel, tol = 1e-2, a = 1, b = 1, max
   posts <- as.vector(J$vectors %*% sqrt(qchisq(1 - alpha, D) / abs(J$values))) # Our current best Q, and Cholesky decomp (R^1/2) (although without the scaling xi)
   # These are the directions to go
   # Don't I need Qsigma^-1/2 Qt? I am very confused at why we have t(J$vectors). Shouldn't we have just J$vectors as our Q matrix?
-  maxpl <- function(v) max(c(pl(as.vector(mle) + v), pl(as.vector(mle) - v)))
+  maxpl <- function(v, lambda) {
+    max(c(pl(as.vector(mle) + v, lambda), pl(as.vector(mle) - v, lambda)))
+  }
   w <- function(s) a / (1 + s)**b # our weighting function, dampens over time
   it <- 1
   repeat {
     posts.xi <- as.vector(posts * exp(xi / 2)) # Xi scales singular values (scalar for each directions). Again, we are going to evaluate this direction * scaling to see how far off.
     # exp parameterization lets us avoid negative xi (so when we do sqrt(xi) we don't get imaginary)
     # removed an if else that dealt with if D == 1
-    g.xi <- maxpl(posts.xi) - alpha
+    g.xi <- maxpl(posts.xi, phi) - alpha
     if (all(abs(g.xi) <= tol) || (it >= max.it)) {
       break
     } else {
@@ -140,10 +170,12 @@ glim_inner_prob_approx_samples <- function(
   # X <- X_binary
   # y <- y_binary
   m <- 100
-  pl <- function(z) glim_raw(X, y, family, ll_mle_original_data, z, m, parallel)
+  pl <- function(z) {
+    glim_raw(X, y, family, z, dispersions, mle_coefs, mle_val = ll_mle_original_data, m, parallel)
+  }
   B <- 100
   AA <- seq(0.001, 0.999, length = B)
-  # Need to find the fisher information for each parameterization TODO
+  # Need to find the fisher information for each parameterization TODO(?)
   if (family == "gaussian" || family == "normal") {
     res <- lm(y ~ X - 1)
     J <- crossprod(X, X)
@@ -151,15 +183,15 @@ glim_inner_prob_approx_samples <- function(
     res <- glm(y ~ X - 1, family = "binomial")
     p_i <- res$fitted.values
     J <- crossprod(X, diag(p_i * (1 - p_i)) %*% X)
+  } else if (family == "gamma") {
     # canonical link for gamma family is incredibly numerically unstable. If Xb is ever close to zero during the process, we get infinities. Additionally, if xb is ever negative, then we are saying that the mean of a gamma is negative.
     # Note that the weights are one here.
-  } else if (family == "gamma") {
     res <- glm(y ~ X - 1, family = Gamma(link = "log"))
     J <- crossprod(X, X)
   } else if (family == "inverse.gaussian") {
     res <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
     # default link for the inverse gaussian in glm is not the canonical parameter (-1/2mu^2), but rather 1/mu. Additionally, note that the link we are using here is not a canonical link. The constant gets absorbed in a lot of places, and what ends up changing is the scaling factor outside our gradient update.
-    eta <- X_gamma %*% res$coefficients
+    eta <- X %*% res$coefficients
     mu_i <- as.vector(sqrt(1 / eta))
     J <- crossprod(X, diag(mu_i^3) %*% X) # check on this
   } else if (family == "poisson") {
@@ -227,29 +259,56 @@ glim_inner_prob_approx_samples <- function(
 glim <- function(X, y, family = "gaussian", betas, m = 1000, parallel = TRUE, approx = FALSE) {
   if (family == "binomial" || family == "logistic") {
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
+    mle_coefs <- glm(y ~ X - 1, family = "binomial")
   } else if (family == "gamma") {
-    ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = Gamma(link = "log"))))
+    # Don't want to use R's logLik as it uses the pearson estimate of phi.
+    # However, the IRLS used by R to maximize the log lik doesn't rely on phi.
+    mle_coefs <- glm(y ~ X - 1, family = Gamma(link = "log"))$coefficients
+    eta <- X %*% mle_coefs
+    ratio <- y / exp(eta)
+    n <- length(y)
+    ll_mle_original_data <- compute_gamma_ll(
+      y,
+      eta,
+      pearson_estimate_dispersion_gamma(y, exp(eta), length(mle_coefs)),
+      n
+    )
+
+    # ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = Gamma(link = "log"))))
   } else if (family == "poisson") {
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = poisson(link = "log"))))
+    mle_coefs <- glm(y ~ X - 1, family = poisson(link = "log"))$coefficients
   } else if (family == "inverse-gaussian") {
     ll_mle_original_data <- as.numeric(logLik(glm(
       y ~ X - 1,
       family = inverse.gaussian(link = "1/mu^2")
     )))
+    mle_coefs <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))$coefficients
   } else if (family == "normal" || "gaussian") {
     ll_mle_original_data <- as.numeric(logLik(lm(y ~ X - 1)))
+    mle_coefs <- lm(y ~ X - 1)$coefficients
   } else {
     stop("Family not supported")
   }
   if (approx == FALSE) {
-    return(glim_raw(X, y, family = family, ll_mle_original_data, betas, m, parallel = parallel))
+    return(glim_raw(
+      X,
+      y,
+      family = family,
+      betas,
+      mle_coefs,
+      mle_val = ll_mle_original_data,
+      m,
+      parallel = parallel
+    ))
   }
   if (approx == TRUE) {
     return(glim_inner_prob_approx_samples(
       X,
       y,
       family = family,
-      ll_mle_original_data,
+      mle_coefs,
+      mle_val = ll_mle_original_data,
       m,
       parallel = parallel
     ))

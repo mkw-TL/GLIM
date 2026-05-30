@@ -24,17 +24,19 @@ BEGIN_RCPP
 END_RCPP
 }
 // glm_logis_pl_cpp
-double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, double mle_val, int m);
-RcppExport SEXP _IMMC_glm_logis_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP mle_valSEXP, SEXP mSEXP) {
+double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, const double dispersion, const arma::vec& mle_coefs, double mle_val, int m);
+RcppExport SEXP _IMMC_glm_logis_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP dispersionSEXP, SEXP mle_coefsSEXP, SEXP mle_valSEXP, SEXP mSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
+    Rcpp::traits::input_parameter< const double >::type dispersion(dispersionSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);
     Rcpp::traits::input_parameter< double >::type mle_val(mle_valSEXP);
     Rcpp::traits::input_parameter< int >::type m(mSEXP);
-    rcpp_result_gen = Rcpp::wrap(glm_logis_pl_cpp(X, y, beta_vals, mle_val, m));
+    rcpp_result_gen = Rcpp::wrap(glm_logis_pl_cpp(X, y, beta_vals, dispersion, mle_coefs, mle_val, m));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -51,32 +53,56 @@ BEGIN_RCPP
 END_RCPP
 }
 // compute_gamma_ll
-double compute_gamma_ll(const arma::vec& y, const arma::vec& eta, double shape, int n);
-RcppExport SEXP _IMMC_compute_gamma_ll(SEXP ySEXP, SEXP etaSEXP, SEXP shapeSEXP, SEXP nSEXP) {
+double compute_gamma_ll(const arma::vec& y, const arma::vec& eta, double shape);
+RcppExport SEXP _IMMC_compute_gamma_ll(SEXP ySEXP, SEXP etaSEXP, SEXP shapeSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type eta(etaSEXP);
     Rcpp::traits::input_parameter< double >::type shape(shapeSEXP);
-    Rcpp::traits::input_parameter< int >::type n(nSEXP);
-    rcpp_result_gen = Rcpp::wrap(compute_gamma_ll(y, eta, shape, n));
+    rcpp_result_gen = Rcpp::wrap(compute_gamma_ll(y, eta, shape));
+    return rcpp_result_gen;
+END_RCPP
+}
+// pearson_estimate_dispersion_gamma
+double pearson_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p);
+RcppExport SEXP _IMMC_pearson_estimate_dispersion_gamma(SEXP ySEXP, SEXP mu_hatSEXP, SEXP pSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< arma::vec >::type y(ySEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type mu_hat(mu_hatSEXP);
+    Rcpp::traits::input_parameter< double >::type p(pSEXP);
+    rcpp_result_gen = Rcpp::wrap(pearson_estimate_dispersion_gamma(y, mu_hat, p));
+    return rcpp_result_gen;
+END_RCPP
+}
+// mle_estimate_dispersion_gamma
+double mle_estimate_dispersion_gamma(arma::vec ratio);
+RcppExport SEXP _IMMC_mle_estimate_dispersion_gamma(SEXP ratioSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< arma::vec >::type ratio(ratioSEXP);
+    rcpp_result_gen = Rcpp::wrap(mle_estimate_dispersion_gamma(ratio));
     return rcpp_result_gen;
 END_RCPP
 }
 // glm_gamma_pl_cpp
-double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, double mle_val, double shape, int m);
-RcppExport SEXP _IMMC_glm_gamma_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP mle_valSEXP, SEXP shapeSEXP, SEXP mSEXP) {
+double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, double dispersion, const arma::vec& mle_coefs, double mle_val, int m);
+RcppExport SEXP _IMMC_glm_gamma_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP dispersionSEXP, SEXP mle_coefsSEXP, SEXP mle_valSEXP, SEXP mSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
+    Rcpp::traits::input_parameter< double >::type dispersion(dispersionSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);
     Rcpp::traits::input_parameter< double >::type mle_val(mle_valSEXP);
-    Rcpp::traits::input_parameter< double >::type shape(shapeSEXP);
     Rcpp::traits::input_parameter< int >::type m(mSEXP);
-    rcpp_result_gen = Rcpp::wrap(glm_gamma_pl_cpp(X, y, beta_vals, mle_val, shape, m));
+    rcpp_result_gen = Rcpp::wrap(glm_gamma_pl_cpp(X, y, beta_vals, dispersion, mle_coefs, mle_val, m));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -107,18 +133,19 @@ BEGIN_RCPP
 END_RCPP
 }
 // glm_gaussian_pl_cpp
-double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, double mle_val, double sigma, int m);
-RcppExport SEXP _IMMC_glm_gaussian_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP mle_valSEXP, SEXP sigmaSEXP, SEXP mSEXP) {
+double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, const double dispersion, const arma::vec& mle_coefs, double mle_val, int m);
+RcppExport SEXP _IMMC_glm_gaussian_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP dispersionSEXP, SEXP mle_coefsSEXP, SEXP mle_valSEXP, SEXP mSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
+    Rcpp::traits::input_parameter< const double >::type dispersion(dispersionSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);
     Rcpp::traits::input_parameter< double >::type mle_val(mle_valSEXP);
-    Rcpp::traits::input_parameter< double >::type sigma(sigmaSEXP);
     Rcpp::traits::input_parameter< int >::type m(mSEXP);
-    rcpp_result_gen = Rcpp::wrap(glm_gaussian_pl_cpp(X, y, beta_vals, mle_val, sigma, m));
+    rcpp_result_gen = Rcpp::wrap(glm_gaussian_pl_cpp(X, y, beta_vals, dispersion, mle_coefs, mle_val, m));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -148,17 +175,19 @@ BEGIN_RCPP
 END_RCPP
 }
 // glm_poisson_pl_cpp
-double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, double mle_val, int m);
-RcppExport SEXP _IMMC_glm_poisson_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP mle_valSEXP, SEXP mSEXP) {
+double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, const double dispersion, const arma::vec& mle_coefs, double mle_val, int m);
+RcppExport SEXP _IMMC_glm_poisson_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP dispersionSEXP, SEXP mle_coefsSEXP, SEXP mle_valSEXP, SEXP mSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
+    Rcpp::traits::input_parameter< const double >::type dispersion(dispersionSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);
     Rcpp::traits::input_parameter< double >::type mle_val(mle_valSEXP);
     Rcpp::traits::input_parameter< int >::type m(mSEXP);
-    rcpp_result_gen = Rcpp::wrap(glm_poisson_pl_cpp(X, y, beta_vals, mle_val, m));
+    rcpp_result_gen = Rcpp::wrap(glm_poisson_pl_cpp(X, y, beta_vals, dispersion, mle_coefs, mle_val, m));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -187,52 +216,55 @@ BEGIN_RCPP
 END_RCPP
 }
 // compute_invgauss_ll
-double compute_invgauss_ll(const arma::vec& y, const arma::vec& mu, double lambda, int n);
-RcppExport SEXP _IMMC_compute_invgauss_ll(SEXP ySEXP, SEXP muSEXP, SEXP lambdaSEXP, SEXP nSEXP) {
+double compute_invgauss_ll(const arma::vec& y, const arma::vec& mu, double gamma_val, int n);
+RcppExport SEXP _IMMC_compute_invgauss_ll(SEXP ySEXP, SEXP muSEXP, SEXP gamma_valSEXP, SEXP nSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type mu(muSEXP);
-    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< double >::type gamma_val(gamma_valSEXP);
     Rcpp::traits::input_parameter< int >::type n(nSEXP);
-    rcpp_result_gen = Rcpp::wrap(compute_invgauss_ll(y, mu, lambda, n));
+    rcpp_result_gen = Rcpp::wrap(compute_invgauss_ll(y, mu, gamma_val, n));
     return rcpp_result_gen;
 END_RCPP
 }
 // glm_invgauss_pl_cpp
-double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, double mle_val, double lambda, int m);
-RcppExport SEXP _IMMC_glm_invgauss_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP mle_valSEXP, SEXP lambdaSEXP, SEXP mSEXP) {
+double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals, const double dispersion, const arma::vec& mle_coefs, double mle_val, int m);
+RcppExport SEXP _IMMC_glm_invgauss_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP, SEXP dispersionSEXP, SEXP mle_coefsSEXP, SEXP mle_valSEXP, SEXP mSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
+    Rcpp::traits::input_parameter< const double >::type dispersion(dispersionSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);
     Rcpp::traits::input_parameter< double >::type mle_val(mle_valSEXP);
-    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
     Rcpp::traits::input_parameter< int >::type m(mSEXP);
-    rcpp_result_gen = Rcpp::wrap(glm_invgauss_pl_cpp(X, y, beta_vals, mle_val, lambda, m));
+    rcpp_result_gen = Rcpp::wrap(glm_invgauss_pl_cpp(X, y, beta_vals, dispersion, mle_coefs, mle_val, m));
     return rcpp_result_gen;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
     {"_IMMC_fit_logistic_cpp", (DL_FUNC) &_IMMC_fit_logistic_cpp, 2},
-    {"_IMMC_glm_logis_pl_cpp", (DL_FUNC) &_IMMC_glm_logis_pl_cpp, 5},
+    {"_IMMC_glm_logis_pl_cpp", (DL_FUNC) &_IMMC_glm_logis_pl_cpp, 7},
     {"_IMMC_fit_gamma_log_cpp", (DL_FUNC) &_IMMC_fit_gamma_log_cpp, 2},
-    {"_IMMC_compute_gamma_ll", (DL_FUNC) &_IMMC_compute_gamma_ll, 4},
-    {"_IMMC_glm_gamma_pl_cpp", (DL_FUNC) &_IMMC_glm_gamma_pl_cpp, 6},
+    {"_IMMC_compute_gamma_ll", (DL_FUNC) &_IMMC_compute_gamma_ll, 3},
+    {"_IMMC_pearson_estimate_dispersion_gamma", (DL_FUNC) &_IMMC_pearson_estimate_dispersion_gamma, 3},
+    {"_IMMC_mle_estimate_dispersion_gamma", (DL_FUNC) &_IMMC_mle_estimate_dispersion_gamma, 1},
+    {"_IMMC_glm_gamma_pl_cpp", (DL_FUNC) &_IMMC_glm_gamma_pl_cpp, 7},
     {"_IMMC_fit_gaussian_cpp", (DL_FUNC) &_IMMC_fit_gaussian_cpp, 2},
     {"_IMMC_compute_gaussian_ll", (DL_FUNC) &_IMMC_compute_gaussian_ll, 4},
-    {"_IMMC_glm_gaussian_pl_cpp", (DL_FUNC) &_IMMC_glm_gaussian_pl_cpp, 6},
+    {"_IMMC_glm_gaussian_pl_cpp", (DL_FUNC) &_IMMC_glm_gaussian_pl_cpp, 7},
     {"_IMMC_fit_poisson_log_cpp", (DL_FUNC) &_IMMC_fit_poisson_log_cpp, 2},
     {"_IMMC_glm_poisson_ll", (DL_FUNC) &_IMMC_glm_poisson_ll, 3},
-    {"_IMMC_glm_poisson_pl_cpp", (DL_FUNC) &_IMMC_glm_poisson_pl_cpp, 5},
+    {"_IMMC_glm_poisson_pl_cpp", (DL_FUNC) &_IMMC_glm_poisson_pl_cpp, 7},
     {"_IMMC_rinvgauss_single", (DL_FUNC) &_IMMC_rinvgauss_single, 2},
     {"_IMMC_fit_invgauss_cpp", (DL_FUNC) &_IMMC_fit_invgauss_cpp, 2},
     {"_IMMC_compute_invgauss_ll", (DL_FUNC) &_IMMC_compute_invgauss_ll, 4},
-    {"_IMMC_glm_invgauss_pl_cpp", (DL_FUNC) &_IMMC_glm_invgauss_pl_cpp, 6},
+    {"_IMMC_glm_invgauss_pl_cpp", (DL_FUNC) &_IMMC_glm_invgauss_pl_cpp, 7},
     {NULL, NULL, 0}
 };
 

@@ -5,20 +5,28 @@ fit_logistic_cpp <- function(X, y) {
     .Call(`_IMMC_fit_logistic_cpp`, X, y)
 }
 
-glm_logis_pl_cpp <- function(X, y, beta_vals, mle_val, m) {
-    .Call(`_IMMC_glm_logis_pl_cpp`, X, y, beta_vals, mle_val, m)
+glm_logis_pl_cpp <- function(X, y, beta_vals, dispersion, mle_coefs, mle_val, m) {
+    .Call(`_IMMC_glm_logis_pl_cpp`, X, y, beta_vals, dispersion, mle_coefs, mle_val, m)
 }
 
 fit_gamma_log_cpp <- function(X, y) {
     .Call(`_IMMC_fit_gamma_log_cpp`, X, y)
 }
 
-compute_gamma_ll <- function(y, eta, shape, n) {
-    .Call(`_IMMC_compute_gamma_ll`, y, eta, shape, n)
+compute_gamma_ll <- function(y, eta, shape) {
+    .Call(`_IMMC_compute_gamma_ll`, y, eta, shape)
 }
 
-glm_gamma_pl_cpp <- function(X, y, beta_vals, mle_val, shape, m) {
-    .Call(`_IMMC_glm_gamma_pl_cpp`, X, y, beta_vals, mle_val, shape, m)
+pearson_estimate_dispersion_gamma <- function(y, mu_hat, p) {
+    .Call(`_IMMC_pearson_estimate_dispersion_gamma`, y, mu_hat, p)
+}
+
+mle_estimate_dispersion_gamma <- function(ratio) {
+    .Call(`_IMMC_mle_estimate_dispersion_gamma`, ratio)
+}
+
+glm_gamma_pl_cpp <- function(X, y, beta_vals, dispersion, mle_coefs, mle_val, m) {
+    .Call(`_IMMC_glm_gamma_pl_cpp`, X, y, beta_vals, dispersion, mle_coefs, mle_val, m)
 }
 
 fit_gaussian_cpp <- function(X, y) {
@@ -29,8 +37,8 @@ compute_gaussian_ll <- function(y, mu, sigma, n) {
     .Call(`_IMMC_compute_gaussian_ll`, y, mu, sigma, n)
 }
 
-glm_gaussian_pl_cpp <- function(X, y, beta_vals, mle_val, sigma, m) {
-    .Call(`_IMMC_glm_gaussian_pl_cpp`, X, y, beta_vals, mle_val, sigma, m)
+glm_gaussian_pl_cpp <- function(X, y, beta_vals, dispersion, mle_coefs, mle_val, m) {
+    .Call(`_IMMC_glm_gaussian_pl_cpp`, X, y, beta_vals, dispersion, mle_coefs, mle_val, m)
 }
 
 fit_poisson_log_cpp <- function(X, y) {
@@ -41,8 +49,8 @@ glm_poisson_ll <- function(eta, mu, y) {
     .Call(`_IMMC_glm_poisson_ll`, eta, mu, y)
 }
 
-glm_poisson_pl_cpp <- function(X, y, beta_vals, mle_val, m) {
-    .Call(`_IMMC_glm_poisson_pl_cpp`, X, y, beta_vals, mle_val, m)
+glm_poisson_pl_cpp <- function(X, y, beta_vals, dispersion, mle_coefs, mle_val, m) {
+    .Call(`_IMMC_glm_poisson_pl_cpp`, X, y, beta_vals, dispersion, mle_coefs, mle_val, m)
 }
 
 rinvgauss_single <- function(mu, lambda) {
@@ -53,11 +61,11 @@ fit_invgauss_cpp <- function(X, y) {
     .Call(`_IMMC_fit_invgauss_cpp`, X, y)
 }
 
-compute_invgauss_ll <- function(y, mu, lambda, n) {
-    .Call(`_IMMC_compute_invgauss_ll`, y, mu, lambda, n)
+compute_invgauss_ll <- function(y, mu, gamma_val, n) {
+    .Call(`_IMMC_compute_invgauss_ll`, y, mu, gamma_val, n)
 }
 
-glm_invgauss_pl_cpp <- function(X, y, beta_vals, mle_val, lambda, m) {
-    .Call(`_IMMC_glm_invgauss_pl_cpp`, X, y, beta_vals, mle_val, lambda, m)
+glm_invgauss_pl_cpp <- function(X, y, beta_vals, dispersion, mle_coefs, mle_val, m) {
+    .Call(`_IMMC_glm_invgauss_pl_cpp`, X, y, beta_vals, dispersion, mle_coefs, mle_val, m)
 }
 
