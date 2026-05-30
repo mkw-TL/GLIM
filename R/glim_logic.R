@@ -1,4 +1,4 @@
-#' @useDynLib IMMC, .registration = TRUE
+#' @useDynLib GLIM, .registration = TRUE
 #' @importFrom Rcpp sourceCpp
 NULL
 #
@@ -28,7 +28,7 @@ glim_raw <- function(
     cpp_fit_glm <- glm_logis_pl_cpp
     dispersion <- 1 # Not needed, only doing this to
   } else if (family == "gamma") {
-    cpp_fit_glm <- glm_gamma_pl_cpp
+    cpp_fit_glm <- glm_gamma_pl_cpp_dispersion
     dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
   } else if (family == "poisson") {
     cpp_fit_glm <- glm_poisson_pl_cpp
@@ -66,7 +66,7 @@ glim_raw <- function(
       for (dispersion in dispersions) {
         print("dispersion is: ")
         print(dispersion)
-        i + 1
+        i = i + 1
         num_cores <- parallel::detectCores() - 1
         cl <- parallel::makeCluster(num_cores)
 
@@ -110,7 +110,7 @@ glim_raw <- function(
           beta_vals = betas,
           dispersion,
           mle_coefs,
-          mle_val = ll_mle_original_data,
+          mle_val = mle_val,
           m = m
         ))
       }
@@ -130,7 +130,7 @@ glim_raw <- function(
             beta_vals = as.numeric(b),
             dispersion,
             mle_coefs,
-            mle_val = ll_mle_original_data,
+            mle_val = mle_val,
             m = m
           )
         })
@@ -165,8 +165,8 @@ imvar <- function(xi, alpha, pl, mle, J, parallel, tol = 1e-2, a = 1, b = 1, max
   posts <- as.vector(J$vectors %*% sqrt(qchisq(1 - alpha, D) / abs(J$values))) # Our current best Q, and Cholesky decomp (R^1/2) (although without the scaling xi)
   # These are the directions to go
   # Don't I need Qsigma^-1/2 Qt? I am very confused at why we have t(J$vectors). Shouldn't we have just J$vectors as our Q matrix?
-  maxpl <- function(v, lambda) {
-    max(c(pl(as.vector(mle) + v, lambda), pl(as.vector(mle) - v, lambda)))
+  maxpl <- function(v, phi) {
+    max(c(pl(as.vector(mle) + v, phi), pl(as.vector(mle) - v, phi)))
   }
   w <- function(s) a / (1 + s)**b # our weighting function, dampens over time
   it <- 1
@@ -191,15 +191,17 @@ glim_inner_prob_approx_samples <- function(
   X,
   y,
   family = "gaussian",
-  ll_mle_original_data,
+  dispersions,
+  mle_val,
   m,
   parallel
 ) {
   # X <- X_binary
   # y <- y_binary
   m <- 100
-  pl <- function(z) {
-    glim_raw(X, y, family, z, dispersions, mle_coefs, mle_val = ll_mle_original_data, m, parallel)
+  # Notice how dispersions is not being put in here.
+  pl <- function(z, phis) {
+    glim_raw(X, y, family, z, phis, mle_coefs, mle_val = mle_val, m, parallel)
   }
   B <- 100
   AA <- seq(0.001, 0.999, length = B)
@@ -320,7 +322,7 @@ glim <- function(
       family = inverse.gaussian(link = "1/mu^2")
     )))
     mle_coefs <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))$coefficients
-  } else if (family == "normal" || "gaussian") {
+  } else if (family == "normal" || family == "gaussian") {
     ll_mle_original_data <- as.numeric(logLik(lm(y ~ X - 1)))
     mle_coefs <- lm(y ~ X - 1)$coefficients
   } else {
@@ -345,6 +347,7 @@ glim <- function(
       X,
       y,
       family = family,
+      dispersions,
       mle_coefs,
       mle_val = ll_mle_original_data,
       m,
