@@ -178,6 +178,9 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
   // Note that this is the unscaled deviance. The estimated dispersion parameter
   // are the same for a particular dataset.
   double D_mean = arma::mean(ratio - arma::log(ratio) - 1.0);
+  if (D_mean > 50.0 || D_mean < 0) {
+    Rcpp::Rcout << "WARNING: Extreme D_mean detected: " << D_mean << "\n";
+}
   // Mean deviance
     
   // Edge case: If the model fits perfectly, D_mean hits 0, implying infinite shape.
@@ -249,20 +252,20 @@ eta.elem(arma::find(eta > 700)).fill(700);
 
   
   // Compute full log-likelihood for the observed data under proposed beta
-  double true_ll = compute_gamma_ll(y, eta, dispersion);
+  double true_ll = compute_gamma_ll(y, eta, 1/dispersion);
   // Note that the dispersion parameter is not estimated via mle in R's glm.
   // Rcpp::Rcout << "true_ll: " << true_ll;
   arma::vec eta_hat = X * mle_coefs;
   // Rcpp::Rcout << "eta_hat: " << eta_hat;
-  double mle_ll = compute_gamma_ll(y, eta_hat, dispersion);
+  double mle_ll = compute_gamma_ll(y, eta_hat, 1/dispersion);
   // Need to ensure that the value I compute for mle_ll is the same as mle_val
-  Rcpp::Rcout << "mle_ll: (should be same as mle_val)" << mle_ll;
-  Rcpp::Rcout << "mle_val: " << mle_val;
+  // Rcpp::Rcout << "mle_ll: (should be same as mle_val)" << mle_ll;
+  // Rcpp::Rcout << "mle_val: " << mle_val;
   // mle_val is calculated in R with a plugin estimator for phi, rather than the mle.
   // Checking if there is a difference
-  Rcpp::Rcout << "true_ll: " << true_ll;
+  // Rcpp::Rcout << "true_ll: " << true_ll;
   double f_x = true_ll - mle_ll;
-  Rcpp::Rcout << "f_x: " << f_x;
+  // Rcpp::Rcout << "f_x: " << f_x;
 
   // Simulate Y matrix inline using R's Gamma RNG
   arma::mat Y(n, m);
@@ -303,10 +306,10 @@ eta.elem(arma::find(eta > 700)).fill(700);
 
     // Evaluate simulated MLE log-likelihood
     double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
-    Rcpp::Rcout << "llX_j: " << llX_j;
-    Rcpp::Rcout << "mle_sim" << mle_sim;
+    // Rcpp::Rcout << "llX_j: " << llX_j;
+    // Rcpp::Rcout << "mle_sim" << mle_sim;
     double f_X_j = llX_j - mle_sim;
-    Rcpp::Rcout << "f_X_j: " << f_X_j;
+    // Rcpp::Rcout << "f_X_j: " << f_X_j;
 
     if(f_X_j < f_x) {
       count_less++;
@@ -316,6 +319,97 @@ eta.elem(arma::find(eta > 700)).fill(700);
   return (double)count_less / m;
 }
 
+// [[Rcpp::export]]
+double glm_gamma_pl_cpp_dispersion(const arma::mat& X, const arma::vec& y,
+                        const arma::vec& beta_vals, double dispersion, const arma::vec& mle_coefs, double mle_val,
+                        int m) {
+  int n = X.n_rows;
+  
+  // Compute true expected values based on proposed betas
+arma::vec eta = X * beta_vals;
+eta.elem(arma::find(eta > 700)).fill(700);
+  eta.elem(arma::find(eta < -70)).fill(-70); // avoids D_mean explosions
+  arma::vec mu = arma::exp(eta);
+  // Rcpp::Rcout << "Predictions clamped";
+  // Prevent mu from getting infinitesimally small
+  mu.elem(arma::find(mu < 1e-8)).fill(1e-8);
+
+  // arma::vec ratio = y / mu;
+  // // Note that nu = shape. Estimates via mle, rather than pearson
+  // dispersion is 1/nu
+  // scale is mu / nu
+  
+
+
+  
+  // Compute full log-likelihood for the observed data under proposed beta
+  double true_ll = compute_gamma_ll(y, eta, 1/dispersion);
+  // Note that the dispersion parameter is not estimated via mle in R's glm.
+  // Rcpp::Rcout << "true_ll: " << true_ll;
+  arma::vec eta_hat = X * mle_coefs;
+  // Rcpp::Rcout << "eta_hat(1): " << eta_hat(1);
+  // Note that the dispersion is found by maximizing, after betahat is maximized.
+  double est_disp = mle_estimate_dispersion_gamma(y, exp(eta_hat), mle_coefs.n_elem);
+  double mle_ll = compute_gamma_ll(y, eta_hat, 1/est_disp);
+  // Rcpp::Rcout << "mle_ll: " << mle_ll;
+  double f_x = true_ll - mle_ll;
+  if (f_x > 1e-4) { // Small tolerance for floating point errors
+    Rcpp::Rcout << "WARNING: Restricted LL (" << true_ll 
+                << ") is greater than MLE LL (" << mle_ll << ")!\n";
+}
+  // Rcpp::Rcout << "f_x: " << f_x;
+
+  // Simulate Y matrix inline using R's Gamma RNG
+  arma::mat Y(n, m);
+  // Shape parameter here is nu, which is 1/phi (because phi = 1/nu)
+  double shape = 1/dispersion;
+  // y / shape
+  arma::vec scale = mu * dispersion;
+  for(int j = 0; j < m; ++j) {
+    for(int i = 0; i < n; ++i) {
+      Y(i, j) = R::rgamma(shape, scale(i));
+    }
+  }
+
+  // This computes \ell(beta, phi, X). phi and beta use the provided values.
+  // Precompute constant pieces of log-likelihood across all M simulations
+  double constant_ll_term = n * (shape * std::log(shape) - std::lgamma(shape));
+  // Vectorized cross-product step for part of the log-likelihood evaluation
+  arma::rowvec term3_all = -shape * (arma::exp(-eta).t() * Y + arma::sum(eta));
+
+  int count_less = 0;
+
+  // Inner loop: fit models entirely in C++
+  for(int j = 0; j < m; ++j) {
+    arma::vec y_sim = Y.col(j);
+    // mu_hat needs to be here. 
+    arma::vec beta_sim_hat = fit_gamma_log_cpp(X, y_sim);
+    arma::vec eta_sim_hat = X * beta_sim_hat;
+    arma::vec mu_sim_hat = exp(eta_sim_hat);
+
+    // Need to pass in data to use the mle estimator.
+    double shape_sim_hat = 1/mle_estimate_dispersion_gamma(y_sim, mu_sim_hat, beta_sim_hat.n_elem);
+    // Rcpp::Rcout << "shape_sim_hat: " << shape_sim_hat;
+    // May be an an error in this calculation. Keep it simple for now.
+    // // Calculate the simulated dependent term: (shape - 1) * sum(log(y_sim))
+    // double term2_j = (shape_sim_hat - 1.0) * arma::sum(arma::log(y_sim));
+    // double llX_j = constant_ll_term + term2_j + term3_all(j);
+    double llX_j = compute_gamma_ll(y_sim, eta, 1/est_disp);
+
+    // Evaluate simulated MLE log-likelihood
+    double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
+    // Rcpp::Rcout << "llX_j: " << llX_j;
+    // Rcpp::Rcout << "mle_sim" << mle_sim;
+    double f_X_j = llX_j - mle_sim;
+    // Rcpp::Rcout << "f_X_j: " << f_X_j;
+
+    if(f_X_j < f_x) {
+      count_less++;
+    }
+  }
+
+  return (double)count_less / m;
+}
 
 // =====================================================================
 // GAUSSIAN REGRESSION (IDENTITY LINK)

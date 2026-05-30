@@ -21,12 +21,16 @@ pearson_estimate_dispersion_gamma <- function(y, mu_hat, p) {
     .Call(`_IMMC_pearson_estimate_dispersion_gamma`, y, mu_hat, p)
 }
 
-mle_estimate_dispersion_gamma <- function(ratio) {
-    .Call(`_IMMC_mle_estimate_dispersion_gamma`, ratio)
+mle_estimate_dispersion_gamma <- function(y, mu_hat, p) {
+    .Call(`_IMMC_mle_estimate_dispersion_gamma`, y, mu_hat, p)
 }
 
 glm_gamma_pl_cpp <- function(X, y, beta_vals, dispersion, mle_coefs, mle_val, m) {
     .Call(`_IMMC_glm_gamma_pl_cpp`, X, y, beta_vals, dispersion, mle_coefs, mle_val, m)
+}
+
+glm_gamma_pl_cpp_dispersion <- function(X, y, beta_vals, dispersion, mle_coefs, mle_val, m) {
+    .Call(`_IMMC_glm_gamma_pl_cpp_dispersion`, X, y, beta_vals, dispersion, mle_coefs, mle_val, m)
 }
 
 fit_gaussian_cpp <- function(X, y) {

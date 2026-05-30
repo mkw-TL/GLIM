@@ -23,12 +23,13 @@ glim_raw <- function(
   if (is.data.frame(X)) {
     X <- model.matrix(X)
   }
+  output <- list()
   if (family == "binomial" || family == "logistic") {
     cpp_fit_glm <- glm_logis_pl_cpp
     dispersion <- 1 # Not needed, only doing this to
   } else if (family == "gamma") {
     cpp_fit_glm <- glm_gamma_pl_cpp
-    dispersion <- pearson_estimate_dispersion_gamma(y, exp(X * mle_coefs), length(mle_coefs))
+    dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
   } else if (family == "poisson") {
     cpp_fit_glm <- glm_poisson_pl_cpp
     dispersion <- 1
@@ -44,72 +45,99 @@ glim_raw <- function(
   if (parallel == TRUE) {
     # if we don't have multiple beta that we want to evaluate it over, then we don't
     # want to allocate clusters
+    i = 0
     if (is.vector(betas)) {
-      result_vector <- as.matrix(cpp_fit_glm(
-        X = X,
-        y = y,
-        beta_vals = betas,
-        dispersion,
-        mle_coefs,
-        mle_val,
-        m = m
-      ))
+      for (dispersion in dispersions) {
+        print("dispersion is: ")
+        print(dispersion)
+        i = i + 1
+        output[[i]] <- as.matrix(cpp_fit_glm(
+          X = X,
+          y = y,
+          beta_vals = betas,
+          dispersion,
+          mle_coefs,
+          mle_val,
+          m = m
+        ))
+      }
     } else {
-      num_cores <- parallel::detectCores() - 1
-      cl <- parallel::makeCluster(num_cores)
+      i = 0
+      for (dispersion in dispersions) {
+        print("dispersion is: ")
+        print(dispersion)
+        i + 1
+        num_cores <- parallel::detectCores() - 1
+        cl <- parallel::makeCluster(num_cores)
 
-      parallel::clusterCall(cl, function() library(IMMC))
-      # Export the DATA to the workers
-      parallel::clusterExport(
-        cl,
-        varlist = c("X", "y", "ll_mle_original_data", "m"),
-        envir = environment()
-      )
-
-      result_vector <- pbapply::pbapply(
-        betas,
-        1,
-        function(b) {
+        parallel::clusterCall(cl, function() library(IMMC))
+        # Export the DATA to the workers
+        parallel::clusterExport(
+          cl,
+          varlist = c("X", "y", "betas", "dispersion", "mle_coefs", "mle_val", "m"),
+          envir = environment()
+        )
+        # TODO fix this to incorporate dispersion
+        output[[i]] <- pbapply::pbapply(
+          betas,
+          1,
+          function(b) {
+            cpp_fit_glm(
+              X = X,
+              y = y,
+              beta_vals = as.numeric(b),
+              dispersion,
+              mle_coefs,
+              mle_val,
+              m = m
+            )
+          },
+          cl = cl
+        )
+      }
+      parallel::stopCluster(cl)
+    }
+  } else {
+    i = 0
+    if (is.vector(betas)) {
+      for (dispersion in dispersions) {
+        print("dispersion is: ")
+        print(dispersion)
+        i <- i + 1
+        output[[i]] <- as.matrix(cpp_fit_glm(
+          X = X,
+          y = y,
+          beta_vals = betas,
+          dispersion,
+          mle_coefs,
+          mle_val = ll_mle_original_data,
+          m = m
+        ))
+      }
+    } else {
+      i <- 0
+      for (dispersion in dispersions) {
+        print("dispersion is: ")
+        print(dispersion)
+        i <- i + 1
+        # result of the pbapply is a vector across the joint beta values
+        # Would make sense to put dispersion inside? Some families don't have a dispersion grid, though
+        # Dispersion also has less grid values compared to betas. However, the current code is meant for beta search.
+        output[[i]] <- pbapply::pbapply(betas, 1, function(b) {
           cpp_fit_glm(
             X = X,
             y = y,
             beta_vals = as.numeric(b),
             dispersion,
             mle_coefs,
-            mle_val,
+            mle_val = ll_mle_original_data,
             m = m
           )
-        },
-        cl = cl
-      )
-    }
-    parallel::stopCluster(cl)
-  } else {
-    if (is.vector(betas)) {
-      result_vector <- as.matrix(cpp_fit_glm(
-        X = X,
-        y = y,
-        beta_vals = betas,
-        dispersion,
-        mle_coefs,
-        mle_val = ll_mle_original_data,
-        m = m
-      ))
-    } else {
-      result_vector <- pbapply::pbapply(betas, 1, function(b) {
-        cpp_fit_glm(
-          X = X,
-          y = y,
-          beta_vals = as.numeric(b),
-          dispersion,
-          mle_coefs,
-          mle_val = ll_mle_original_data,
-          m = m
-        )
-      })
+        })
+      }
     }
   }
-  return(result_vector)
+  return(output)
 }
 
 #' Generates all random numbers at once, so doesn't need to use the slow apply
@@ -256,13 +284,22 @@ glim_inner_prob_approx_samples <- function(
 }
 
 #' @export
-glim <- function(X, y, family = "gaussian", betas, m = 1000, parallel = TRUE, approx = FALSE) {
+glim <- function(
+  X,
+  y,
+  family = "gaussian",
+  betas,
+  dispersions = 1,
+  m = 1000,
+  parallel = TRUE,
+  approx = FALSE
+) {
   if (family == "binomial" || family == "logistic") {
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
     mle_coefs <- glm(y ~ X - 1, family = "binomial")
   } else if (family == "gamma") {
     # Don't want to use R's logLik as it uses the pearson estimate of phi.
-    # However, the IRLS used by R to maximize the log lik doesn't rely on phi.
+    # However, the IRLS to maximize the log lik of beta doesn't rely on phi.
     mle_coefs <- glm(y ~ X - 1, family = Gamma(link = "log"))$coefficients
     eta <- X %*% mle_coefs
     ratio <- y / exp(eta)
@@ -270,8 +307,7 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, parallel = TRUE, ap
     ll_mle_original_data <- compute_gamma_ll(
       y,
       eta,
-      pearson_estimate_dispersion_gamma(y, exp(eta), length(mle_coefs)),
-      n
+      1 / mle_estimate_dispersion_gamma(y, exp(eta), length(mle_coefs))
     )
 
     # ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = Gamma(link = "log"))))
@@ -296,12 +332,14 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, parallel = TRUE, ap
       y,
       family = family,
       betas,
+      dispersions,
       mle_coefs,
       mle_val = ll_mle_original_data,
       m,
       parallel = parallel
     ))
   }
+  # Need to get dispersion into this bottom function
   if (approx == TRUE) {
     return(glim_inner_prob_approx_samples(
       X,
