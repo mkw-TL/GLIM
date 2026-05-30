@@ -2,12 +2,14 @@
 #' @importFrom Rcpp sourceCpp
 NULL
 #
-# Original code written by Joe Harrison (jrharr25@ncsu.edu), optimized in cpp by Gemini
+# Original code written by Joe Harrison (jrharr25@ncsu.edu), translated to cpp by Gemini
 # pkgbuild::compile_dll() validates the package directory differently. Rcpp might implement it's directory check differently
 # After making changes, restart R, get in the package directory
 #devtools::document()
 #devtools::install()
 
+# Evaluates possibility for beta/dispersion values
+# m is the number of samples for each parameter value you would like to have
 #' @export
 glim_raw <- function(
   X,
@@ -24,9 +26,10 @@ glim_raw <- function(
     X <- model.matrix(X)
   }
   output <- list()
+  # Define which c++ function is going to be used to fit
   if (family == "binomial" || family == "logistic") {
     cpp_fit_glm <- glm_logis_pl_cpp
-    dispersion <- 1 # Not needed, only doing this to
+    dispersion <- 1 # Only doing this to appease the for loop
   } else if (family == "gamma") {
     cpp_fit_glm <- glm_gamma_pl_cpp_dispersion
     dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
@@ -43,13 +46,13 @@ glim_raw <- function(
     stop("Family not supported")
   }
   if (parallel == TRUE) {
-    # if we don't have multiple beta that we want to evaluate it over, then we don't
+    # if we don't have multiple beta that we want to evaluate it over (i.e. is vector), then we don't
     # want to allocate clusters
+    # TODO #1 Fit y = xb with no intercept?
     i = 0
     if (is.vector(betas)) {
+      # TODO #2 Map out where the parallelization happens / how to deal with dispersion
       for (dispersion in dispersions) {
-        print("dispersion is: ")
-        print(dispersion)
         i = i + 1
         output[[i]] <- as.matrix(cpp_fit_glm(
           X = X,
@@ -64,8 +67,6 @@ glim_raw <- function(
     } else {
       i = 0
       for (dispersion in dispersions) {
-        print("dispersion is: ")
-        print(dispersion)
         i = i + 1
         num_cores <- parallel::detectCores() - 1
         cl <- parallel::makeCluster(num_cores)
@@ -77,7 +78,7 @@ glim_raw <- function(
           varlist = c("X", "y", "betas", "dispersion", "mle_coefs", "mle_val", "m"),
           envir = environment()
         )
-        # TODO fix this to incorporate dispersion
+        # TODO #3 Check whether parallelization works with dispersion
         output[[i]] <- pbapply::pbapply(
           betas,
           1,
@@ -101,8 +102,6 @@ glim_raw <- function(
     i = 0
     if (is.vector(betas)) {
       for (dispersion in dispersions) {
-        print("dispersion is: ")
-        print(dispersion)
         i <- i + 1
         output[[i]] <- as.matrix(cpp_fit_glm(
           X = X,
@@ -117,8 +116,6 @@ glim_raw <- function(
     } else {
       i <- 0
       for (dispersion in dispersions) {
-        print("dispersion is: ")
-        print(dispersion)
         i <- i + 1
         # result of the pbapply is a vector across the joint beta values
         # Would make sense to put dispersion inside? Some families don't have a dispersion grid, though
@@ -151,20 +148,17 @@ generate_unit_matrix <- function(n, d) {
 
 #' @export
 imvar <- function(xi, alpha, pl, mle, J, parallel, tol = 1e-2, a = 1, b = 1, max.it = 25) {
-  # tol <- 1e-2
-  # a <- 5
-  # b <- 1
-  # max.it <- 20
-  # xi <- -.425
-  # mle <- mle_coefs
-  # alpha <- .45
-  # J <- eJ
+  # log(xi) because we are getting the exponentiated version (so that it is for sure positive)
   xi <- log(xi)
   D <- length(mle)
-  # removed a case where D = 1
+  # TODO: #4 Check if removing the case where D = 1 has any issues
   posts <- as.vector(J$vectors %*% sqrt(qchisq(1 - alpha, D) / abs(J$values))) # Our current best Q, and Cholesky decomp (R^1/2) (although without the scaling xi)
   # These are the directions to go
   # Don't I need Qsigma^-1/2 Qt? I am very confused at why we have t(J$vectors). Shouldn't we have just J$vectors as our Q matrix?
+  # Think this was a mistake in the original code, although the outputs are practically identical(?)
+
+  # Define our updating function. Cannot just do a newton rhapson to update our xi.
+  # TODO: #5 Provide reference of stochastic algorithm
   maxpl <- function(v, phi) {
     max(c(pl(as.vector(mle) + v, phi), pl(as.vector(mle) - v, phi)))
   }
@@ -186,6 +180,7 @@ imvar <- function(xi, alpha, pl, mle, J, parallel, tol = 1e-2, a = 1, b = 1, max
   return(exp(xi))
 }
 
+# Function that is called if doing the elliptical approximation
 #' @export
 glim_inner_prob_approx_samples <- function(
   X,
@@ -196,25 +191,23 @@ glim_inner_prob_approx_samples <- function(
   m,
   parallel
 ) {
-  # X <- X_binary
-  # y <- y_binary
   m <- 100
-  # Notice how dispersions is not being put in here.
+  # TODO #6 Implementation of dispersion is currently incorrect
   pl <- function(z, phis) {
     glim_raw(X, y, family, z, phis, mle_coefs, mle_val = mle_val, m, parallel)
   }
   B <- 100
   AA <- seq(0.001, 0.999, length = B)
-  # Need to find the fisher information for each parameterization TODO(?)
   if (family == "gaussian" || family == "normal") {
     res <- lm(y ~ X - 1)
+    # This is the observed variability for this link function
     J <- crossprod(X, X)
   } else if (family == "binomial") {
     res <- glm(y ~ X - 1, family = "binomial")
     p_i <- res$fitted.values
     J <- crossprod(X, diag(p_i * (1 - p_i)) %*% X)
   } else if (family == "gamma") {
-    # canonical link for gamma family is incredibly numerically unstable. If Xb is ever close to zero during the process, we get infinities. Additionally, if xb is ever negative, then we are saying that the mean of a gamma is negative.
+    # canonical link for gamma family (1/mu) is incredibly numerically unstable. If Xb is ever close to zero during the process, we get infinities. Additionally, if xb is ever negative, then we are saying that the mean of a gamma is negative.
     # Note that the weights are one here.
     res <- glm(y ~ X - 1, family = Gamma(link = "log"))
     J <- crossprod(X, X)
@@ -223,7 +216,7 @@ glim_inner_prob_approx_samples <- function(
     # default link for the inverse gaussian in glm is not the canonical parameter (-1/2mu^2), but rather 1/mu. Additionally, note that the link we are using here is not a canonical link. The constant gets absorbed in a lot of places, and what ends up changing is the scaling factor outside our gradient update.
     eta <- X %*% res$coefficients
     mu_i <- as.vector(sqrt(1 / eta))
-    J <- crossprod(X, diag(mu_i^3) %*% X) # check on this
+    J <- crossprod(X, diag(mu_i^3) %*% X) # TODO #7 check on this calculation
   } else if (family == "poisson") {
     res <- glm(y ~ X - 1, family = poisson(link = "log"))
     lambda_i <- res$fitted.values
@@ -276,6 +269,7 @@ glim_inner_prob_approx_samples <- function(
       lerped_xi <- (1 - w) * xi[r] + w * xi[r + 1]
     }
 
+    # Sample randomly on the boundary TODO #8 explain code
     rand_dir <- generate_unit_matrix(1, length(mle_coefs))
     spatial_dir <- eJ$vectors %*% (sqrt(1 / eJ$values) * rand_dir)
 
@@ -300,8 +294,8 @@ glim <- function(
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
     mle_coefs <- glm(y ~ X - 1, family = "binomial")
   } else if (family == "gamma") {
-    # Don't want to use R's logLik as it uses the pearson estimate of phi.
-    # However, the IRLS to maximize the log lik of beta doesn't rely on phi.
+    # Don't want to use R's logLik() as it uses the pearson estimate of phi.
+    # Note that the IRLS to maximize the log lik of beta doesn't rely on phi.
     mle_coefs <- glm(y ~ X - 1, family = Gamma(link = "log"))$coefficients
     eta <- X %*% mle_coefs
     ratio <- y / exp(eta)
@@ -311,8 +305,6 @@ glim <- function(
       eta,
       1 / mle_estimate_dispersion_gamma(y, exp(eta), length(mle_coefs))
     )
-
-    # ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = Gamma(link = "log"))))
   } else if (family == "poisson") {
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = poisson(link = "log"))))
     mle_coefs <- glm(y ~ X - 1, family = poisson(link = "log"))$coefficients
@@ -356,6 +348,7 @@ glim <- function(
   }
 }
 
+# TODO #9 Dispersion in prob2poss
 #' @export
 prob2poss_logis <- function(X, y, samples, the_compared_theta) {
   # p <- 1/(1 + exp(-eta))

@@ -1,4 +1,5 @@
-// Written by Gemini
+// Translated to c++ by Gemini
+// Thoroughly vetted
 #include <RcppArmadillo.h>
 // [[Rcpp::depends(RcppArmadillo)]]
 
@@ -55,11 +56,11 @@ double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y,
   double sum_log_term = arma::sum(arma::log1p(arma::exp(eta)));
   double f_x = arma::dot(y, eta) - sum_log_term - mle_val;
 
-  // 1. Generate an n x m matrix of Uniform(0,1) numbers in one shot
+  // Computing new random binomial data:
   arma::mat U = arma::randu<arma::mat>(n, m);
   arma::mat Y(n, m);
 
-  // 2. Loop over columns and apply vectorized thresholding
+  // Loop over columns and apply vectorized thresholding
   for(int j = 0; j < m; ++j) {
     // U.col(j) < p creates a boolean/unsigned vector (0s and 1s)
     // arma::conv_to converts it back to doubles to fit inside Y
@@ -91,14 +92,13 @@ double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y,
 // Gamma regression (log-link)
 //
 //
-//
 
 
 double calculate_deviance_gamma(const arma::vec& y, const arma::vec& mu) {
   return 2.0 * arma::accu(y / mu - arma::log(y / mu) - 1.0);
 }
 
-// 1. IRLS Gamma regression solver (Log link), fisher weights, W = 1.
+// IRLS Gamma regression solver (Log link), fisher weights, W = 1.
 // [[Rcpp::export]]
 arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::vec& y) {
   arma::vec beta = arma::zeros(X.n_cols);
@@ -107,7 +107,7 @@ arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::vec& y) {
     Rcpp::Rcout << "What the heck";
   }
   beta(0) = std::log(arma::mean(y)); // Intercept = log(mean of y)
-  // TODO: Note that this presumes an intercept in the first column.
+  // TODO: #10 Note that this presumes an intercept in the first column.
   // Initialization so that the y and eta_hat values start off close to eachother.
   //
   // Note that formally there is a 1/nu here. However, we will cancel it out with the gradient.
@@ -142,7 +142,6 @@ arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::vec& y) {
         proposed_dev = calculate_deviance_gamma(y, proposed_mu);
         half_iter++;
     }
-    // 5. Accept the step
     beta = proposed_beta;
     current_dev = calculate_deviance_gamma(y, arma::exp(X*beta));
 
@@ -180,29 +179,26 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
   double D_mean = arma::mean(ratio - arma::log(ratio) - 1.0);
   if (D_mean > 50.0 || D_mean < 0) {
     Rcpp::Rcout << "WARNING: Extreme D_mean detected: " << D_mean << "\n";
-}
-  // Mean deviance
-    
+}    
   // Edge case: If the model fits perfectly, D_mean hits 0, implying infinite shape.
   if (D_mean <= 1e-10) {
       return 99999.0; 
   }
     
-  // 2. Compute an initial guess using Thom's Approximation
-  // (Uses a laurent series to approximate digamma, and then solve)
+  // Compute an initial guess using Thom's Approximation
+  // (Uses a laurent series to approximate digamma, and then solve the resulting quadratic)
+  // We want to taylor expand nu around zero, but we have 1/nu. There is a pole there, and thus we can't use taylor approx
+  // Laurent expansion still valid, though.
   double nu = (1.0 + std::sqrt(1.0 + (4.0 / 3.0) * D_mean)) / (4.0 * D_mean);
     
-    // 3. 1D Newton-Raphson Loop to solve: log(nu) - digamma(nu) - D_mean = 0
+    // 1D Newton-Raphson Loop to solve: log(nu) - digamma(nu) - D_mean = 0
     int max_iter = 100;
     double tol = 1e-8;
     
     for (int i = 0; i < max_iter; ++i) {
-        // f(nu) = log(nu) - digamma(nu) - D_mean
         double f = std::log(nu) - R::digamma(nu) - D_mean;
-        
-        // f'(nu) = 1/nu - trigamma(nu)
         double f_prime = (1.0 / nu) - R::trigamma(nu);
-        
+
         double step = f / f_prime;
         double next_nu = nu - step;
         
@@ -212,7 +208,7 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
             next_nu = nu * 0.5; 
         }
         
-        // Check for convergence (relative to the size of nu)
+        // Check for convergence
         if (std::abs(next_nu - nu) < tol) {
             nu = next_nu;
             break;
@@ -239,39 +235,24 @@ arma::vec eta = X * beta_vals;
 eta.elem(arma::find(eta > 700)).fill(700);
   eta.elem(arma::find(eta < -70)).fill(-70); // avoids D_mean explosions
   arma::vec mu = arma::exp(eta);
+  // TODO: #11 Add more warnings
   // Rcpp::Rcout << "Predictions clamped";
   // Prevent mu from getting infinitesimally small
   mu.elem(arma::find(mu < 1e-8)).fill(1e-8);
-
-  // arma::vec ratio = y / mu;
-  // // Note that nu = shape. Estimates via mle, rather than pearson
-  // dispersion is 1/nu
-  // scale is mu / nu
   
+  double shape = 1/dispersion;
 
-
-  
   // Compute full log-likelihood for the observed data under proposed beta
-  double true_ll = compute_gamma_ll(y, eta, 1/dispersion);
+  double true_ll = compute_gamma_ll(y, eta, shape);
+
   // Note that the dispersion parameter is not estimated via mle in R's glm.
-  // Rcpp::Rcout << "true_ll: " << true_ll;
+  // Note, however, that we are simply accepcting a dispersion parameter as given in an argument
   arma::vec eta_hat = X * mle_coefs;
-  // Rcpp::Rcout << "eta_hat: " << eta_hat;
-  double mle_ll = compute_gamma_ll(y, eta_hat, 1/dispersion);
-  // Need to ensure that the value I compute for mle_ll is the same as mle_val
-  // Rcpp::Rcout << "mle_ll: (should be same as mle_val)" << mle_ll;
-  // Rcpp::Rcout << "mle_val: " << mle_val;
-  // mle_val is calculated in R with a plugin estimator for phi, rather than the mle.
-  // Checking if there is a difference
-  // Rcpp::Rcout << "true_ll: " << true_ll;
+  double mle_ll = compute_gamma_ll(y, eta_hat, shape);
   double f_x = true_ll - mle_ll;
-  // Rcpp::Rcout << "f_x: " << f_x;
 
   // Simulate Y matrix inline using R's Gamma RNG
   arma::mat Y(n, m);
-  // Shape parameter here is nu, which is 1/phi (because phi = 1/nu)
-  double shape = 1/dispersion;
-  // y / shape
   arma::vec scale = mu * dispersion;
   for(int j = 0; j < m; ++j) {
     for(int i = 0; i < n; ++i) {
@@ -290,7 +271,6 @@ eta.elem(arma::find(eta > 700)).fill(700);
   // Inner loop: fit models entirely in C++
   for(int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
-    // mu_hat needs to be here. 
     arma::vec beta_sim_hat = fit_gamma_log_cpp(X, y_sim);
     arma::vec eta_sim_hat = X * beta_sim_hat;
     arma::vec mu_sim_hat = exp(eta_sim_hat);
@@ -306,10 +286,7 @@ eta.elem(arma::find(eta > 700)).fill(700);
 
     // Evaluate simulated MLE log-likelihood
     double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
-    // Rcpp::Rcout << "llX_j: " << llX_j;
-    // Rcpp::Rcout << "mle_sim" << mle_sim;
     double f_X_j = llX_j - mle_sim;
-    // Rcpp::Rcout << "f_X_j: " << f_X_j;
 
     if(f_X_j < f_x) {
       count_less++;
@@ -319,6 +296,7 @@ eta.elem(arma::find(eta > 700)).fill(700);
   return (double)count_less / m;
 }
 
+// This function plays around with where the dispersion parameter is plugged in, and what is estimated.
 // [[Rcpp::export]]
 double glm_gamma_pl_cpp_dispersion(const arma::mat& X, const arma::vec& y,
                         const arma::vec& beta_vals, double dispersion, const arma::vec& mle_coefs, double mle_val,
@@ -334,30 +312,17 @@ eta.elem(arma::find(eta > 700)).fill(700);
   // Prevent mu from getting infinitesimally small
   mu.elem(arma::find(mu < 1e-8)).fill(1e-8);
 
-  // arma::vec ratio = y / mu;
-  // // Note that nu = shape. Estimates via mle, rather than pearson
-  // dispersion is 1/nu
-  // scale is mu / nu
-  
-
-
-  
   // Compute full log-likelihood for the observed data under proposed beta
   double true_ll = compute_gamma_ll(y, eta, 1/dispersion);
-  // Note that the dispersion parameter is not estimated via mle in R's glm.
-  // Rcpp::Rcout << "true_ll: " << true_ll;
   arma::vec eta_hat = X * mle_coefs;
-  // Rcpp::Rcout << "eta_hat(1): " << eta_hat(1);
   // Note that the dispersion is found by maximizing, after betahat is maximized.
   double est_disp = mle_estimate_dispersion_gamma(y, exp(eta_hat), mle_coefs.n_elem);
   double mle_ll = compute_gamma_ll(y, eta_hat, 1/est_disp);
-  // Rcpp::Rcout << "mle_ll: " << mle_ll;
   double f_x = true_ll - mle_ll;
   if (f_x > 1e-4) { // Small tolerance for floating point errors
     Rcpp::Rcout << "WARNING: Restricted LL (" << true_ll 
                 << ") is greater than MLE LL (" << mle_ll << ")!\n";
 }
-  // Rcpp::Rcout << "f_x: " << f_x;
 
   // Simulate Y matrix inline using R's Gamma RNG
   arma::mat Y(n, m);
@@ -382,7 +347,6 @@ eta.elem(arma::find(eta > 700)).fill(700);
   // Inner loop: fit models entirely in C++
   for(int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
-    // mu_hat needs to be here. 
     arma::vec beta_sim_hat = fit_gamma_log_cpp(X, y_sim);
     arma::vec eta_sim_hat = X * beta_sim_hat;
     arma::vec mu_sim_hat = exp(eta_sim_hat);
@@ -398,10 +362,7 @@ eta.elem(arma::find(eta > 700)).fill(700);
 
     // Evaluate simulated MLE log-likelihood
     double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
-    // Rcpp::Rcout << "llX_j: " << llX_j;
-    // Rcpp::Rcout << "mle_sim" << mle_sim;
     double f_X_j = llX_j - mle_sim;
-    // Rcpp::Rcout << "f_X_j: " << f_X_j;
 
     if(f_X_j < f_x) {
       count_less++;
@@ -411,6 +372,10 @@ eta.elem(arma::find(eta > 700)).fill(700);
   return (double)count_less / m;
 }
 
+
+
+
+// Anything below is still in progress. Not that above isn't, but you know. 
 // =====================================================================
 // GAUSSIAN REGRESSION (IDENTITY LINK)
 // =====================================================================
