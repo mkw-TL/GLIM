@@ -4,24 +4,11 @@
 # Currently the logistic case is likely broken (due to adding dispersion parameter)
 # The gamma case works though!
 
-library(IMMC)
+library(GLIM)
 # Data setup
 
 # X <- matrix(
-#   c(
-#     .0794,
-#     .1,
-#     .1259,
-#     .1413,
-#     .15,
-#     .1558,
-#     .1778,
-#     .1995,
-#     .2239,
-#     .2512,
-#     .2818,
-#     .3162
-#   ),
+#   c(.0794, .1, .1259, .1413, .15, .1558, .1778, .1995, .2239, .2512, .2818, .3162),
 #   ncol = 1
 # )
 # successes <- c(1, 2, 1, 0, 1, 2, 4, 6, 4, 5, 5, 8)
@@ -48,6 +35,8 @@ library(IMMC)
 #   y_binary,
 #   family = "binomial",
 #   betas,
+#   dispersions = 1,
+#   m = 100,
 #   parallel = TRUE,
 #   approx = TRUE
 # )
@@ -58,7 +47,7 @@ library(IMMC)
 # dev.new()
 # contour(x = beta_1, y = beta_0, z = z_matrix)
 
-# Rcpp::sourceCpp("src/helpppp.cpp")
+Rcpp::sourceCpp("src/possibilistic_computations.cpp")
 
 URL <- 'http://static.lib.virginia.edu/statlab/materials/data/alb_homes.csv'
 homes <- read.csv(file = URL)
@@ -68,6 +57,7 @@ New_X_gamma <- X_gamma
 New_X_gamma[, 2] <- scale(X_gamma[, 2])
 fit <- glm(y_gamma ~ New_X_gamma - 1, family = Gamma(link = "log"))
 mle_coefs <- fit$coefficients
+mle_dispersion <- .123 #somewhere around here
 mle_dispersion <- mle_estimate_dispersion_gamma(
   y_gamma,
   exp(New_X_gamma %*% mle_coefs),
@@ -80,20 +70,12 @@ mle_val <- compute_gamma_ll(y, eta, 1 / mle_dispersion)
 beta_0_grid <- seq(12.70, 12.90, by = .01)
 beta_1_grid <- seq(.40, .53, by = .01)
 beta_grid <- expand.grid(beta_0_grid, beta_1_grid)
-dispersions <- seq(.07, .15, by = .01)
 
 # Maximum that I could have gotten with my profiling resolution is .9
 # Confirmed that at MLE for the dispersion param, get 1.
 
-output <- glim(
-  New_X_gamma,
-  y_gamma,
-  "gamma",
-  beta_grid,
-  dispersions,
-  m = 100,
-  parallel = FALSE
-)
+dispersions <- mle_dispersion
+output <- glim(New_X_gamma, y_gamma, "gamma", beta_grid, mle_dispersion, m = 100, parallel = FALSE)
 profiled_glim <- c()
 for (j in 1:length(output[[1]])) {
   current_max_for_this_beta <- 0
@@ -104,11 +86,7 @@ for (j in 1:length(output[[1]])) {
   }
   profiled_glim[j] <- current_max_for_this_beta
 }
-profiled_mat_glim <- matrix(
-  profiled_glim,
-  nrow = length(beta_0_grid),
-  ncol = length(beta_1_grid)
-)
+profiled_mat_glim <- matrix(profiled_glim, nrow = length(beta_0_grid), ncol = length(beta_1_grid))
 contour(
   beta_0_grid,
   beta_1_grid,

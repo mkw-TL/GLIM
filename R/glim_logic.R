@@ -7,6 +7,7 @@ NULL
 # After making changes, restart R, get in the package directory
 #devtools::document()
 #devtools::install()
+# Pass everything to our single unified C++ dispatcher function
 
 # Evaluates possibility for beta/dispersion values
 # m is the number of samples for each parameter value you would like to have
@@ -22,118 +23,39 @@ glim_raw <- function(
   m,
   parallel
 ) {
+  print("Here")
   if (is.data.frame(X)) {
     X <- model.matrix(X)
   }
-  output <- list()
-  # Define which c++ function is going to be used to fit
-  if (family == "binomial" || family == "logistic") {
-    cpp_fit_glm <- glm_logis_pl_cpp
-    dispersion <- 1 # Only doing this to appease the for loop
-  } else if (family == "gamma") {
-    cpp_fit_glm <- glm_gamma_pl_cpp_dispersion
-    dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
-  } else if (family == "poisson") {
-    cpp_fit_glm <- glm_poisson_pl_cpp
-    dispersion <- 1
-  } else if (family == "inverse-gaussian" || family == "inverse.gaussian") {
-    cpp_fit_glm <- glm_invgauss_pl_cpp
-    dispersion <- 1
-  } else if (family == "normal" || family == "gaussian") {
-    cpp_fit_glm <- glm_gaussian_pl_cpp
-    dispersion <- 1
-  } else {
-    stop("Family not supported")
-  }
-  if (parallel == TRUE) {
-    # if we don't have multiple beta that we want to evaluate it over (i.e. is vector), then we don't
-    # want to allocate clusters
-    # TODO #1 Fit y = xb with no intercept?
-    i = 0
-    if (is.vector(betas)) {
-      # TODO #2 Map out where the parallelization happens / how to deal with dispersion
-      for (dispersion in dispersions) {
-        i = i + 1
-        output[[i]] <- as.matrix(cpp_fit_glm(
-          X = X,
-          y = y,
-          beta_vals = betas,
-          dispersion,
-          mle_coefs,
-          mle_val,
-          m = m
-        ))
-      }
-    } else {
-      i = 0
-      for (dispersion in dispersions) {
-        i = i + 1
-        num_cores <- parallel::detectCores() - 1
-        cl <- parallel::makeCluster(num_cores)
+  output <- matrix()
 
-        parallel::clusterCall(cl, function() library(IMMC))
-        # Export the DATA to the workers
-        parallel::clusterExport(
-          cl,
-          varlist = c("X", "y", "betas", "dispersion", "mle_coefs", "mle_val", "m"),
-          envir = environment()
-        )
-        # TODO #3 Check whether parallelization works with dispersion
-        output[[i]] <- pbapply::pbapply(
-          betas,
-          1,
-          function(b) {
-            cpp_fit_glm(
-              X = X,
-              y = y,
-              beta_vals = as.numeric(b),
-              dispersion,
-              mle_coefs,
-              mle_val,
-              m = m
-            )
-          },
-          cl = cl
-        )
-      }
-      parallel::stopCluster(cl)
+  if (parallel) {
+    num_omp_threads <- max(1, parallel::detectCores() - 1)
+
+    # We change the number of blas threads down to 1 so that the parallelization doesn't
+    # request even more threads.
+    if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+      original_blas_threads <- RhpcBLASctl::blas_get_num_procs()
+      RhpcBLASctl::blas_set_num_threads(1)
     }
   } else {
-    i = 0
-    if (is.vector(betas)) {
-      for (dispersion in dispersions) {
-        i <- i + 1
-        output[[i]] <- as.matrix(cpp_fit_glm(
-          X = X,
-          y = y,
-          beta_vals = betas,
-          dispersion,
-          mle_coefs,
-          mle_val = mle_val,
-          m = m
-        ))
-      }
-    } else {
-      i <- 0
-      for (dispersion in dispersions) {
-        i <- i + 1
-        # result of the pbapply is a vector across the joint beta values
-        # Would make sense to put dispersion inside? Some families don't have a dispersion grid, though
-        # Dispersion also has less grid values compared to betas. However, the current code is meant for beta search.
-        output[[i]] <- pbapply::pbapply(betas, 1, function(b) {
-          cpp_fit_glm(
-            X = X,
-            y = y,
-            beta_vals = as.numeric(b),
-            dispersion,
-            mle_coefs,
-            mle_val = mle_val,
-            m = m
-          )
-        })
-      }
-    }
+    num_omp_threads <- 1
   }
+
+  output <- fit_glm_omp_cpp(
+    X = X,
+    y = y,
+    betas = betas,
+    family_str = family, # Pass the string straight down
+    num_threads = num_omp_threads,
+    m = m
+  )
+
+  # If we changed the amount of threads that blas uses, change this back. Globally for the R session.
+  if (parallel && requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+    RhpcBLASctl::blas_set_num_threads(original_blas_threads)
+  }
+
   return(output)
 }
 
@@ -186,12 +108,12 @@ glim_inner_prob_approx_samples <- function(
   X,
   y,
   family = "gaussian",
+  betas,
   dispersions,
   mle_val,
   m,
   parallel
 ) {
-  m <- 100
   # TODO #6 Implementation of dispersion is currently incorrect
   pl <- function(z, phis) {
     glim_raw(X, y, family, z, phis, mle_coefs, mle_val = mle_val, m, parallel)
@@ -236,9 +158,7 @@ glim_inner_prob_approx_samples <- function(
   parallel <- FALSE
   for (a in AA) {
     i <- i + 1
-    m <- 100
     parallel <- FALSE
-    # imvar(log(1), .05, pl, mle_coefs, eJ, parallel, 1e-2, 5, 1, 20)
     xi[i] <- imvar(
       prev_xi,
       a,
@@ -342,7 +262,7 @@ glim <- function(
       dispersions,
       mle_coefs,
       mle_val = ll_mle_original_data,
-      m,
+      m = m,
       parallel = parallel
     ))
   }

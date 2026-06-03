@@ -11,7 +11,7 @@ LinkingTo:
     Rcpp, RcppArmadillo
 Imports: 
     Rcpp, RcppArmadillo, pbapply, fastglm
-SystemRequirements: C++14, LAPACK, BLAS
+SystemRequirements: C++20, LAPACK, BLAS
 Config/roxygen2/version: 8.0.0
 RoxygenNote: 8.0.0
 

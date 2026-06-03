@@ -1,10 +1,45 @@
 // Translated to c++ by Gemini
 // Thoroughly vetted
 #include <RcppArmadillo.h>
+#include <cmath>
+#include <string>
+#include <omp.h>
+#include <random>
+#include <boost/math/special_functions/polygamma.hpp>
+#include <boost/math/special_functions/digamma.hpp>
 // [[Rcpp::depends(RcppArmadillo)]]
+// [[Rcpp::plugins(openmp)]]
 
 using namespace Rcpp;
 using namespace arma;
+
+
+// Define an Enum for the families so we aren't comparing strings in the loop
+enum class GlmFamily {
+  Gaussian,
+  Binomial,
+  Poisson,
+  Gamma,
+  InverseGaussian,
+  Unknown
+};
+
+
+// Helper to convert R strings to our C++ Enum (done once outside the loop)
+GlmFamily string_to_family(const std::string& fam) {
+  if (fam == "gaussian" || fam == "normal") return GlmFamily::Gaussian;
+  if (fam == "binomial" || fam == "logistic") return GlmFamily::Binomial;
+  if (fam == "poisson") return GlmFamily::Poisson;
+  if (fam == "gamma") return GlmFamily::Gamma;
+  if (fam == "inverse-gaussian" || fam == "inverse.gaussian") return GlmFamily::InverseGaussian;
+  return GlmFamily::Unknown;
+}
+
+
+
+
+
+
 
 // IRLS logistic regression solver. Canonical link
 // This completely replaces fastglm for the inner simulation loop
@@ -45,26 +80,30 @@ arma::vec fit_logistic_cpp(const arma::mat& X, const arma::vec& y) {
 // Note that dispersion is not needed here. Only passing because it keeps consistency in the argument.
 // [[Rcpp::export]]
 double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y,
-                        const arma::vec& beta_vals, const double dispersion, const arma::vec& mle_coefs, double mle_val, int m) {
+                        const arma::vec& beta_vals, int m) {
   int n = X.n_rows;
 
   // Compute true probabilities based on proposed betas
   arma::vec eta = X * beta_vals;
   arma::vec p = 1.0 / (1.0 + arma::exp(-eta));
 
+  double mle_val = arma::dot(y, eta) - arma::sum(arma::log1p(arma::exp(eta)));
+
   // Precompute constant scalar for f.x
   double sum_log_term = arma::sum(arma::log1p(arma::exp(eta)));
   double f_x = arma::dot(y, eta) - sum_log_term - mle_val;
 
   // Computing new random binomial data:
-  arma::mat U = arma::randu<arma::mat>(n, m);
+  thread_local std::random_device rd;
+  thread_local std::mt19937 gen(rd());
+  std::uniform_real_distribution<double> runif(0.0, 1.0);
   arma::mat Y(n, m);
 
-  // Loop over columns and apply vectorized thresholding
   for(int j = 0; j < m; ++j) {
-    // U.col(j) < p creates a boolean/unsigned vector (0s and 1s)
-    // arma::conv_to converts it back to doubles to fit inside Y
-    Y.col(j) = arma::conv_to<arma::vec>::from( U.col(j) < p );
+    for(int i = 0; i < n; ++i) {
+      // ternary operator. Yields value of 1 if true and 0 if false. 
+      Y(i, j) = (runif(gen) < p(i)) ? 1.0 : 0.0;
+    }
   }
   // Fast cross-product for all M simulations
   arma::rowvec llX = eta.t() * Y - sum_log_term;
@@ -100,20 +139,21 @@ double calculate_deviance_gamma(const arma::vec& y, const arma::vec& mu) {
 
 // IRLS Gamma regression solver (Log link), fisher weights, W = 1.
 // [[Rcpp::export]]
-arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::vec& y) {
+arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::mat& XtX, const arma::vec& y) {
   arma::vec beta = arma::zeros(X.n_cols);
   // log(0) would give negative infinity. 
-  if (arma::mean(y) == 0) {
-    Rcpp::Rcout << "What the heck";
-  }
+  // TODO warning
   beta(0) = std::log(arma::mean(y)); // Intercept = log(mean of y)
   // TODO: #10 Note that this presumes an intercept in the first column.
   // Initialization so that the y and eta_hat values start off close to eachother.
   //
   // Note that formally there is a 1/nu here. However, we will cancel it out with the gradient.
-  arma::mat XTX = X.t() * X;
+  arma::mat XTX = XtX;
   double current_dev = calculate_deviance_gamma(y, arma::exp(X*beta));
 
+  arma::vec step(X.n_rows);
+  arma::vec proposed_beta(X.n_cols);
+  arma::vec proposed_mu(X.n_rows);
 
   for(int i = 0; i < 20; ++i) {
     arma::vec eta = X * beta;
@@ -130,7 +170,7 @@ arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::vec& y) {
       arma::solve(step, XTX, grad);
     }
     // Propose a new beta
-    arma::vec proposed_beta = beta + step;
+    proposed_beta = beta + step;
     arma::vec proposed_mu = arma::exp(X * proposed_beta);
     double proposed_dev = calculate_deviance_gamma(y, proposed_mu);
     // Step-Halving Loop
@@ -143,7 +183,7 @@ arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::vec& y) {
         half_iter++;
     }
     beta = proposed_beta;
-    current_dev = calculate_deviance_gamma(y, arma::exp(X*beta));
+    current_dev = proposed_dev;
 
     if(arma::norm(step) < 1e-6) break;
   }
@@ -177,9 +217,7 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
   // Note that this is the unscaled deviance. The estimated dispersion parameter
   // are the same for a particular dataset.
   double D_mean = arma::mean(ratio - arma::log(ratio) - 1.0);
-  if (D_mean > 50.0 || D_mean < 0) {
-    Rcpp::Rcout << "WARNING: Extreme D_mean detected: " << D_mean << "\n";
-}    
+
   // Edge case: If the model fits perfectly, D_mean hits 0, implying infinite shape.
   if (D_mean <= 1e-10) {
       return 99999.0; 
@@ -196,8 +234,9 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
     double tol = 1e-8;
     
     for (int i = 0; i < max_iter; ++i) {
-        double f = std::log(nu) - R::digamma(nu) - D_mean;
-        double f_prime = (1.0 / nu) - R::trigamma(nu);
+      // psi is the digamma function
+        double f = std::log(nu) - boost::math::digamma(nu) - D_mean;
+        double f_prime = (1.0 / nu) - boost::math::polygamma(1, nu);
 
         double step = f / f_prime;
         double next_nu = nu - step;
@@ -226,24 +265,27 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
 // Note that beta_vals is not the entire matrix of all possible betas, but just for a single vector.
 // [[Rcpp::export]]
 double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y,
-                        const arma::vec& beta_vals, double dispersion, const arma::vec& mle_coefs, double mle_val,
-                        int m) {
+                        const arma::vec& beta_vals, int m) {
   int n = X.n_rows;
   
   // Compute true expected values based on proposed betas
-arma::vec eta = X * beta_vals;
-eta.elem(arma::find(eta > 700)).fill(700);
+  arma::vec eta = X * beta_vals;
+  eta.elem(arma::find(eta > 700)).fill(700);
   eta.elem(arma::find(eta < -70)).fill(-70); // avoids D_mean explosions
   arma::vec mu = arma::exp(eta);
   // TODO: #11 Add more warnings
+  // Note that Rcpp::Rcout will not play nicely with any parallelization
   // Rcpp::Rcout << "Predictions clamped";
   // Prevent mu from getting infinitesimally small
   mu.elem(arma::find(mu < 1e-8)).fill(1e-8);
   
+  double dispersion = mle_estimate_dispersion_gamma(y, mu, beta_vals.n_elem);
   double shape = 1/dispersion;
-
+  arma::mat XTX = X.t() * X;
+  
   // Compute full log-likelihood for the observed data under proposed beta
   double true_ll = compute_gamma_ll(y, eta, shape);
+  arma::vec mle_coefs = fit_gamma_log_cpp(X, XTX, y);
 
   // Note that the dispersion parameter is not estimated via mle in R's glm.
   // Note, however, that we are simply accepcting a dispersion parameter as given in an argument
@@ -251,12 +293,17 @@ eta.elem(arma::find(eta > 700)).fill(700);
   double mle_ll = compute_gamma_ll(y, eta_hat, shape);
   double f_x = true_ll - mle_ll;
 
+  thread_local std::random_device rd;
+  // rd() is a non-deterministic random number
+  thread_local std::mt19937 gen(rd());
+
   // Simulate Y matrix inline using R's Gamma RNG
   arma::mat Y(n, m);
   arma::vec scale = mu * dispersion;
   for(int j = 0; j < m; ++j) {
     for(int i = 0; i < n; ++i) {
-      Y(i, j) = R::rgamma(shape, scale(i));
+      std::gamma_distribution<double> rgamma(shape, scale(i));
+      Y(i, j) = rgamma(gen);
     }
   }
 
@@ -268,10 +315,9 @@ eta.elem(arma::find(eta > 700)).fill(700);
 
   int count_less = 0;
 
-  // Inner loop: fit models entirely in C++
   for(int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
-    arma::vec beta_sim_hat = fit_gamma_log_cpp(X, y_sim);
+    arma::vec beta_sim_hat = fit_gamma_log_cpp(X, XTX,y_sim);
     arma::vec eta_sim_hat = X * beta_sim_hat;
     arma::vec mu_sim_hat = exp(eta_sim_hat);
 
@@ -296,83 +342,6 @@ eta.elem(arma::find(eta > 700)).fill(700);
   return (double)count_less / m;
 }
 
-// This function plays around with where the dispersion parameter is plugged in, and what is estimated.
-// [[Rcpp::export]]
-double glm_gamma_pl_cpp_dispersion(const arma::mat& X, const arma::vec& y,
-                        const arma::vec& beta_vals, double dispersion, const arma::vec& mle_coefs, double mle_val,
-                        int m) {
-  int n = X.n_rows;
-  
-  // Compute true expected values based on proposed betas
-arma::vec eta = X * beta_vals;
-eta.elem(arma::find(eta > 700)).fill(700);
-  eta.elem(arma::find(eta < -70)).fill(-70); // avoids D_mean explosions
-  arma::vec mu = arma::exp(eta);
-  // Rcpp::Rcout << "Predictions clamped";
-  // Prevent mu from getting infinitesimally small
-  mu.elem(arma::find(mu < 1e-8)).fill(1e-8);
-
-  // Compute full log-likelihood for the observed data under proposed beta
-  double true_ll = compute_gamma_ll(y, eta, 1/dispersion);
-  arma::vec eta_hat = X * mle_coefs;
-  // Note that the dispersion is found by maximizing, after betahat is maximized.
-  double est_disp = mle_estimate_dispersion_gamma(y, exp(eta_hat), mle_coefs.n_elem);
-  double mle_ll = compute_gamma_ll(y, eta_hat, 1/est_disp);
-  double f_x = true_ll - mle_ll;
-  if (f_x > 1e-4) { // Small tolerance for floating point errors
-    Rcpp::Rcout << "WARNING: Restricted LL (" << true_ll 
-                << ") is greater than MLE LL (" << mle_ll << ")!\n";
-}
-
-  // Simulate Y matrix inline using R's Gamma RNG
-  arma::mat Y(n, m);
-  // Shape parameter here is nu, which is 1/phi (because phi = 1/nu)
-  double shape = 1/dispersion;
-  // y / shape
-  arma::vec scale = mu * dispersion;
-  for(int j = 0; j < m; ++j) {
-    for(int i = 0; i < n; ++i) {
-      Y(i, j) = R::rgamma(shape, scale(i));
-    }
-  }
-
-  // This computes \ell(beta, phi, X). phi and beta use the provided values.
-  // Precompute constant pieces of log-likelihood across all M simulations
-  double constant_ll_term = n * (shape * std::log(shape) - std::lgamma(shape));
-  // Vectorized cross-product step for part of the log-likelihood evaluation
-  arma::rowvec term3_all = -shape * (arma::exp(-eta).t() * Y + arma::sum(eta));
-
-  int count_less = 0;
-
-  // Inner loop: fit models entirely in C++
-  for(int j = 0; j < m; ++j) {
-    arma::vec y_sim = Y.col(j);
-    arma::vec beta_sim_hat = fit_gamma_log_cpp(X, y_sim);
-    arma::vec eta_sim_hat = X * beta_sim_hat;
-    arma::vec mu_sim_hat = exp(eta_sim_hat);
-
-    // Need to pass in data to use the mle estimator.
-    double shape_sim_hat = 1/mle_estimate_dispersion_gamma(y_sim, mu_sim_hat, beta_sim_hat.n_elem);
-    // Rcpp::Rcout << "shape_sim_hat: " << shape_sim_hat;
-    // May be an an error in this calculation. Keep it simple for now.
-    // // Calculate the simulated dependent term: (shape - 1) * sum(log(y_sim))
-    // double term2_j = (shape_sim_hat - 1.0) * arma::sum(arma::log(y_sim));
-    // double llX_j = constant_ll_term + term2_j + term3_all(j);
-    double llX_j = compute_gamma_ll(y_sim, eta, 1/est_disp);
-
-    // Evaluate simulated MLE log-likelihood
-    double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
-    double f_X_j = llX_j - mle_sim;
-
-    if(f_X_j < f_x) {
-      count_less++;
-    }
-  }
-
-  return (double)count_less / m;
-}
-
-
 
 
 // Anything below is still in progress. Not that above isn't, but you know. 
@@ -395,7 +364,7 @@ arma::vec fit_gaussian_cpp(const arma::mat& X, const arma::vec& y) {
 // Helper function to compute Gaussian log-likelihood
 // [[Rcpp::export]]
 double compute_gaussian_ll(const arma::vec& y, const arma::vec& mu, double sigma, int n) {
-  double ll = -(n / 2.0) * std::log(2.0 * M_PI * sigma * sigma)
+  double ll = -(n / 2.0) * std::log(2.0 * M_PI * sigma * sigma);
   - arma::sum(arma::pow(y - mu, 2)) / (2.0 * sigma * sigma);
   return ll;
 }
@@ -403,8 +372,7 @@ double compute_gaussian_ll(const arma::vec& y, const arma::vec& mu, double sigma
 // Main simulation function for Gaussian
 // [[Rcpp::export]]
 double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y,
-                           const arma::vec& beta_vals, const double dispersion, const arma::vec& mle_coefs, double mle_val,
-                           int m) {
+                           const arma::vec& beta_vals, int m) {
   int n = X.n_rows;
 
   arma::vec mu = X * beta_vals; // Identity link
@@ -414,16 +382,23 @@ double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y,
   double sigma = std::sqrt(estimated_dispersion);
 
   double true_ll = compute_gaussian_ll(y, mu, sigma, n);
+  arma::vec beta_hat = fit_gaussian_cpp(X, y);
+  arma::vec mu_hat = X * beta_hat;
+  double mle_val = compute_gaussian_ll(y, mu_hat, sigma, n);
   double f_x = true_ll - mle_val;
 
-  // 1. Batch generate an n x m matrix of Standard Normals N(0,1)
-  arma::mat Y = arma::randn<arma::mat>(n, m);
+  // Needed to change from arma to a thread safe version. 
 
-  // 2. Scale by standard deviation
-  Y *= sigma;
+thread_local std::random_device rd;
+  thread_local std::mt19937 gen(rd());
+  std::normal_distribution<double> rnorm(0.0, 1.0);
 
-  // 3. Add the mean vector (mu) to every column simultaneously
-  Y.each_col() += mu;
+  arma::mat Y(n, m);
+  for(int j = 0; j < m; ++j) {
+    for(int i = 0; i < n; ++i) {
+      Y(i, j) = mu(i) + sigma * rnorm(gen);
+    }
+  }
 
   int count_less = 0;
 
@@ -455,6 +430,10 @@ double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y,
 arma::vec fit_poisson_log_cpp(const arma::mat& X, const arma::vec& y) {
   arma::vec beta = arma::zeros(X.n_cols);
 
+  arma::vec step(X.n_cols);
+  arma::vec proposed_beta(X.n_cols);
+  arma::vec proposed_mu(X.n_rows);
+
   for(int i = 0; i < 20; ++i) {
     arma::vec eta = X * beta;
 
@@ -469,7 +448,6 @@ arma::vec fit_poisson_log_cpp(const arma::mat& X, const arma::vec& y) {
     arma::mat XTWX = X.t() * arma::diagmat(w) * X;
     arma::vec grad = X.t() * (y - mu);
 
-    arma::vec step;
     bool success = arma::solve(step, XTWX, grad, arma::solve_opts::fast);
     if(!success) {
       if(!arma::solve(step, XTWX, grad)) break;
@@ -498,20 +476,31 @@ double glm_poisson_ll(arma::vec& eta, arma::vec& mu, const arma::vec& y) {
 // Main simulation function for Poisson
 // [[Rcpp::export]]
 double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y,
-                          const arma::vec& beta_vals, const double dispersion, const arma::vec& mle_coefs, double mle_val, int m) {
+                          const arma::vec& beta_vals, int m) {
   int n = X.n_rows;
 
   arma::vec eta = X * beta_vals;
   arma::vec mu = arma::exp(eta);
 
   double true_ll = glm_poisson_ll(eta, mu, y);
+  arma::vec coefs = fit_poisson_log_cpp(X, y);
+  arma::vec eta_hat = X * coefs;
+  arma::vec mu_hat = arma::exp(eta_hat);
+  double mle_val = glm_poisson_ll(eta_hat, mu_hat, y);
 
   double f_x = true_ll - mle_val;
 
   arma::mat Y(n, m);
+
+  // Constructor
+  thread_local std::random_device rd;
+  // rd() is a non-deterministic random number
+  thread_local std::mt19937 gen(rd());
+  // Is using the random import to get access to these distributions
   for(int j = 0; j < m; ++j) {
     for(int i = 0; i < n; ++i) {
-      Y(i, j) = R::rpois(mu(i));
+      std::poisson_distribution<int> rpois(mu(i));
+      Y(i, j) = rpois(gen);
     }
   }
 
@@ -520,15 +509,16 @@ double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y,
   for(int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec coefs = fit_poisson_log_cpp(X, y_sim);
-    arma::vec eta_hat = X * coefs;
-    arma::vec mu_hat = arma::exp(eta_hat);
+    arma::vec coefs_sim = fit_poisson_log_cpp(X, y_sim);
+    arma::vec eta_hat_sim = X * coefs_sim;
+    arma::vec mu_hat_sim = arma::exp(eta_hat_sim);
 
     double mle_sim = 0.0;
     double llX_j = 0.0;
+    // Compare log likelihoods. Gamma y+1 is y!
     for(int i = 0; i < n; ++i) {
-      mle_sim += R::dpois(y_sim(i), mu_hat(i), 1);
-      llX_j += R::dpois(y_sim(i), mu(i), 1);
+      mle_sim += y_sim(i) * std::log(mu_hat_sim(i)) - mu_hat_sim(i) - std::lgamma(y_sim(i) + 1.0);
+      llX_j += y(i) * std::log(mu(i)) - mu(i) - std::lgamma(y(i) + 1.0);
     }
 
     double f_X_j = llX_j - mle_sim;
@@ -547,19 +537,31 @@ double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y,
 
 // R does not have a native rinvgauss. Implemented is the Michael,
 // Schucany, and Haas (1976) algorithm to simulate it via C++.
-// [[Rcpp::export]]
-double rinvgauss_single(double mu, double lambda) {
-  double v = R::rnorm(0, 1);
+// Pass the pointer to the random number generator
+// Don't need to export it as an R object, because R doesn't know what the mercene twister generator is
+double rinvgauss_single(double mu, double lambda, std::mt19937& gen) {
+  // <> denotes the type expected out of this template
+  // Loosely, templates can be thought of an instance of a class
+  std::normal_distribution<double> rnorm(0.0, 1.0);
+  std::uniform_real_distribution<double> runif(0.0, 1.0);
+  double v = rnorm(gen);
+
   double y_sq = v * v;
   double x = mu + (mu * mu * y_sq) / (2.0 * lambda) -
     (mu / (2.0 * lambda)) * std::sqrt(4.0 * mu * lambda * y_sq + mu * mu * y_sq * y_sq);
 
-  double u = R::runif(0, 1);
+  double u = runif(gen);
   if (u <= mu / (mu + x)) {
     return x;
   } else {
     return (mu * mu) / x;
   }
+}
+
+// [[Rcpp::export]]
+double mle_estimate_dispersion_inv_gauss(const arma::vec& y, const double ybar) {
+  // Taking the mle wrt mu yields ybar (presuming mu =/= 0)
+  return y.n_elem / (arma::accu(ybar * ybar * y / arma::dot((y - ybar),(y-ybar))));
 }
 
 // IRLS Inverse Gaussian regression solver (1/mu^2 link)
@@ -626,7 +628,7 @@ double compute_invgauss_ll(const arma::vec& y, const arma::vec& mu, double gamma
 // Main simulation function for Inverse Gaussian
 // [[Rcpp::export]]
 double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y,
-                           const arma::vec& beta_vals, const double dispersion, const arma::vec& mle_coefs, double mle_val,
+                           const arma::vec& beta_vals,
                            int m) {
   int n = X.n_rows;
 
@@ -637,13 +639,21 @@ double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y,
   double estimated_dispersion = arma::accu(((y - mu) % (y - mu)) / (((mu % mu % mu) * (y.n_elem - beta_vals.n_elem)) * (1 + sbar)));
   double gamma = 1 / estimated_dispersion;
 
+  arma::vec beta_hat = fit_invgauss_cpp(X, y);
+  arma::vec eta_hat = X * beta_hat;
+  arma::vec mu_hat = arma::pow(eta_hat, -.5);
+
   double true_ll = compute_invgauss_ll(y, mu, gamma, n);
+  double mle_val = compute_invgauss_ll(y, mu_hat, gamma, n);
   double f_x = true_ll - mle_val;
+
+  thread_local std::random_device rd;
+  thread_local std::mt19937 gen(rd());
 
   arma::mat Y(n, m);
   for(int j = 0; j < m; ++j) {
     for(int i = 0; i < n; ++i) {
-      Y(i, j) = rinvgauss_single(mu(i), gamma);
+      Y(i, j) = rinvgauss_single(mu(i), gamma, gen);
     }
   }
 
@@ -670,4 +680,75 @@ double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y,
   }
 
   return (double)count_less / m;
+}
+
+
+
+// Need to bring the main function (which calls all other functions) after any functions that it calls
+
+// [[Rcpp::export]]
+arma::mat fit_glm_omp_cpp(const arma::mat& X, 
+                          const arma::vec& y, 
+                          const arma::mat& betas, 
+                          std::string family_str, // Pass string from R
+                          int num_threads = 1,
+                          int m = 100) {
+  
+  // Convert the string to an Enum once right here
+  GlmFamily family = string_to_family(family_str);
+  // This is how we access enums in cpp.
+  if (family == GlmFamily::Unknown) {
+    Rcpp::stop("Family not supported in C++ backend.");
+  }
+
+  int n_evals = betas.n_rows;
+  int n_cols = betas.n_cols; 
+  arma::vec plausabilities(n_evals);
+  arma::mat XtX = X.t() * X;
+  
+  // If _OPENMP is defined, then it will run the omp function. Otherwise, will not throw an error
+  #ifdef _OPENMP
+  omp_set_num_threads(num_threads);
+  #endif
+
+  // The Parallel Loop. Schedule(static) means that each thread is assigned roughly the same amount of work
+  // schedule(dynamic) has a bit more overhead which we don't need here.
+  #pragma omp parallel for schedule(static)
+  for (int i = 0; i < n_evals; ++i) {
+    arma::vec beta_vals = betas.row(i).t();
+    double pl;
+    
+    // Ending colon is a part of the case statement.
+    switch(family) {
+      case GlmFamily::Gamma:
+        pl = glm_gamma_pl_cpp(X, y, beta_vals, m);
+        break;
+        
+      case GlmFamily::Binomial:
+        pl = glm_logis_pl_cpp(X, y, beta_vals, m);
+        break;
+        
+      case GlmFamily::Poisson:
+        pl = glm_poisson_pl_cpp(X, y, beta_vals, m);
+        break;
+
+      case GlmFamily::InverseGaussian:
+        pl = glm_invgauss_pl_cpp(X, y, beta_vals, m);
+        break;
+
+      case GlmFamily::Gaussian:
+        pl = glm_gaussian_pl_cpp(X, y, beta_vals, m);
+        break;
+        
+      default:
+        // Fallback or placeholder for Gaussian/Identity
+        pl = -1;
+        // TODO #13 need a better exit method.
+        break;
+    }
+    
+    plausabilities(i) = pl;
+  }
+  
+  return plausabilities;
 }
