@@ -12,17 +12,7 @@ NULL
 # Evaluates possibility for beta/dispersion values
 # m is the number of samples for each parameter value you would like to have
 #' @export
-glim_raw <- function(
-  X,
-  y,
-  family = "gaussian",
-  betas,
-  dispersions,
-  mle_coefs,
-  mle_val,
-  m,
-  parallel
-) {
+glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, parallel) {
   print("Here")
   if (is.data.frame(X)) {
     X <- model.matrix(X)
@@ -41,15 +31,6 @@ glim_raw <- function(
   } else {
     num_omp_threads <- 1
   }
-
-  print(typeof(X)) # Should be "double"
-  print(is.matrix(X)) # Should be TRUE
-
-  print(typeof(y)) # Should be "double"
-  print(is.vector(y)) # Should be TRUE
-
-  print(typeof(betas)) # Should be "double"
-  print(is.matrix(betas)) # Should be TRUE
 
   output <- fit_glm_omp_cpp(
     X = X,
@@ -113,19 +94,9 @@ imvar <- function(xi, alpha, pl, mle, J, parallel, tol = 1e-2, a = 1, b = 1, max
 
 # Function that is called if doing the elliptical approximation
 #' @export
-glim_inner_prob_approx_samples <- function(
-  X,
-  y,
-  family = "gaussian",
-  betas,
-  dispersions,
-  mle_val,
-  m,
-  parallel
-) {
-  # TODO #6 Implementation of dispersion is currently incorrect
-  pl <- function(z, phis) {
-    glim_raw(X, y, family, z, phis, mle_coefs, mle_val = mle_val, m, parallel)
+glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", betas, mle_val, m, parallel) {
+  pl <- function(z) {
+    glim_raw(X, y, family, z, mle_coefs, mle_val = mle_val, m, parallel)
   }
   B <- 100
   AA <- seq(0.001, 0.999, length = B)
@@ -209,16 +180,7 @@ glim_inner_prob_approx_samples <- function(
 }
 
 #' @export
-glim <- function(
-  X,
-  y,
-  family = "gaussian",
-  betas,
-  dispersions = 1,
-  m = 1000,
-  parallel = TRUE,
-  approx = FALSE
-) {
+glim <- function(X, y, family = "gaussian", betas, m = 1000, parallel = TRUE, approx = FALSE) {
   if (family == "binomial" || family == "logistic") {
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
     mle_coefs <- glm(y ~ X - 1, family = "binomial")
@@ -255,7 +217,6 @@ glim <- function(
       y,
       family = family,
       betas,
-      dispersions,
       mle_coefs,
       mle_val = ll_mle_original_data,
       m,
@@ -268,7 +229,6 @@ glim <- function(
       X,
       y,
       family = family,
-      dispersions,
       mle_coefs,
       mle_val = ll_mle_original_data,
       m = m,
