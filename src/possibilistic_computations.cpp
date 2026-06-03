@@ -87,7 +87,9 @@ double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y,
   arma::vec eta = X * beta_vals;
   arma::vec p = 1.0 / (1.0 + arma::exp(-eta));
 
-  double mle_val = arma::dot(y, eta) - arma::sum(arma::log1p(arma::exp(eta)));
+  arma::vec beta_hat = fit_logistic_cpp(X, y);
+  arma::vec eta_hat = X * beta_hat;
+  double mle_val = arma::dot(y, eta_hat) - arma::sum(arma::log1p(arma::exp(eta_hat)));
 
   // Precompute constant scalar for f.x
   double sum_log_term = arma::sum(arma::log1p(arma::exp(eta)));
@@ -114,10 +116,10 @@ double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y,
   for(int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec coefs = fit_logistic_cpp(X, y_sim);
-    arma::vec eta_hat = X * coefs;
+    arma::vec sim_coefs = fit_logistic_cpp(X, y_sim);
+    arma::vec eta_sim_hat = X * sim_coefs;
 
-    double mle_sim = arma::dot(y_sim, eta_hat) - arma::sum(arma::log1p(arma::exp(eta_hat)));
+    double mle_sim = arma::dot(y_sim, eta_sim_hat) - arma::sum(arma::log1p(arma::exp(eta_sim_hat)));
     double f_X_j = llX(j) - mle_sim;
 
     if(f_X_j < f_x) {

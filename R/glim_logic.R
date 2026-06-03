@@ -42,6 +42,15 @@ glim_raw <- function(
     num_omp_threads <- 1
   }
 
+  print(typeof(X)) # Should be "double"
+  print(is.matrix(X)) # Should be TRUE
+
+  print(typeof(y)) # Should be "double"
+  print(is.vector(y)) # Should be TRUE
+
+  print(typeof(betas)) # Should be "double"
+  print(is.matrix(betas)) # Should be TRUE
+
   output <- fit_glm_omp_cpp(
     X = X,
     y = y,
@@ -282,4 +291,10 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
   ll_val_samps <- y %*% eta_samps - colSums(log_term_samps)
 
   return(sapply(ll_val, function(x) sum(ll_val_samps < x)) / length(ll_val_samps))
+}
+
+
+#' @export
+compute_gamma_ll_r <- function(y, eta, shape) {
+  return(compute_gamma_ll(y, eta, shape))
 }
