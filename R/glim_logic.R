@@ -13,7 +13,6 @@ NULL
 # m is the number of samples for each parameter value you would like to have
 #' @export
 glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, parallel) {
-  print("Here")
   if (is.data.frame(X)) {
     X <- model.matrix(X)
   }
@@ -59,45 +58,49 @@ generate_unit_matrix <- function(n, d) {
 }
 
 #' @export
-imvar <- function(xi, alpha, pl, mle, J, parallel, tol = 1e-2, a = 1, b = 1, max.it = 25) {
-  # log(xi) because we are getting the exponentiated version (so that it is for sure positive)
-  xi <- log(xi)
+imvar <- function(xi, alpha, pl, mle, J, parallel, tol = 1e-2, a = 5, b = 1, max.it = 25) {
   D <- length(mle)
-  # TODO: #4 Check if removing the case where D = 1 has any issues
-  posts <- as.vector(J$vectors %*% sqrt(qchisq(1 - alpha, D) / abs(J$values))) # Our current best Q, and Cholesky decomp (R^1/2) (although without the scaling xi)
-  # These are the directions to go
-  # Don't I need Qsigma^-1/2 Qt? I am very confused at why we have t(J$vectors). Shouldn't we have just J$vectors as our Q matrix?
-  # Think this was a mistake in the original code, although the outputs are practically identical(?)
-
-  # Define our updating function. Cannot just do a newton rhapson to update our xi.
-  # TODO: #5 Provide reference of stochastic algorithm
-  maxpl <- function(v, phi) {
-    max(c(pl(as.vector(mle) + v, phi), pl(as.vector(mle) - v, phi)))
+  maxpl <- function(v) {
+    max(c(pl(as.vector(mle) + v), pl(as.vector(mle) - v)))
   }
   w <- function(s) a / (1 + s)**b # our weighting function, dampens over time
-  it <- 1
-  repeat {
-    posts.xi <- as.vector(posts * exp(xi / 2)) # Xi scales singular values (scalar for each directions). Again, we are going to evaluate this direction * scaling to see how far off.
-    # exp parameterization lets us avoid negative xi (so when we do sqrt(xi) we don't get imaginary)
-    # removed an if else that dealt with if D == 1
-    g.xi <- maxpl(posts.xi, phi) - alpha
-    if (all(abs(g.xi) <= tol) || (it >= max.it)) {
-      break
-    } else {
-      xi <- xi + w(it) * g.xi
-      it <- it + 1
+  for (d in 1:D) {
+    # print(d)
+    # log(xi) because we are getting the exponentiated version (so that it is for sure positive)
+    xi <- log(xi[d])
+    # TODO: #4 Check if removing the case where D = 1 has any issues
+    posts <- J$vectors[, d] * (sqrt(qchisq(1 - alpha, D) / abs(J$values[d]))) # Our current best Q, and Cholesky decomp (R^1/2) (although without the scaling xi)
+    # These are the directions to go
+    # Don't I need Qsigma^-1/2 Qt? I am very confused at why we have t(J$vectors). Shouldn't we have just J$vectors as our Q matrix?
+    # Think this was a mistake in the original code, although the outputs are practically identical(?)
+
+    # Define our updating function. Cannot just do a newton rhapson to update our xi.
+    # TODO: #5 Provide reference of stochastic algorithm
+    it <- 1
+    repeat {
+      # print(it)
+      posts.xi <- as.vector(posts * exp(xi / 2)) # Xi scales singular values (scalar for each directions). Again, we are going to evaluate this direction * scaling to see how far off.
+      # exp parameterization lets us avoid negative xi (so when we do sqrt(xi) we don't get imaginary)
+      # removed an if else that dealt with if D == 1
+      g.xi <- maxpl(posts.xi) - alpha
+      # print(g.xi)
+      if (all(abs(g.xi) <= tol) || (it >= max.it)) {
+        break
+      } else {
+        xi <- xi + w(it) * g.xi
+        it <- it + 1
+      }
     }
+    xi[d] <- exp(xi)
   }
   # Return the exponential version
-  return(exp(xi))
+  return(xi)
 }
 
 # Function that is called if doing the elliptical approximation
 #' @export
-glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", betas, mle_val, m, parallel) {
-  pl <- function(z) {
-    glim_raw(X, y, family, z, mle_coefs, mle_val = mle_val, m, parallel)
-  }
+glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m, parallel) {
+  print("glim_inner_prob")
   B <- 100
   AA <- seq(0.001, 0.999, length = B)
   if (family == "gaussian" || family == "normal") {
@@ -131,15 +134,24 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", betas, mle
   eJ$values[eJ$values < 1e-4] <- .000001
   mle_coefs <- res$coefficients
 
+  pl <- function(z) {
+    # If z is a vector, matrix(z, nrow = 1) makes it a 1 x p row matrix
+    betas_matrix <- if (is.matrix(z)) z else matrix(z, nrow = 1)
+
+    glim_raw(X, y, family, betas_matrix, mle_coefs, mle_val = mle_val, m, parallel)
+  }
+
   i <- 0
-  xi <- rep(1, B)
-  prev_xi <- 1
+  xi <- list()
+  prev_xi <- rep(1, length(mle_coefs))
   # finding xi
   parallel <- FALSE
   for (a in AA) {
+    print(a)
     i <- i + 1
     parallel <- FALSE
-    xi[i] <- imvar(
+    # xi is our scaling
+    xi[[i]] <- imvar(
       prev_xi,
       a,
       pl,
@@ -151,8 +163,10 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", betas, mle
       b = 1,
       max.it = 20
     )
-    prev_xi <- xi[i]
+    prev_xi <- xi[[i]]
   }
+
+  print("We've gotten the xi's")
   U <- runif(m)
   lerped_xi <- -1
   samples <- matrix(nrow = length(mle_coefs), ncol = m)
@@ -160,13 +174,13 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", betas, mle
   for (u in U) {
     i <- i + 1
     if (u < min(AA)) {
-      lerped_xi <- xi[1]
+      lerped_xi <- xi[[1]]
     } else if (u > max(AA)) {
-      lerped_xi <- xi[B]
+      lerped_xi <- xi[[B]]
     } else {
       r <- sum(AA < u)
       w <- (u - AA[r]) / (AA[r + 1] - AA[r])
-      lerped_xi <- (1 - w) * xi[r] + w * xi[r + 1]
+      lerped_xi <- (1 - w) * xi[[r]] + w * xi[[r + 1]]
     }
 
     # Sample randomly on the boundary TODO #8 explain code
@@ -181,6 +195,7 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", betas, mle
 
 #' @export
 glim <- function(X, y, family = "gaussian", betas, m = 1000, parallel = TRUE, approx = FALSE) {
+  print("glim_called")
   if (family == "binomial" || family == "logistic") {
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
     mle_coefs <- glm(y ~ X - 1, family = "binomial")
@@ -216,7 +231,7 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, parallel = TRUE, ap
       X,
       y,
       family = family,
-      betas,
+      as.matrix(betas),
       mle_coefs,
       mle_val = ll_mle_original_data,
       m,
@@ -229,7 +244,6 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, parallel = TRUE, ap
       X,
       y,
       family = family,
-      mle_coefs,
       mle_val = ll_mle_original_data,
       m = m,
       parallel = parallel
@@ -244,11 +258,13 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
   eta <- X %*% the_compared_theta
   log_term <- log1p(exp(eta))
   ll_val <- y %*% eta - colSums(log_term)
+  print(ll_val)
 
   eta_samps <- X %*% samples
   # p <- 1/(1 + exp(-eta_samps))
   log_term_samps <- log1p(exp(eta_samps))
   ll_val_samps <- y %*% eta_samps - colSums(log_term_samps)
+  print(ll_val_samps)
 
   return(sapply(ll_val, function(x) sum(ll_val_samps < x)) / length(ll_val_samps))
 }
