@@ -45,8 +45,8 @@ GlmFamily string_to_family(const std::string& fam) {
 // This completely replaces fastglm for the inner simulation loop
 // Does not need to estimate the dispersion parameter since a function of the mean
 // [[Rcpp::export]]
-arma::vec fit_logistic_cpp(const arma::mat& X, const arma::vec& y) {
-  arma::vec beta = arma::zeros(X.n_cols);
+arma::vec fit_logistic_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs) {
+  arma::vec beta = mle_coefs;
 
   for(int i = 0; i < 15; ++i) { // 15 iterations is usually plenty for convergence
     arma::vec eta = X * beta;
@@ -79,7 +79,7 @@ arma::vec fit_logistic_cpp(const arma::mat& X, const arma::vec& y) {
 // 2. The main simulation function
 // Note that dispersion is not needed here. Only passing because it keeps consistency in the argument.
 // [[Rcpp::export]]
-double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y,
+double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs,
                         const arma::vec& beta_vals, int m) {
   int n = X.n_rows;
 
@@ -87,8 +87,7 @@ double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y,
   arma::vec eta = X * beta_vals;
   arma::vec p = 1.0 / (1.0 + arma::exp(-eta));
 
-  arma::vec beta_hat = fit_logistic_cpp(X, y);
-  arma::vec eta_hat = X * beta_hat;
+  arma::vec eta_hat = X * mle_coefs;
   double mle_val = arma::dot(y, eta_hat) - arma::sum(arma::log1p(arma::exp(eta_hat)));
 
   // Precompute constant scalar for f.x
@@ -113,10 +112,11 @@ double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y,
   int count_less = 0;
 
   // Inner loop: fit models entirely in C++
+  #pragma omp parallel for schedule(static) reduction(+:count_less)
   for(int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec sim_coefs = fit_logistic_cpp(X, y_sim);
+    arma::vec sim_coefs = fit_logistic_cpp(X, y_sim, mle_coefs);
     arma::vec eta_sim_hat = X * sim_coefs;
 
     double mle_sim = arma::dot(y_sim, eta_sim_hat) - arma::sum(arma::log1p(arma::exp(eta_sim_hat)));
@@ -141,12 +141,8 @@ double calculate_deviance_gamma(const arma::vec& y, const arma::vec& mu) {
 
 // IRLS Gamma regression solver (Log link), fisher weights, W = 1.
 // [[Rcpp::export]]
-arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::mat& XtX, const arma::vec& y) {
-  arma::vec beta = arma::zeros(X.n_cols);
-  // log(0) would give negative infinity. 
-  // TODO warning
-  beta(0) = std::log(arma::mean(y)); // Intercept = log(mean of y)
-  // TODO: #10 Note that this presumes an intercept in the first column.
+arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::mat& XtX, const arma::vec& y, const arma::vec& mle_coefs) {
+  arma::vec beta = mle_coefs;
   // Initialization so that the y and eta_hat values start off close to eachother.
   //
   // Note that formally there is a 1/nu here. However, we will cancel it out with the gradient.
@@ -199,6 +195,15 @@ double compute_gamma_ll(const arma::vec& y, const arma::vec& eta, double shape) 
   double term2 = (shape - 1.0) * arma::sum(arma::log(y));
   double term3 = -shape * (arma::dot(y, arma::exp(-eta)) + arma::sum(eta));
   return term1 + term2 + term3;
+}
+
+// [[Rcpp::export]]
+arma::vec compute_gamma_ll_mat(const arma::vec&y, const arma::mat& eta, double shape) {
+  arma::vec ll(eta.n_cols);
+  for(int i = 0; i < eta.n_cols; ++i) {
+    ll(i) = compute_gamma_ll(y, eta.col(i), shape);
+  }
+  return ll;
 }
 
 // Uses Fletcher's correction to Pearson's MoM estimator. (Not yet -- keeping it simple)
@@ -266,7 +271,7 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
 // 2. The main simulation function
 // Note that beta_vals is not the entire matrix of all possible betas, but just for a single vector.
 // [[Rcpp::export]]
-double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y,
+double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs,
                         const arma::vec& beta_vals, int m) {
   int n = X.n_rows;
   
@@ -287,7 +292,6 @@ double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y,
   
   // Compute full log-likelihood for the observed data under proposed beta
   double true_ll = compute_gamma_ll(y, eta, shape);
-  arma::vec mle_coefs = fit_gamma_log_cpp(X, XTX, y);
 
   // Note that the dispersion parameter is not estimated via mle in R's glm.
   // Note, however, that we are simply accepcting a dispersion parameter as given in an argument
@@ -317,9 +321,10 @@ double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y,
 
   int count_less = 0;
 
+  #pragma omp parallel for reduction(+:count_less)
   for(int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
-    arma::vec beta_sim_hat = fit_gamma_log_cpp(X, XTX,y_sim);
+    arma::vec beta_sim_hat = fit_gamma_log_cpp(X, XTX,y_sim, mle_coefs);
     arma::vec eta_sim_hat = X * beta_sim_hat;
     arma::vec mu_sim_hat = exp(eta_sim_hat);
 
@@ -373,7 +378,7 @@ double compute_gaussian_ll(const arma::vec& y, const arma::vec& mu, double sigma
 
 // Main simulation function for Gaussian
 // [[Rcpp::export]]
-double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y,
+double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs,
                            const arma::vec& beta_vals, int m) {
   int n = X.n_rows;
 
@@ -384,8 +389,7 @@ double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y,
   double sigma = std::sqrt(estimated_dispersion);
 
   double true_ll = compute_gaussian_ll(y, mu, sigma, n);
-  arma::vec beta_hat = fit_gaussian_cpp(X, y);
-  arma::vec mu_hat = X * beta_hat;
+  arma::vec mu_hat = X * mle_coefs;
   double mle_val = compute_gaussian_ll(y, mu_hat, sigma, n);
   double f_x = true_ll - mle_val;
 
@@ -429,8 +433,8 @@ thread_local std::random_device rd;
 
 // IRLS Poisson regression solver (Log link)
 // [[Rcpp::export]]
-arma::vec fit_poisson_log_cpp(const arma::mat& X, const arma::vec& y) {
-  arma::vec beta = arma::zeros(X.n_cols);
+arma::vec fit_poisson_log_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs) {
+  arma::vec beta = mle_coefs;
 
   arma::vec step(X.n_cols);
   arma::vec proposed_beta(X.n_cols);
@@ -477,7 +481,7 @@ double glm_poisson_ll(arma::vec& eta, arma::vec& mu, const arma::vec& y) {
 
 // Main simulation function for Poisson
 // [[Rcpp::export]]
-double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y,
+double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs,
                           const arma::vec& beta_vals, int m) {
   int n = X.n_rows;
 
@@ -485,8 +489,7 @@ double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y,
   arma::vec mu = arma::exp(eta);
 
   double true_ll = glm_poisson_ll(eta, mu, y);
-  arma::vec coefs = fit_poisson_log_cpp(X, y);
-  arma::vec eta_hat = X * coefs;
+  arma::vec eta_hat = X * mle_coefs;
   arma::vec mu_hat = arma::exp(eta_hat);
   double mle_val = glm_poisson_ll(eta_hat, mu_hat, y);
 
@@ -511,7 +514,7 @@ double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y,
   for(int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec coefs_sim = fit_poisson_log_cpp(X, y_sim);
+    arma::vec coefs_sim = fit_poisson_log_cpp(X, y_sim, mle_coefs);
     arma::vec eta_hat_sim = X * coefs_sim;
     arma::vec mu_hat_sim = arma::exp(eta_hat_sim);
 
@@ -568,13 +571,8 @@ double mle_estimate_dispersion_inv_gauss(const arma::vec& y, const double ybar) 
 
 // IRLS Inverse Gaussian regression solver (1/mu^2 link)
 // [[Rcpp::export]]
-arma::vec fit_invgauss_cpp(const arma::mat& X, const arma::vec& y) {
-  arma::vec beta = arma::zeros(X.n_cols);
-
-  // Initialization: For 1/mu^2 link, eta = X*beta must be strictly > 0
-  double mean_y = arma::mean(y);
-  beta(0) = 1.0 / (mean_y * mean_y);
-
+arma::vec fit_invgauss_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs) {
+  arma::vec beta = mle_coefs;
   for(int i = 0; i < 30; ++i) {
     arma::vec eta = X * beta;
     // Enforce strict positivity constraint for the link function
@@ -629,7 +627,7 @@ double compute_invgauss_ll(const arma::vec& y, const arma::vec& mu, double gamma
 
 // Main simulation function for Inverse Gaussian
 // [[Rcpp::export]]
-double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y,
+double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs,
                            const arma::vec& beta_vals,
                            int m) {
   int n = X.n_rows;
@@ -641,8 +639,7 @@ double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y,
   double estimated_dispersion = arma::accu(((y - mu) % (y - mu)) / (((mu % mu % mu) * (y.n_elem - beta_vals.n_elem)) * (1 + sbar)));
   double gamma = 1 / estimated_dispersion;
 
-  arma::vec beta_hat = fit_invgauss_cpp(X, y);
-  arma::vec eta_hat = X * beta_hat;
+  arma::vec eta_hat = X * mle_coefs;
   arma::vec mu_hat = arma::pow(eta_hat, -.5);
 
   double true_ll = compute_invgauss_ll(y, mu, gamma, n);
@@ -664,7 +661,7 @@ double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y,
   for(int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec coefs = fit_invgauss_cpp(X, y_sim);
+    arma::vec coefs = fit_invgauss_cpp(X, y_sim, mle_coefs);
     arma::vec eta_hat = X * coefs;
 
     // Validate eta_hat to compute simulated MLE likelihood
@@ -691,6 +688,7 @@ double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y,
 // [[Rcpp::export]]
 arma::mat fit_glm_omp_cpp(const arma::mat& X, 
                           const arma::vec& y, 
+                          const arma::vec& mle_coefs,
                           const arma::mat& betas, 
                           std::string family_str, // Pass string from R
                           int num_threads = 1,
@@ -715,7 +713,8 @@ arma::mat fit_glm_omp_cpp(const arma::mat& X,
 
   // The Parallel Loop. Schedule(static) means that each thread is assigned roughly the same amount of work
   // schedule(dynamic) has a bit more overhead which we don't need here.
-  #pragma omp parallel for schedule(static)
+  // Don't want the overhead of allocating different threads if it is fast enough to execute on a single
+  #pragma omp parallel for schedule(static) if(n_evals > 10)
   for (int i = 0; i < n_evals; ++i) {
     arma::vec beta_vals = betas.row(i).t();
     double pl;
@@ -723,23 +722,23 @@ arma::mat fit_glm_omp_cpp(const arma::mat& X,
     // Ending colon is a part of the case statement.
     switch(family) {
       case GlmFamily::Gamma:
-        pl = glm_gamma_pl_cpp(X, y, beta_vals, m);
+        pl = glm_gamma_pl_cpp(X, y, mle_coefs, beta_vals, m);
         break;
         
       case GlmFamily::Binomial:
-        pl = glm_logis_pl_cpp(X, y, beta_vals, m);
+        pl = glm_logis_pl_cpp(X, y, mle_coefs, beta_vals, m);
         break;
         
       case GlmFamily::Poisson:
-        pl = glm_poisson_pl_cpp(X, y, beta_vals, m);
+        pl = glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m);
         break;
 
       case GlmFamily::InverseGaussian:
-        pl = glm_invgauss_pl_cpp(X, y, beta_vals, m);
+        pl = glm_invgauss_pl_cpp(X, y, mle_coefs, beta_vals, m);
         break;
 
       case GlmFamily::Gaussian:
-        pl = glm_gaussian_pl_cpp(X, y, beta_vals, m);
+        pl = glm_gaussian_pl_cpp(X, y, mle_coefs, beta_vals, m);
         break;
         
       default:

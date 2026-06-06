@@ -1,6 +1,8 @@
 #' @useDynLib GLIM, .registration = TRUE
 #' @importFrom Rcpp sourceCpp
 NULL
+library(progress)
+library(RhpcBLASctl)
 #
 # Original code written by Joe Harrison (jrharr25@ncsu.edu), translated to cpp by Gemini
 # pkgbuild::compile_dll() validates the package directory differently. Rcpp might implement it's directory check differently
@@ -34,6 +36,7 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
   output <- fit_glm_omp_cpp(
     X = X,
     y = y,
+    mle_coefs = mle_coefs,
     betas = betas,
     family_str = family, # Pass the string straight down
     num_threads = num_omp_threads,
@@ -48,6 +51,7 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
   return(output)
 }
 
+
 #' Generates all random numbers at once, so doesn't need to use the slow apply
 #' Doesn't work if you pass in more than one column
 #' @export
@@ -58,7 +62,7 @@ generate_unit_matrix <- function(n, d) {
 }
 
 #' @export
-imvar <- function(xi, alpha, pl, mle, J, parallel, tol = 1e-2, a = 5, b = 1, max.it = 25) {
+imvar <- function(xi, alpha, pl, mle, J, dispersion, tol = 1e-2, a = 5, b = .65, max.it = 25) {
   D <- length(mle)
   maxpl <- function(v) {
     max(c(pl(as.vector(mle) + v), pl(as.vector(mle) - v)))
@@ -67,19 +71,19 @@ imvar <- function(xi, alpha, pl, mle, J, parallel, tol = 1e-2, a = 5, b = 1, max
   for (d in 1:D) {
     # print(d)
     # log(xi) because we are getting the exponentiated version (so that it is for sure positive)
-    xi <- log(xi[d])
+    xi_d <- log(xi[d])
     # TODO: #4 Check if removing the case where D = 1 has any issues
-    posts <- J$vectors[, d] * (sqrt(qchisq(1 - alpha, D) / abs(J$values[d]))) # Our current best Q, and Cholesky decomp (R^1/2) (although without the scaling xi)
+    posts <- J$vectors[, d] * (sqrt(dispersion * qchisq(1 - alpha, D) * abs(1 / J$values[d]))) # Our current best Q, and Cholesky decomp (R^1/2) (although without the scaling xi)
     # These are the directions to go
     # Don't I need Qsigma^-1/2 Qt? I am very confused at why we have t(J$vectors). Shouldn't we have just J$vectors as our Q matrix?
     # Think this was a mistake in the original code, although the outputs are practically identical(?)
 
     # Define our updating function. Cannot just do a newton rhapson to update our xi.
-    # TODO: #5 Provide reference of stochastic algorithm
+    # Stochastic approximation algorithm (Robbins–Monro)
     it <- 1
     repeat {
       # print(it)
-      posts.xi <- as.vector(posts * exp(xi / 2)) # Xi scales singular values (scalar for each directions). Again, we are going to evaluate this direction * scaling to see how far off.
+      posts.xi <- as.vector(posts * exp(xi_d / 2)) # Xi scales singular values (scalar for each directions). Again, we are going to evaluate this direction * scaling to see how far off.
       # exp parameterization lets us avoid negative xi (so when we do sqrt(xi) we don't get imaginary)
       # removed an if else that dealt with if D == 1
       g.xi <- maxpl(posts.xi) - alpha
@@ -87,11 +91,11 @@ imvar <- function(xi, alpha, pl, mle, J, parallel, tol = 1e-2, a = 5, b = 1, max
       if (all(abs(g.xi) <= tol) || (it >= max.it)) {
         break
       } else {
-        xi <- xi + w(it) * g.xi
+        xi_d <- xi_d + w(it) * g.xi
         it <- it + 1
       }
     }
-    xi[d] <- exp(xi)
+    xi[d] <- exp(xi_d)
   }
   # Return the exponential version
   return(xi)
@@ -107,25 +111,32 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     res <- lm(y ~ X - 1)
     # This is the observed variability for this link function
     J <- crossprod(X, X)
+    dispersion <- 1
   } else if (family == "binomial") {
     res <- glm(y ~ X - 1, family = "binomial")
     p_i <- res$fitted.values
-    J <- crossprod(X, diag(p_i * (1 - p_i)) %*% X)
+    # Note that a matrix times a vector, the vector will get recycled. Row-wise scaling
+    J <- crossprod(X, X * (p_i * (1 - p_i)))
+    dispersion <- 1
   } else if (family == "gamma") {
     # canonical link for gamma family (1/mu) is incredibly numerically unstable. If Xb is ever close to zero during the process, we get infinities. Additionally, if xb is ever negative, then we are saying that the mean of a gamma is negative.
     # Note that the weights are one here.
     res <- glm(y ~ X - 1, family = Gamma(link = "log"))
     J <- crossprod(X, X)
+    mle_coefs <- res$coefficients
+    dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
   } else if (family == "inverse.gaussian") {
     res <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
     # default link for the inverse gaussian in glm is not the canonical parameter (-1/2mu^2), but rather 1/mu. Additionally, note that the link we are using here is not a canonical link. The constant gets absorbed in a lot of places, and what ends up changing is the scaling factor outside our gradient update.
     eta <- X %*% res$coefficients
     mu_i <- as.vector(sqrt(1 / eta))
-    J <- crossprod(X, diag(mu_i^3) %*% X) # TODO #7 check on this calculation
+    J <- crossprod(X, X * (mu_i^3)) # TODO #7 check on this calculation
+    dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
   } else if (family == "poisson") {
     res <- glm(y ~ X - 1, family = poisson(link = "log"))
     lambda_i <- res$fitted.values
-    J <- crossprod(X, diag(lambda_i) %*% X)
+    J <- crossprod(X, X * (lambda_i))
+    dispersion <- 1
   }
   J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries -- Gemini's idea
   eJ <- eigen(J)
@@ -139,17 +150,23 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     betas_matrix <- if (is.matrix(z)) z else matrix(z, nrow = 1)
 
     glim_raw(X, y, family, betas_matrix, mle_coefs, mle_val = mle_val, m, parallel)
+    # TODO could look at having a seperate case for when betas_matrix is not a matrix, rather than just converting
   }
 
   i <- 0
   xi <- list()
   prev_xi <- rep(1, length(mle_coefs))
   # finding xi
+  pb <- progress_bar$new(
+    total = length(AA),
+    format = "[:bar] :percent eta :eta",
+    show_after = 0,
+    force = TRUE
+  )
   parallel <- FALSE
   for (a in AA) {
-    print(a)
+    pb$tick()
     i <- i + 1
-    parallel <- FALSE
     # xi is our scaling
     xi[[i]] <- imvar(
       prev_xi,
@@ -157,11 +174,11 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
       pl,
       mle = mle_coefs,
       J = eJ,
-      parallel,
+      dispersion,
       tol = 1e-2,
       a = 5,
       b = 1,
-      max.it = 20
+      max.it = 25
     )
     prev_xi <- xi[[i]]
   }
@@ -184,8 +201,9 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     }
 
     # Sample randomly on the boundary TODO #8 explain code
+    # vectors stay the same, we multiply by the standard deviation.
     rand_dir <- generate_unit_matrix(1, length(mle_coefs))
-    spatial_dir <- eJ$vectors %*% (sqrt(1 / eJ$values) * rand_dir)
+    spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
 
     samples[, i] <- mle_coefs +
       as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * lerped_xi * spatial_dir)
@@ -194,7 +212,7 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
 }
 
 #' @export
-glim <- function(X, y, family = "gaussian", betas, m = 1000, parallel = TRUE, approx = FALSE) {
+glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, parallel) {
   print("glim_called")
   if (family == "binomial" || family == "logistic") {
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
@@ -235,7 +253,7 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, parallel = TRUE, ap
       mle_coefs,
       mle_val = ll_mle_original_data,
       m,
-      parallel = parallel
+      parallel
     ))
   }
   # Need to get dispersion into this bottom function
@@ -246,31 +264,49 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, parallel = TRUE, ap
       family = family,
       mle_val = ll_mle_original_data,
       m = m,
-      parallel = parallel
+      parallel
     ))
   }
 }
 
-# TODO #9 Dispersion in prob2poss
 #' @export
 prob2poss_logis <- function(X, y, samples, the_compared_theta) {
   # p <- 1/(1 + exp(-eta))
   eta <- X %*% the_compared_theta
   log_term <- log1p(exp(eta))
   ll_val <- y %*% eta - colSums(log_term)
-  print(ll_val)
 
   eta_samps <- X %*% samples
   # p <- 1/(1 + exp(-eta_samps))
   log_term_samps <- log1p(exp(eta_samps))
   ll_val_samps <- y %*% eta_samps - colSums(log_term_samps)
-  print(ll_val_samps)
 
   return(sapply(ll_val, function(x) sum(ll_val_samps < x)) / length(ll_val_samps))
 }
 
 
+#' Will throw an error if the_compared_theta is a scalar
+#' @export
+prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
+  eta <- X %*% samples
+  mle_coefs <- fit_gamma_log_cpp(X, t(X) %*% X, y)
+  est_shape <- 1 / mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
+  # pearson_estimate_dispersion_gamma relies on the beta coefficients to be maximized
+  ll_val_samps <- compute_gamma_ll_r(y, eta, shape = est_shape)
+  print(dim(ll_val_samps))
+  print(dim(X %*% the_compared_theta))
+  print(length(y))
+  ll_val <- compute_gamma_ll_r(y, X %*% the_compared_theta, shape = est_shape)
+  print(dim(ll_val))
+  return(sum(ll_val_samps > ll_val) / length(ll_val_samps))
+}
+
+
 #' @export
 compute_gamma_ll_r <- function(y, eta, shape) {
-  return(compute_gamma_ll(y, eta, shape))
+  if (is.vector(eta)) {
+    return(compute_gamma_ll(y, eta, shape))
+  } else {
+    return(compute_gamma_ll_mat(y, eta, shape))
+  }
 }
