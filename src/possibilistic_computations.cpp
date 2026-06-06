@@ -80,7 +80,7 @@ arma::vec fit_logistic_cpp(const arma::mat& X, const arma::vec& y, const arma::v
 // Note that dispersion is not needed here. Only passing because it keeps consistency in the argument.
 // [[Rcpp::export]]
 double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs,
-                        const arma::vec& beta_vals, int m) {
+                        const arma::vec& beta_vals, int m, bool approx) {
   int n = X.n_rows;
 
   // Compute true probabilities based on proposed betas
@@ -112,7 +112,7 @@ double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec&
   int count_less = 0;
 
   // Inner loop: fit models entirely in C++
-  #pragma omp parallel for schedule(static) reduction(+:count_less)
+  #pragma omp parallel for schedule(static) reduction(+:count_less) if(approx == true)
   for(int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
@@ -272,7 +272,7 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
 // Note that beta_vals is not the entire matrix of all possible betas, but just for a single vector.
 // [[Rcpp::export]]
 double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs,
-                        const arma::vec& beta_vals, int m) {
+                        const arma::vec& beta_vals, int m, bool approx) {
   int n = X.n_rows;
   
   // Compute true expected values based on proposed betas
@@ -321,7 +321,7 @@ double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec&
 
   int count_less = 0;
 
-  #pragma omp parallel for reduction(+:count_less)
+  #pragma omp parallel for reduction(+:count_less) if(approx == true)
   for(int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
     arma::vec beta_sim_hat = fit_gamma_log_cpp(X, XTX,y_sim, mle_coefs);
@@ -379,7 +379,7 @@ double compute_gaussian_ll(const arma::vec& y, const arma::vec& mu, double sigma
 // Main simulation function for Gaussian
 // [[Rcpp::export]]
 double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs,
-                           const arma::vec& beta_vals, int m) {
+                           const arma::vec& beta_vals, int m, bool approx) {
   int n = X.n_rows;
 
   arma::vec mu = X * beta_vals; // Identity link
@@ -482,7 +482,7 @@ double glm_poisson_ll(arma::vec& eta, arma::vec& mu, const arma::vec& y) {
 // Main simulation function for Poisson
 // [[Rcpp::export]]
 double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs,
-                          const arma::vec& beta_vals, int m) {
+                          const arma::vec& beta_vals, int m, bool approx) {
   int n = X.n_rows;
 
   arma::vec eta = X * beta_vals;
@@ -629,7 +629,7 @@ double compute_invgauss_ll(const arma::vec& y, const arma::vec& mu, double gamma
 // [[Rcpp::export]]
 double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs,
                            const arma::vec& beta_vals,
-                           int m) {
+                           int m, bool approx) {
   int n = X.n_rows;
 
   arma::vec eta = X * beta_vals;
@@ -691,6 +691,7 @@ arma::mat fit_glm_omp_cpp(const arma::mat& X,
                           const arma::vec& mle_coefs,
                           const arma::mat& betas, 
                           std::string family_str, // Pass string from R
+                          bool approx,
                           int num_threads = 1,
                           int m = 100) {
   
@@ -722,23 +723,23 @@ arma::mat fit_glm_omp_cpp(const arma::mat& X,
     // Ending colon is a part of the case statement.
     switch(family) {
       case GlmFamily::Gamma:
-        pl = glm_gamma_pl_cpp(X, y, mle_coefs, beta_vals, m);
+        pl = glm_gamma_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
         break;
         
       case GlmFamily::Binomial:
-        pl = glm_logis_pl_cpp(X, y, mle_coefs, beta_vals, m);
+        pl = glm_logis_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
         break;
         
       case GlmFamily::Poisson:
-        pl = glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m);
+        pl = glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
         break;
 
       case GlmFamily::InverseGaussian:
-        pl = glm_invgauss_pl_cpp(X, y, mle_coefs, beta_vals, m);
+        pl = glm_invgauss_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
         break;
 
       case GlmFamily::Gaussian:
-        pl = glm_gaussian_pl_cpp(X, y, mle_coefs, beta_vals, m);
+        pl = glm_gaussian_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
         break;
         
       default:

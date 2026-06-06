@@ -14,7 +14,7 @@ library(RhpcBLASctl)
 # Evaluates possibility for beta/dispersion values
 # m is the number of samples for each parameter value you would like to have
 #' @export
-glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, parallel) {
+glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, parallel, approx) {
   if (is.data.frame(X)) {
     X <- model.matrix(X)
   }
@@ -39,6 +39,7 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
     mle_coefs = mle_coefs,
     betas = betas,
     family_str = family, # Pass the string straight down
+    approx = approx,
     num_threads = num_omp_threads,
     m = m
   )
@@ -149,7 +150,7 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     # If z is a vector, matrix(z, nrow = 1) makes it a 1 x p row matrix
     betas_matrix <- if (is.matrix(z)) z else matrix(z, nrow = 1)
 
-    glim_raw(X, y, family, betas_matrix, mle_coefs, mle_val = mle_val, m, parallel)
+    glim_raw(X, y, family, betas_matrix, mle_coefs, mle_val = mle_val, m, parallel, approx = TRUE)
     # TODO could look at having a seperate case for when betas_matrix is not a matrix, rather than just converting
   }
 
@@ -253,7 +254,8 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
       mle_coefs,
       mle_val = ll_mle_original_data,
       m,
-      parallel
+      parallel,
+      approx = FALSE
     ))
   }
   # Need to get dispersion into this bottom function

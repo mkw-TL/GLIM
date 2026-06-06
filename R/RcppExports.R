@@ -5,8 +5,8 @@ fit_logistic_cpp <- function(X, y, mle_coefs) {
     .Call(`_GLIM_fit_logistic_cpp`, X, y, mle_coefs)
 }
 
-glm_logis_pl_cpp <- function(X, y, mle_coefs, beta_vals, m) {
-    .Call(`_GLIM_glm_logis_pl_cpp`, X, y, mle_coefs, beta_vals, m)
+glm_logis_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
+    .Call(`_GLIM_glm_logis_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
 }
 
 fit_gamma_log_cpp <- function(X, XtX, y, mle_coefs) {
@@ -29,8 +29,8 @@ mle_estimate_dispersion_gamma <- function(y, mu_hat, p) {
     .Call(`_GLIM_mle_estimate_dispersion_gamma`, y, mu_hat, p)
 }
 
-glm_gamma_pl_cpp <- function(X, y, mle_coefs, beta_vals, m) {
-    .Call(`_GLIM_glm_gamma_pl_cpp`, X, y, mle_coefs, beta_vals, m)
+glm_gamma_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
+    .Call(`_GLIM_glm_gamma_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
 }
 
 fit_gaussian_cpp <- function(X, y) {
@@ -41,8 +41,8 @@ compute_gaussian_ll <- function(y, mu, sigma, n) {
     .Call(`_GLIM_compute_gaussian_ll`, y, mu, sigma, n)
 }
 
-glm_gaussian_pl_cpp <- function(X, y, mle_coefs, beta_vals, m) {
-    .Call(`_GLIM_glm_gaussian_pl_cpp`, X, y, mle_coefs, beta_vals, m)
+glm_gaussian_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
+    .Call(`_GLIM_glm_gaussian_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
 }
 
 fit_poisson_log_cpp <- function(X, y, mle_coefs) {
@@ -53,8 +53,8 @@ glm_poisson_ll <- function(eta, mu, y) {
     .Call(`_GLIM_glm_poisson_ll`, eta, mu, y)
 }
 
-glm_poisson_pl_cpp <- function(X, y, mle_coefs, beta_vals, m) {
-    .Call(`_GLIM_glm_poisson_pl_cpp`, X, y, mle_coefs, beta_vals, m)
+glm_poisson_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
+    .Call(`_GLIM_glm_poisson_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
 }
 
 mle_estimate_dispersion_inv_gauss <- function(y, ybar) {
@@ -69,11 +69,11 @@ compute_invgauss_ll <- function(y, mu, gamma_val, n) {
     .Call(`_GLIM_compute_invgauss_ll`, y, mu, gamma_val, n)
 }
 
-glm_invgauss_pl_cpp <- function(X, y, mle_coefs, beta_vals, m) {
-    .Call(`_GLIM_glm_invgauss_pl_cpp`, X, y, mle_coefs, beta_vals, m)
+glm_invgauss_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
+    .Call(`_GLIM_glm_invgauss_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
 }
 
-fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family_str, num_threads = 1L, m = 100L) {
-    .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family_str, num_threads, m)
+fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family_str, approx, num_threads = 1L, m = 100L) {
+    .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family_str, approx, num_threads, m)
 }
 

@@ -80,17 +80,15 @@ New_X_gamma <- X_gamma
 New_X_gamma[, 2] <- scale(X_gamma[, 2]) # standardize the x-predictor
 
 
+# Only if grid is needed
+beta_0_grid <- seq(12.70, 12.90, by = .01)
+beta_1_grid <- seq(.40, .53, by = .01)
+beta_grid <- expand.grid(beta_0_grid, beta_1_grid)
+beta_grid <- as.matrix(beta_grid)
+
 start_time <- Sys.time()
 Rprof()
-output <- glim(
-  New_X_gamma,
-  y_gamma,
-  "gamma",
-  beta_p2p_grid,
-  m = 100,
-  approx = TRUE,
-  parallel = TRUE
-)
+output <- glim(New_X_gamma, y_gamma, "gamma", beta_grid, m = 100, approx = FALSE, parallel = TRUE)
 Rprof(NULL)
 end_time <- Sys.time()
 end_time - start_time
@@ -98,11 +96,16 @@ end_time - start_time
 summaryRprof()
 
 
-# Only if grid is needed
-beta_0_grid <- seq(12.70, 12.90, by = .01)
-beta_1_grid <- seq(.40, .53, by = .01)
-beta_grid <- expand.grid(beta_0_grid, beta_1_grid)
-beta_grid <- as.matrix(beta_grid)
+profiled_mat_glim <- matrix(output, nrow = length(beta_0_grid), ncol = length(beta_1_grid))
+contour(
+  beta_0_grid,
+  beta_1_grid,
+  profiled_mat_glim,
+  main = "Gamma GLM possibility",
+  xlab = "beta_0",
+  ylab = "beta_1"
+)
+
 
 # Maximum that I could have gotten with my profiling resolution is .9
 # Confirmed that at MLE for the dispersion param, get 1.
