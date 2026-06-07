@@ -29,8 +29,8 @@ mle_estimate_dispersion_gamma <- function(y, mu_hat, p) {
     .Call(`_GLIM_mle_estimate_dispersion_gamma`, y, mu_hat, p)
 }
 
-glm_gamma_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
-    .Call(`_GLIM_glm_gamma_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
+glm_gamma_pl_cpp <- function(X, XtX, y, mle_coefs, beta_vals, m, approx) {
+    .Call(`_GLIM_glm_gamma_pl_cpp`, X, XtX, y, mle_coefs, beta_vals, m, approx)
 }
 
 fit_gaussian_cpp <- function(X, y) {

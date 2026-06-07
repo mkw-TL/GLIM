@@ -146,7 +146,6 @@ arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::mat& XtX, const arma
   // Initialization so that the y and eta_hat values start off close to eachother.
   //
   // Note that formally there is a 1/nu here. However, we will cancel it out with the gradient.
-  arma::mat XTX = XtX;
   double current_dev = calculate_deviance_gamma(y, arma::exp(X*beta));
 
   arma::vec step(X.n_rows);
@@ -163,9 +162,9 @@ arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::mat& XtX, const arma
     // Now we do step-halfing. Ensures that any improvement we make does decrease the varaince. Avoids wild steps.
     // Calculate the proposed step
     arma::vec step;
-    bool success = arma::solve(step, XTX, grad, arma::solve_opts::fast);
+    bool success = arma::solve(step, XtX, grad, arma::solve_opts::fast);
     if (!success) {
-      arma::solve(step, XTX, grad);
+      arma::solve(step, XtX, grad);
     }
     // Propose a new beta
     proposed_beta = beta + step;
@@ -271,7 +270,7 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
 // 2. The main simulation function
 // Note that beta_vals is not the entire matrix of all possible betas, but just for a single vector.
 // [[Rcpp::export]]
-double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs,
+double glm_gamma_pl_cpp(const arma::mat& X, const arma::mat& XtX, const arma::vec& y, const arma::vec& mle_coefs,
                         const arma::vec& beta_vals, int m, bool approx) {
   int n = X.n_rows;
   
@@ -288,7 +287,6 @@ double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec&
   
   double dispersion = mle_estimate_dispersion_gamma(y, mu, beta_vals.n_elem);
   double shape = 1/dispersion;
-  arma::mat XTX = X.t() * X;
   
   // Compute full log-likelihood for the observed data under proposed beta
   double true_ll = compute_gamma_ll(y, eta, shape);
@@ -309,7 +307,8 @@ double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec&
   for(int j = 0; j < m; ++j) {
     for(int i = 0; i < n; ++i) {
       std::gamma_distribution<double> rgamma(shape, scale(i));
-      Y(i, j) = rgamma(gen);
+      double sim_val = rgamma(gen);
+      Y(i, j) = (sim_val < 1e-10) ? 1e-10 : sim_val;
     }
   }
 
@@ -324,7 +323,7 @@ double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec&
   #pragma omp parallel for reduction(+:count_less) if(approx == true)
   for(int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
-    arma::vec beta_sim_hat = fit_gamma_log_cpp(X, XTX,y_sim, mle_coefs);
+    arma::vec beta_sim_hat = fit_gamma_log_cpp(X, XtX,y_sim, mle_coefs);
     arma::vec eta_sim_hat = X * beta_sim_hat;
     arma::vec mu_sim_hat = exp(eta_sim_hat);
 
@@ -341,11 +340,10 @@ double glm_gamma_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec&
     double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
     double f_X_j = llX_j - mle_sim;
 
-    if(f_X_j < f_x) {
+    if (f_X_j < f_x) {
       count_less++;
     }
   }
-
   return (double)count_less / m;
 }
 
@@ -723,7 +721,7 @@ arma::mat fit_glm_omp_cpp(const arma::mat& X,
     // Ending colon is a part of the case statement.
     switch(family) {
       case GlmFamily::Gamma:
-        pl = glm_gamma_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
+        pl = glm_gamma_pl_cpp(X, XtX, y, mle_coefs, beta_vals, m, approx);
         break;
         
       case GlmFamily::Binomial:

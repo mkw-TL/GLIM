@@ -81,10 +81,14 @@ New_X_gamma[, 2] <- scale(X_gamma[, 2]) # standardize the x-predictor
 
 
 # Only if grid is needed
-beta_0_grid <- seq(12.70, 12.90, by = .01)
-beta_1_grid <- seq(.40, .53, by = .01)
+beta_0_grid <- seq(11.8, 12.2, by = .05)
+beta_1_grid <- seq(.48, .53, by = .025)
 beta_grid <- expand.grid(beta_0_grid, beta_1_grid)
 beta_grid <- as.matrix(beta_grid)
+# beta_grid <- matrix(c(12.09, .51), nrow = 1)
+
+res <- glm(y_gamma ~ New_X_gamma - 1, family = Gamma("log"))
+res$coefficients
 
 start_time <- Sys.time()
 Rprof()
