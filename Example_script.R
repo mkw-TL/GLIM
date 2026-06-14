@@ -22,14 +22,16 @@ X_binary <- cbind(X_binary, rep(1, sum(successes + failures)))
 y_binary <- c(rep(1, times = sum(successes)), rep(0, times = sum(failures)))
 
 # Need to have a way to automatically create a grid around the mle if doing non-approx
-# beta_0 <- seq(from = -8, to = 1, by = .1)
-# beta_1 <- seq(5, 20, by = .2)
-# betas <- expand.grid(beta_1, beta_0)
-# betas <- as.matrix(betas)
+beta_0 <- seq(from = -8, to = 1, by = .1)
+beta_1 <- seq(5, 20, by = .2)
+betas <- expand.grid(beta_1, beta_0)
+betas <- as.matrix(betas)
 
-mle_coefs <- glm(y_binary ~ X_binary - 1, family = "binomial")
+mle_coefs <- coef(glm(y_binary ~ X_binary - 1, family = "binomial"))
 mle_coefs <- as.matrix(mle_coefs)
-mle_coefs <- c(14.606939, -3.560164)
+
+
+Rprof()
 
 start_time <- Sys.time()
 output <- glim(
@@ -44,6 +46,18 @@ output <- glim(
 
 end_time <- Sys.time()
 end_time - start_time
+z_matrix <- matrix(output, nrow = length(beta_1), ncol = length(beta_0))
+contour(
+  x = beta_1,
+  y = beta_0,
+  z = z_matrix,
+  xlab = "beta_0",
+  ylab = "beta_1",
+  main = "Logistic GLM"
+)
+
+Rprof(NULL)
+summaryRprof()
 
 beta1_grid <- seq(min(output[1, ]), max(output[1, ]), length.out = 30)
 beta2_grid <- seq(min(output[2, ]), max(output[2, ]), length.out = 30)
@@ -51,7 +65,6 @@ beta_p2p_grid <- expand.grid(beta1_grid, beta2_grid)
 beta_p2p_grid <- t(as.matrix(beta_p2p_grid))
 
 possibils <- prob2poss_logis(X_binary, y_binary, output, beta_p2p_grid)
-
 z_matrix <- matrix(possibils, nrow = length(beta1_grid), ncol = length(beta2_grid))
 contour(
   x = beta1_grid,
@@ -61,7 +74,6 @@ contour(
   ylab = "beta_1",
   main = "Logistic GLM"
 )
-
 
 ##### Gamma case:
 #
@@ -110,47 +122,15 @@ contour(
   ylab = "beta_1"
 )
 
+# gamma approx:
+start_time <- Sys.time()
+Rprof()
+output <- glim(New_X_gamma, y_gamma, "gamma", beta_grid, m = 100, approx = TRUE, parallel = TRUE)
+Rprof(NULL)
+end_time <- Sys.time()
+end_time - start_time
 
-# Maximum that I could have gotten with my profiling resolution is .9
-# Confirmed that at MLE for the dispersion param, get 1.
-
-# debugging
-# X <- New_X_gamma
-# y <- y_gamma
-# res <- glm(y_gamma ~ New_X_gamma - 1, family = Gamma("log"))
-# mle_coefs <- res$coefficients
-# mle_val <- logLik(res)
-
-# J <- crossprod(X, X)
-# J <- eigen(J)
-
-# parallel <- FALSE
-# tol <- .01
-# a <- 1
-# b <- .65
-# max.it <- 25
-# m <- 100
-# family <- "gamma"
-
-# # Rcpp::sourceCpp("src/possibilistic_computations.cpp")
-
-# alpha <- .40
-# xi <- c(1, .36787)
-# mle <- mle_coefs
-# pl <- function(z) {
-#   betas_matrix <- if (is.matrix(z)) z else matrix(z, nrow = 1)
-#   glim_raw(X, y, family, betas_matrix, mle_coefs, mle_val = mle_val, m, parallel)
-# }
-# pl(c(12.82, .48))
-# a <- 1
-# b <- .65
-# d <- 2
-
-# pl(mle + c(1, 1))
-# pl(mle - c(1, 1))
-
-# pl(mle - c(-.01723379, 0.0000001))
-# # imvar(c(1, 1), alpha, pl, mle_coefs, J, .01, 1, 1, 25)
+summaryRprof()
 
 beta1_grid <- seq(min(output[1, ]), max(output[1, ]), length.out = 30)
 beta2_grid <- seq(min(output[2, ]), max(output[2, ]), length.out = 30)
@@ -173,7 +153,3 @@ contour(
   xlab = "beta_0",
   ylab = "beta_1"
 )
-
-
-y <- y_gamma
-X <- X_gamma

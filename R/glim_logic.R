@@ -38,7 +38,7 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
     y = y,
     mle_coefs = mle_coefs,
     betas = betas,
-    family_str = family, # Pass the string straight down
+    family = family, # Pass the string straight down
     approx = approx,
     num_threads = num_omp_threads,
     m = m
@@ -62,8 +62,8 @@ generate_unit_matrix <- function(n, d) {
   return(m / norms)
 }
 
-#' @export
-imvar <- function(xi, alpha, pl, mle, J, dispersion, tol = 1e-2, a = 5, b = .65, max.it = 25) {
+# Removed from namespace
+r_imvar <- function(xi, alpha, pl, mle, J, dispersion, tol = 1e-2, a = 5, b = .65, max.it = 25) {
   D <- length(mle)
   maxpl <- function(v) {
     max(c(pl(as.vector(mle) + v), pl(as.vector(mle) - v)))
@@ -170,11 +170,15 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     i <- i + 1
     # xi is our scaling
     xi[[i]] <- imvar(
+      X,
+      y,
       prev_xi,
+      family,
       a,
-      pl,
       mle = mle_coefs,
-      J = eJ,
+      mle_val,
+      eJ$vectors,
+      eJ$values,
       dispersion,
       tol = 1e-2,
       a = 5,
@@ -217,7 +221,7 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
   print("glim_called")
   if (family == "binomial" || family == "logistic") {
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
-    mle_coefs <- glm(y ~ X - 1, family = "binomial")
+    mle_coefs <- glm(y ~ X - 1, family = "binomial")$coefficients
   } else if (family == "gamma") {
     # Don't want to use R's logLik() as it uses the pearson estimate of phi.
     # Note that the IRLS to maximize the log lik of beta doesn't rely on phi.
@@ -291,7 +295,8 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
 #' @export
 prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
   eta <- X %*% samples
-  mle_coefs <- fit_gamma_log_cpp(X, t(X) %*% X, y)
+  initial_coefs <- rep(1, length.out = ncol(X))
+  mle_coefs <- fit_gamma_log_cpp(X, t(X) %*% X, y, initial_coefs)
   est_shape <- 1 / mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
   # pearson_estimate_dispersion_gamma relies on the beta coefficients to be maximized
   ll_val_samps <- compute_gamma_ll_r(y, eta, shape = est_shape)
@@ -314,9 +319,20 @@ compute_gamma_ll_r <- function(y, eta, shape) {
 }
 
 
-# Function that is called if doing the elliptical approximation
+# Function that is called if doing elliptical approx (but faster)
 #' @export
-glim_inner_prob_approx_samples_2 <- function(X, y, family = "gaussian", mle_val, m, parallel, a, b, max_it, tol) {
+glim_inner_prob_approx_samples_2 <- function(
+  X,
+  y,
+  family = "gaussian",
+  mle_val,
+  m,
+  parallel,
+  a,
+  b,
+  max_it,
+  tol
+) {
   print("glim_inner_prob")
   B <- 100
   AA <- seq(0.001, 0.999, length = B)
@@ -360,14 +376,37 @@ glim_inner_prob_approx_samples_2 <- function(X, y, family = "gaussian", mle_val,
   eJ_vectors <- eJ$vectors
   ej_values <- diag(eJ$values)
 
-  matrix_of_xis <- get_xi(AA, mle_coefs,
-                           eJ_vectors,
-                           eJ_values, dispersion,
-                           mle_val, a, b, max_it,
-                           tol)
-  
+  matrix_of_xis <- get_xi(
+    AA,
+    mle_coefs,
+    family,
+    eJ_vectors,
+    eJ_values,
+    dispersion,
+    mle_val,
+    a,
+    b,
+    max_it,
+    tol
+  )
+
   u <- runif(m)
   # Lerping here
+  lerped_xi <- c()
+  for (i in 1:m) {
+    if (u[i] < 1 / length(AA)) {
+      lerped_xi = matrix_of_xis[, 1]
+    } else if (u[i] > 1 - 1 / length(AA)) {
+      lerped_xi = matrix_of_xis[, length(AA)]
+    } else {
+      # A simple method because we are assuming that our alpha values are equally spaced
+      where_located <- findInterval(u[i], AA)
+      w <- u[i] - AA[where_located]
+      lerped_xi = w * matrix_of_xis[, where_located] + (1 - w) * matrix_of_xis[, where_located + 1]
+    }
+    if (is.na(lerped_xi)) {
+      print("You dun messed up")
+    }
     # Sample randomly on the boundary TODO #8 explain code
     # vectors stay the same, we multiply by the standard deviation.
     rand_dir <- generate_unit_matrix(1, length(mle_coefs))
@@ -375,6 +414,28 @@ glim_inner_prob_approx_samples_2 <- function(X, y, family = "gaussian", mle_val,
 
     samples[, i] <- mle_coefs +
       as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * lerped_xi * spatial_dir)
-}
+  }
   return(samples)
+}
+
+
+appendix <- function(eJ, num_samps, d, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
+  eig_vecs <- eJ$vectors
+  eig_vals <- eJ$values
+  output_samples <- lets_go_to_cpp(
+    eig_vecs,
+    eig_vals,
+    num_samps,
+    d,
+    X,
+    y,
+    mle_coefs,
+    family,
+    dispersion,
+    m,
+    tol,
+    max_it,
+    a,
+    b
+  )
 }
