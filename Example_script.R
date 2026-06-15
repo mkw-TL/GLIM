@@ -41,7 +41,7 @@ output <- glim(
   betas,
   m = 100,
   parallel = TRUE,
-  approx = TRUE
+  approx = FALSE
 )
 
 end_time <- Sys.time()
@@ -59,11 +59,20 @@ contour(
 Rprof(NULL)
 summaryRprof()
 
+
+output <- glim(
+  X_binary,
+  y_binary,
+  family = "binomial",
+  betas,
+  m = 100,
+  parallel = TRUE,
+  approx = TRUE
+)
 beta1_grid <- seq(min(output[1, ]), max(output[1, ]), length.out = 30)
 beta2_grid <- seq(min(output[2, ]), max(output[2, ]), length.out = 30)
 beta_p2p_grid <- expand.grid(beta1_grid, beta2_grid)
 beta_p2p_grid <- t(as.matrix(beta_p2p_grid))
-
 possibils <- prob2poss_logis(X_binary, y_binary, output, beta_p2p_grid)
 z_matrix <- matrix(possibils, nrow = length(beta1_grid), ncol = length(beta2_grid))
 contour(

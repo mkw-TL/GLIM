@@ -63,7 +63,7 @@ generate_unit_matrix <- function(n, d) {
 }
 
 # Removed from namespace
-r_imvar <- function(xi, alpha, pl, mle, J, dispersion, tol = 1e-2, a = 5, b = .65, max.it = 25) {
+r_imvar <- function(xi, alpha, pl, mle, J, dispersion, tol = 1e-2, a = 5, b = .65, max_it = 25) {
   D <- length(mle)
   maxpl <- function(v) {
     max(c(pl(as.vector(mle) + v), pl(as.vector(mle) - v)))
@@ -89,7 +89,7 @@ r_imvar <- function(xi, alpha, pl, mle, J, dispersion, tol = 1e-2, a = 5, b = .6
       # removed an if else that dealt with if D == 1
       g.xi <- maxpl(posts.xi) - alpha
       # print(g.xi)
-      if (all(abs(g.xi) <= tol) || (it >= max.it)) {
+      if (all(abs(g.xi) <= tol) || (it >= max_it)) {
         break
       } else {
         xi_d <- xi_d + w(it) * g.xi
@@ -183,7 +183,7 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
       tol = 1e-2,
       a = 5,
       b = 1,
-      max.it = 25
+      max_it = 25
     )
     prev_xi <- xi[[i]]
   }
@@ -211,7 +211,7 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
 
     samples[, i] <- mle_coefs +
-      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * lerped_xi * spatial_dir)
+      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * sqrt(lerped_xi) * spatial_dir)
   }
   return(samples)
 }
@@ -279,13 +279,16 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
 prob2poss_logis <- function(X, y, samples, the_compared_theta) {
   # p <- 1/(1 + exp(-eta))
   eta <- X %*% the_compared_theta
-  log_term <- log1p(exp(eta))
+  # element-wise maximum and abs,exp,log(1+x)
+  log_term <- pmax(eta, 0) + log1p(exp(-abs(eta)))
+
   ll_val <- y %*% eta - colSums(log_term)
 
   eta_samps <- X %*% samples
   # p <- 1/(1 + exp(-eta_samps))
-  log_term_samps <- log1p(exp(eta_samps))
-  ll_val_samps <- y %*% eta_samps - colSums(log_term_samps)
+  # Numerically stable calculation of log(1 + exp(eta))
+  log_term_samps <- pmax(eta_samps, 0) + log1p(exp(-abs(eta_samps)))
+  ll_val_samps <- as.vector(y %*% eta_samps) - colSums(log_term_samps)
 
   return(sapply(ll_val, function(x) sum(ll_val_samps < x)) / length(ll_val_samps))
 }

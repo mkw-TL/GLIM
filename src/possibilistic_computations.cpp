@@ -67,7 +67,7 @@ arma::vec fit_logistic_cpp(const arma::mat &X, const arma::vec &y,
     // Attempt fast solve, fallback to robust solve if nearly singular
     bool success = arma::solve(step, XTWX, grad, arma::solve_opts::fast);
     if (!success) {
-      arma::solve(step, XTWX, grad);
+      success = arma::solve(step, XTWX, grad);
     }
     if (!success) {
       break;
@@ -98,7 +98,13 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
       arma::dot(y, eta_hat) - arma::sum(arma::log1p(arma::exp(eta_hat)));
 
   // Precompute constant scalar for f.x
-  double sum_log_term = arma::sum(arma::log1p(arma::exp(eta)));
+  // soft-plus (numerical stability) idea from Gemini
+  double sum_log_term = 0.0;
+  for(int i = 0; i < eta.n_elem; ++i) {
+  // If eta > 0, log(1 + exp(eta)) = log(exp(eta)) + log(1 + exp(-eta))
+  sum_log_term += (eta(i) > 0) ? (eta(i) + std::log1p(std::exp(-eta(i)))) 
+                               : std::log1p(std::exp(eta(i)));
+  }
   double f_x = arma::dot(y, eta) - sum_log_term - mle_val;
 
   // Computing new random binomial data:
@@ -125,7 +131,7 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec sim_coefs = fit_logistic_cpp(X, y_sim, mle_coefs);
+    arma::vec sim_coefs = fit_logistic_cpp(X, y_sim, beta_vals);
     arma::vec eta_sim_hat = X * sim_coefs;
 
     double mle_sim = arma::dot(y_sim, eta_sim_hat) -
@@ -176,7 +182,7 @@ arma::vec fit_gamma_log_cpp(const arma::mat &X, const arma::mat &XtX,
     arma::vec step;
     bool success = arma::solve(step, XtX, grad, arma::solve_opts::fast);
     if (!success) {
-      arma::solve(step, XtX, grad);
+      success = arma::solve(step, XtX, grad);
     }
     if (!success) {
       break;
@@ -413,7 +419,7 @@ arma::vec fit_gaussian_cpp(const arma::mat &X, const arma::vec &y) {
   arma::vec beta;
   bool success = arma::solve(beta, X, y, arma::solve_opts::fast);
   if (!success) {
-    arma::solve(beta, X, y);
+    success = arma::solve(beta, X, y);
   }
   if (!success) {
     beta.zeros(X.n_cols);
@@ -824,7 +830,7 @@ arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
   return plausabilities;
 }
 
-double w(int a, int b, int s) { return a / std::pow(1.0 + s, b); }
+double w(double a, double b, int s) { return a / std::pow(1.0 + s, b); }
 
 // [[Rcpp::export]]
 arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi, const std::string family, double alpha, const arma::vec &mle, const double mle_val,
