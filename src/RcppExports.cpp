@@ -293,7 +293,7 @@ BEGIN_RCPP
 END_RCPP
 }
 // imvar
-arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi, const std::string family, double alpha, const arma::vec& mle, const double mle_val, const arma::mat& J_vectors, const arma::mat& J_values, double dispersion, double tol, double a, double b, int max_it);
+arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi, const std::string family, double alpha, const arma::vec& mle, const double mle_val, const arma::mat& J_vectors, const arma::vec& J_values, double dispersion, double tol, double a, double b, int max_it);
 RcppExport SEXP _GLIM_imvar(SEXP XSEXP, SEXP ySEXP, SEXP xiSEXP, SEXP familySEXP, SEXP alphaSEXP, SEXP mleSEXP, SEXP mle_valSEXP, SEXP J_vectorsSEXP, SEXP J_valuesSEXP, SEXP dispersionSEXP, SEXP tolSEXP, SEXP aSEXP, SEXP bSEXP, SEXP max_itSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
@@ -306,7 +306,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::vec& >::type mle(mleSEXP);
     Rcpp::traits::input_parameter< const double >::type mle_val(mle_valSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type J_vectors(J_vectorsSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type J_values(J_valuesSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type J_values(J_valuesSEXP);
     Rcpp::traits::input_parameter< double >::type dispersion(dispersionSEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
     Rcpp::traits::input_parameter< double >::type a(aSEXP);

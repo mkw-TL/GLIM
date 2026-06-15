@@ -828,7 +828,7 @@ double w(int a, int b, int s) { return a / std::pow(1.0 + s, b); }
 
 // [[Rcpp::export]]
 arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi, const std::string family, double alpha, const arma::vec &mle, const double mle_val,
-                const arma::mat &J_vectors, const arma::mat &J_values,
+                const arma::mat &J_vectors, const arma::vec &J_values,
                 double dispersion, double tol = 1e-2, double a = 5.0,
                 double b = 0.65, int max_it = 25) {
 
