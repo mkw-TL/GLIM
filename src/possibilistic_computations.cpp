@@ -60,7 +60,7 @@ arma::vec fit_logistic_cpp(const arma::mat &X, const arma::vec &y,
     // Prevent strictly zero weights to avoid singular matrices
     w.elem(arma::find(w < 1e-6)).fill(1e-6);
 
-    arma::mat XTWX = X.t() * (X.each_col() % w);
+    arma::mat XTWX = X.t() * arma::diagmat(w) * X;
     arma::vec grad = X.t() * (y - p);
 
     arma::vec step;
@@ -68,9 +68,6 @@ arma::vec fit_logistic_cpp(const arma::mat &X, const arma::vec &y,
     bool success = arma::solve(step, XTWX, grad, arma::solve_opts::fast);
     if (!success) {
       arma::solve(step, XTWX, grad);
-    }
-    if (!success) {
-      break;
     }
 
     beta += step;
@@ -177,9 +174,6 @@ arma::vec fit_gamma_log_cpp(const arma::mat &X, const arma::mat &XtX,
     bool success = arma::solve(step, XtX, grad, arma::solve_opts::fast);
     if (!success) {
       arma::solve(step, XtX, grad);
-    }
-    if (!success) {
-      break;
     }
     // Propose a new beta
     proposed_beta = beta + step;
@@ -416,9 +410,6 @@ arma::vec fit_gaussian_cpp(const arma::mat &X, const arma::vec &y) {
   bool success = arma::solve(beta, X, y, arma::solve_opts::fast);
   if (!success) {
     arma::solve(beta, X, y);
-  }
-  if (!success) {
-    beta.zeros(X.n_cols);
   }
   return beta;
 }
@@ -761,13 +752,13 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
 // [[Rcpp::export]]
 arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
                           const arma::vec &mle_coefs, const arma::mat &betas,
-                          std::string family, // Pass string from R
+                          std::string family_str, // Pass string from R
                           bool approx, int num_threads = 1, int m = 100) {
 
   // Convert the string to an Enum once right here
-  GlmFamily fam = string_to_family(family);
+  GlmFamily family = string_to_family(family_str);
   // This is how we access enums in cpp.
-  if (fam == GlmFamily::Unknown) {
+  if (family == GlmFamily::Unknown) {
     Rcpp::stop("Family not supported in C++ backend.");
   }
 
@@ -792,7 +783,7 @@ arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
     double pl;
 
     // Ending colon is a part of the case statement.
-    switch (fam) {
+    switch (family) {
     case GlmFamily::Gamma:
       pl = glm_gamma_pl_cpp(X, XtX, y, mle_coefs, beta_vals, m, approx);
       break;
@@ -828,8 +819,7 @@ arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
 
 double w(int a, int b, int s) { return a / std::pow(1.0 + s, b); }
 
-// [[Rcpp::export]]
-arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi, const std::string family, double alpha, const arma::vec &mle, const double mle_val,
+arma::vec imvar(arma::vec xi, double alpha, const arma::vec &mle,
                 const arma::mat &J_vectors, const arma::mat &J_values,
                 double dispersion, double tol = 1e-2, double a = 5.0,
                 double b = 0.65, int max_it = 25) {
@@ -843,20 +833,22 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi, const std::string family
   // These are all the dimensions we would like to traverse
   for (int d = 0; d < D; d++) {
     // log(xi) because we are getting the exponentiated version
-    double xi_d = std::log(xi(d));
+    arma::vec xi_d = std::log(xi(d));
 
     // J_vectors.col(d) replicates J$vectors[, d]
     // This calculates our current best Q, and Cholesky decomp
-    arma::vec posts_d = J_vectors.col(d) * std::sqrt(dispersion * q_val *
+    arma::vec posts = J_vectors.col(d) * std::sqrt(dispersion * q_val *
                                                    std::abs(1.0 / J_values(d)));
 
     int it = 1;
     while (true) {
       // Xi scales singular values. exp parameterization avoids negative xi.
-      arma::vec posts_xi_d = posts_d * std::exp(xi_d / 2.0);
+      arma::vec posts_xi = posts * std::exp(xi_d / 2.0);
 
-      double val1 = fit_glm_omp_cpp(X, y, mle, (mle + posts_xi_d).t(), family, false, 1, 100)(0,0);
-      double val2 = fit_glm_omp_cpp(X, y, mle, (mle - posts_xi_d).t(), family, false, 1, 100)(0,0);
+      double val1 =  glim_raw(X, y, family, mle + posts.xi, mle_coefs, mle_val = mle_val, m, parallel, approx = TRUE)
+      double val2 =  glim_raw(X, y, family, mle - posts.xi, mle_coefs, mle_val = mle_val, m, parallel, approx = TRUE)
+      // double val1 = pl(mle + posts_xi);
+      // double val2 = pl(mle - posts_xi);
       double g_xi = std::max(val1, val2) - alpha;
 
       if (std::abs(g_xi) <= tol || it >= max_it) {
@@ -872,22 +864,20 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi, const std::string family
   return xi;
 }
 
-arma::mat get_xi(const arma::mat X, const arma::vec y, const arma::vec &AA, const arma::vec &mle_coefs, const std::string family_input,
+arma::mat get_xi(const arma::vec &AA, const arma::vec &mle_coefs,
                            const arma::mat &eJ_vectors,
                            const arma::mat &eJ_values, double dispersion,
                            double mle_val, int a, int b, int max_it,
                            double tol) {
-  std::string family = family_input;
 
-  arma::vec prev_xi(mle_coefs.size());
-  prev_xi.ones();
-  arma::mat xi_mat(mle_coefs.size(), AA.size()); // Want to allocate size here. Mindful of off by one errors
-
+  arma::vec prev_xi = arma::vec::Ones(mle_coefs.size());
+  arma::mat xi_list; // Want to allocate size here
+// Loop over AA (replicating the progress_bar loop)
 #pragma omp for schedule(static)
   for (int i = 0; i < AA.size(); i++) {
     double a_val = AA(i);
     // xi is our scaling
-    arma::vec current_xi = imvar(X, y, prev_xi,family, a_val, mle_coefs, mle_val, eJ_vectors,
+    arma::vec current_xi = imvar(prev_xi, a_val, pl, mle_coefs, eJ_vectors,
                               eJ_values, dispersion, tol, a, b, max_it);
 
     xi_mat.col(i) = current_xi;
@@ -896,47 +886,30 @@ arma::mat get_xi(const arma::mat X, const arma::vec y, const arma::vec &AA, cons
   return xi_mat;
 }
 
-arma::vec lets_go_to_cpp(arma::mat eig_vecs, arma::mat eig_vals, int num_samps,
+double lets_go_to_cpp(arma::mat eig_vecs, arma::mat eig_vals, int num_samps,
                       int d, arma::mat X, arma::vec y, arma::vec mle_coefs,
-                      std::string family, double dispersion, int m, double tol, int max_it, int a, int b) {
-  arma::mat sampled_betas(mle_coefs.n_elem, num_samps);
-  int num_omp_threads = 1;
-  
-  // We are definitely not parallelizing across the beta grid, so no if statement
-  // needed
-  thread_local std::random_device rd;
-  thread_local std::mt19937 gen(rd());
-  #pragma omp parallel for schedule(static)
-  for (int j = 0; j < num_samps; j++) {
-    std::uniform_real_distribution<double> runif(0.0, 1.0);
+                      std::string family, int m) {
+  std::uniform_real_distribution<double> runif(0.0, 1.0);
+  num_omp_threads = 1;
+
+// We are definitely not parallelizing for the beta grid, so no if statement
+// needed
+#pragma omp parallel for schedule(static)
+  for (int j = 0; j < num_samps; ++j) {
     double unif_alphas = runif(gen);
-    arma::vec dir = generate_unit_matrix(1, d);
+    arma::mat rand_dir = generate_unit_matrix(1, d);
+    arma::mat spatial_dir =
+        eig_vecs * diag(std::sqrt(1 / eig_vals.diag())) * rand_dir;
 
-    // Could have something where it looks for xi in related alpha, or related directions. 
-    // That being said, if parallelization is happening here, then can't really do that
-    double starting_xi = 1;
-    // Time for our stochastic approximation algorithm. Relies on Robbins and Monroe
-       int it = 1;
-    while(true) {
-      arma::vec dir_xi = (dir * exp(starting_xi / 2)); // Xi scales singular values (scalar for each directions). Again, we are going to evaluate this direction * scaling to see how far off.
-      // exp parameterization lets us avoid negative xi (so when we do sqrt(xi) we don't get imaginary)
-      // removed an if else that dealt with if D == 1
-      double val1 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs + dir_xi).t(), family, 1, m)(0,0);
-      double val2 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs - dir_xi).t(), family, 1, m)(0,0);
-      double g_xi = std::max(val1, val2) - unif_alphas;
+    arma::mat output =
+        fit_glm_omp_cpp(X = X, y = y, mle_coefs = mle_coefs, betas = betas,
+                        family_str = family,
+                        #Pass the string straight down approx = approx,
+                        num_threads = num_omp_threads, m = m)
 
-      if ((std::abs(g_xi) <= tol) || (it >= max_it)) {
-        if (abs(val1 - unif_alphas) > abs(val2 - unif_alphas)) {
-          sampled_betas.col(j) = mle_coefs - dir_xi;
-        } else {
-          sampled_betas.col(j) = mle_coefs + dir_xi;
-        }
-        break;
-      } else {
-        starting_xi = starting_xi + w(a, b, it) * g_xi;
-        it =  it + 1;
-      }
-    }
+            //samples[, i] <
+        //-mle_coefs + as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) *
+                               //lerped_xi * spatial_dir)
   }
-    return sampled_betas;
+}
 }

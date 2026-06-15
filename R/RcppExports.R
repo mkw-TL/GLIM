@@ -33,10 +33,6 @@ glm_gamma_pl_cpp <- function(X, XtX, y, mle_coefs, beta_vals, m, approx) {
     .Call(`_GLIM_glm_gamma_pl_cpp`, X, XtX, y, mle_coefs, beta_vals, m, approx)
 }
 
-generate_unit_matrix <- function(n, d) {
-    .Call(`_GLIM_generate_unit_matrix`, n, d)
-}
-
 fit_gaussian_cpp <- function(X, y) {
     .Call(`_GLIM_fit_gaussian_cpp`, X, y)
 }
@@ -77,11 +73,7 @@ glm_invgauss_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
     .Call(`_GLIM_glm_invgauss_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
 }
 
-fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, approx, num_threads = 1L, m = 100L) {
-    .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family, approx, num_threads, m)
-}
-
-imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol = 1e-2, a = 5.0, b = 0.65, max_it = 25L) {
-    .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a, b, max_it)
+fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family_str, approx, num_threads = 1L, m = 100L) {
+    .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family_str, approx, num_threads, m)
 }
 

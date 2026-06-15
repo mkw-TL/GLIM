@@ -43,7 +43,7 @@ output <- glim(
   parallel = TRUE,
   approx = FALSE
 )
-# Now glim is broken...
+
 end_time <- Sys.time()
 end_time - start_time
 z_matrix <- matrix(output, nrow = length(beta_0), ncol = length(beta_1))
