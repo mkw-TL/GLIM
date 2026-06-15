@@ -18,13 +18,13 @@ y <- cbind(successes, failures) # from ?glm
 # rep(vector, other_vector) will repeat each element of the vector the corresponding other_vector element no of times
 X_binary <- rep(X, times = successes)
 X_binary <- rbind(as.matrix(X_binary), as.matrix(rep(X, times = failures)))
-X_binary <- cbind(X_binary, rep(1, sum(successes + failures)))
+X_binary <- cbind(rep(1, sum(successes + failures)), X_binary)
 y_binary <- c(rep(1, times = sum(successes)), rep(0, times = sum(failures)))
 
 # Need to have a way to automatically create a grid around the mle if doing non-approx
-beta_0 <- seq(from = -8, to = 1, by = .1)
-beta_1 <- seq(5, 20, by = .2)
-betas <- expand.grid(beta_1, beta_0)
+beta_0 <- seq(5, 20, by = .2)
+beta_1 <- seq(from = -8, to = 1, by = .1)
+betas <- expand.grid(beta_0, beta_1)
 betas <- as.matrix(betas)
 
 mle_coefs <- coef(glm(y_binary ~ X_binary - 1, family = "binomial"))
@@ -41,15 +41,15 @@ output <- glim(
   betas,
   m = 100,
   parallel = TRUE,
-  approx = TRUE
+  approx = FALSE
 )
-
+# Now glim is broken...
 end_time <- Sys.time()
 end_time - start_time
-z_matrix <- matrix(output, nrow = length(beta_1), ncol = length(beta_0))
+z_matrix <- matrix(output, nrow = length(beta_0), ncol = length(beta_1))
 contour(
-  x = beta_1,
   y = beta_0,
+  x = beta_1,
   z = z_matrix,
   xlab = "beta_0",
   ylab = "beta_1",
@@ -64,6 +64,15 @@ beta2_grid <- seq(min(output[2, ]), max(output[2, ]), length.out = 30)
 beta_p2p_grid <- expand.grid(beta1_grid, beta2_grid)
 beta_p2p_grid <- t(as.matrix(beta_p2p_grid))
 
+output <- glim(
+  X_binary,
+  y_binary,
+  family = "binomial",
+  betas,
+  m = 100,
+  parallel = TRUE,
+  approx = TRUE
+)
 possibils <- prob2poss_logis(X_binary, y_binary, output, beta_p2p_grid)
 z_matrix <- matrix(possibils, nrow = length(beta1_grid), ncol = length(beta2_grid))
 contour(
@@ -94,7 +103,7 @@ New_X_gamma[, 2] <- scale(X_gamma[, 2]) # standardize the x-predictor
 
 # Only if grid is needed
 beta_0_grid <- seq(11.8, 12.2, by = .05)
-beta_1_grid <- seq(.48, .53, by = .025)
+beta_1_grid <- seq(.3, .8, by = .025)
 beta_grid <- expand.grid(beta_0_grid, beta_1_grid)
 beta_grid <- as.matrix(beta_grid)
 # beta_grid <- matrix(c(12.09, .51), nrow = 1)
@@ -146,8 +155,8 @@ possibils <- prob2poss_gamma(
 
 profiled_mat_glim <- matrix(possibils, nrow = length(beta1_grid), ncol = length(beta2_grid))
 contour(
-  beta_0_grid,
-  beta_1_grid,
+  beta1_grid,
+  beta2_grid,
   profiled_mat_glim,
   main = "Gamma GLM possibility",
   xlab = "beta_0",

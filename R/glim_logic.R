@@ -183,7 +183,7 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
       tol = 1e-2,
       a = 5,
       b = 1,
-      max.it = 25
+      max_it = 25
     )
     prev_xi <- xi[[i]]
   }
@@ -208,10 +208,10 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     # Sample randomly on the boundary TODO #8 explain code
     # vectors stay the same, we multiply by the standard deviation.
     rand_dir <- generate_unit_matrix(1, length(mle_coefs))
-    spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
-
-    samples[, i] <- mle_coefs +
-      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * lerped_xi * spatial_dir)
+    # Corrected Code:
+    scaled_eigenspace <- sqrt(lerped_xi) * (1 / sqrt(eJ$values)) * as.vector(rand_dir)
+    spatial_dir <- (eJ$vectors %*% scaled_eigenspace) * sqrt(dispersion)
+    samples[, i] <- mle_coefs + as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * spatial_dir)
   }
   return(samples)
 }
@@ -295,19 +295,14 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
 #' @export
 prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
   eta <- X %*% samples
-  initial_coefs <- rep(1, length.out = ncol(X))
+  initial_coefs <- coef(lm(log(y) ~ X - 1))
   mle_coefs <- fit_gamma_log_cpp(X, t(X) %*% X, y, initial_coefs)
   est_shape <- 1 / mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
   # pearson_estimate_dispersion_gamma relies on the beta coefficients to be maximized
   ll_val_samps <- compute_gamma_ll_r(y, eta, shape = est_shape)
-  print(dim(ll_val_samps))
-  print(dim(X %*% the_compared_theta))
-  print(length(y))
   ll_val <- compute_gamma_ll_r(y, X %*% the_compared_theta, shape = est_shape)
-  print(dim(ll_val))
-  return(sum(ll_val_samps > ll_val) / length(ll_val_samps))
+  return(sapply(ll_val, function(x) sum(ll_val_samps < x)) / length(ll_val_samps))
 }
-
 
 #' @export
 compute_gamma_ll_r <- function(y, eta, shape) {

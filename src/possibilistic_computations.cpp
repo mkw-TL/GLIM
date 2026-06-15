@@ -357,17 +357,19 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
     arma::vec mu_sim_hat = exp(eta_sim_hat);
 
     // Need to pass in data to use the mle estimator.
-    double shape_sim_hat = 1 / mle_estimate_dispersion_gamma(
-                                   y_sim, mu_sim_hat, beta_sim_hat.n_elem);
+    // double shape_sim_hat = 1 / mle_estimate_dispersion_gamma(
+    //                                y_sim, mu_sim_hat, beta_sim_hat.n_elem);
 
     // May be an an error in this calculation. Keep it simple for now.
     // // Calculate the simulated dependent term: (shape - 1) * sum(log(y_sim))
     // double term2_j = (shape_sim_hat - 1.0) * arma::sum(arma::log(y_sim));
     // double llX_j = constant_ll_term + term2_j + term3_all(j);
-    double llX_j = compute_gamma_ll(y_sim, eta, shape_sim_hat);
+    // double llX_j = compute_gamma_ll(y_sim, eta, shape_sim_hat);
+    double llX_j = compute_gamma_ll(y_sim, eta, shape);
 
     // Evaluate simulated MLE log-likelihood
-    double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
+    // double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
+    double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape);
     double f_X_j = llX_j - mle_sim;
 
     if (f_X_j < f_x) {
