@@ -38,7 +38,7 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
     y = y,
     mle_coefs = mle_coefs,
     betas = betas,
-    family = family, # Pass the string straight down
+    family_str = family, # Pass the string straight down
     approx = approx,
     num_threads = num_omp_threads,
     m = m
@@ -62,8 +62,8 @@ generate_unit_matrix <- function(n, d) {
   return(m / norms)
 }
 
-# Removed from namespace
-r_imvar <- function(xi, alpha, pl, mle, J, dispersion, tol = 1e-2, a = 5, b = .65, max_it = 25) {
+#' @export
+imvar <- function(xi, alpha, pl, mle, J, dispersion, tol = 1e-2, a = 5, b = .65, max.it = 25) {
   D <- length(mle)
   maxpl <- function(v) {
     max(c(pl(as.vector(mle) + v), pl(as.vector(mle) - v)))
@@ -171,21 +171,16 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     i <- i + 1
     # xi is our scaling
     xi[[i]] <- imvar(
-      X,
-      y,
       prev_xi,
-      family,
       a,
+      pl,
       mle = mle_coefs,
-      mle_val,
-      as.matrix(eJ$vectors),
-      as.vector(eJ$values),
+      J = eJ,
       dispersion,
       tol = .01,
       a = 2,
       b = 1,
-      max_it = 25,
-      parallel = FALSE
+      max_it = 25
     )
     prev_xi <- xi[[i]]
   }
@@ -210,10 +205,10 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     # Sample randomly on the boundary TODO #8 explain code
     # vectors stay the same, we multiply by the standard deviation.
     rand_dir <- generate_unit_matrix(1, length(mle_coefs))
-    spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
-
-    samples[, i] <- mle_coefs +
-      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * sqrt(lerped_xi) * spatial_dir * dispersion)
+    # Corrected Code:
+    scaled_eigenspace <- sqrt(lerped_xi) * (1 / sqrt(eJ$values)) * as.vector(rand_dir)
+    spatial_dir <- (eJ$vectors %*% scaled_eigenspace) * sqrt(dispersion)
+    samples[, i] <- mle_coefs + as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * spatial_dir)
   }
   return(samples)
 }
@@ -223,7 +218,7 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
   print("glim_called")
   if (family == "binomial" || family == "logistic") {
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
-    mle_coefs <- glm(y ~ X - 1, family = "binomial")$coefficients
+    mle_coefs <- glm(y ~ X - 1, family = "binomial")
   } else if (family == "gamma") {
     # Don't want to use R's logLik() as it uses the pearson estimate of phi.
     # Note that the IRLS to maximize the log lik of beta doesn't rely on phi.
@@ -300,16 +295,13 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
 prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
   eta <- X %*% samples
   initial_coefs <- coef(lm(log(y) ~ X - 1))
-  print(names(initial_coefs))
   mle_coefs <- fit_gamma_log_cpp(X, t(X) %*% X, y, initial_coefs)
   est_shape <- 1 / mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
   # pearson_estimate_dispersion_gamma relies on the beta coefficients to be maximized
-  ll_val_samps <- as.vector(compute_gamma_ll_r(y, eta, shape = est_shape))
-  ll_val <- as.vector(compute_gamma_ll_r(y, X %*% the_compared_theta, shape = est_shape))
-  message("Is ll_val sorted? ", !is.unsorted(ll_val))
-  sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
+  ll_val_samps <- compute_gamma_ll_r(y, eta, shape = est_shape)
+  ll_val <- compute_gamma_ll_r(y, X %*% the_compared_theta, shape = est_shape)
+  return(sapply(ll_val, function(x) sum(ll_val_samps < x)) / length(ll_val_samps))
 }
-
 
 #' @export
 compute_gamma_ll_r <- function(y, eta, shape) {
@@ -321,7 +313,7 @@ compute_gamma_ll_r <- function(y, eta, shape) {
 }
 
 
-# Function that is called if doing elliptical approx (but faster)
+# Function that is called if doing the elliptical approximation
 #' @export
 glim_inner_prob_approx_samples_2 <- function(
   X,
@@ -381,7 +373,6 @@ glim_inner_prob_approx_samples_2 <- function(
   matrix_of_xis <- get_xi(
     AA,
     mle_coefs,
-    family,
     eJ_vectors,
     eJ_values,
     dispersion,
@@ -394,50 +385,12 @@ glim_inner_prob_approx_samples_2 <- function(
 
   u <- runif(m)
   # Lerping here
-  lerped_xi <- c()
-  for (i in 1:m) {
-    if (u[i] < 1 / length(AA)) {
-      lerped_xi <- matrix_of_xis[, 1]
-    } else if (u[i] > 1 - 1 / length(AA)) {
-      lerped_xi <- matrix_of_xis[, length(AA)]
-    } else {
-      # A simple method because we are assuming that our alpha values are equally spaced
-      where_located <- findInterval(u[i], AA)
-      w <- u[i] - AA[where_located]
-      lerped_xi <- w * matrix_of_xis[, where_located] + (1 - w) * matrix_of_xis[, where_located + 1]
-    }
-    if (is.na(lerped_xi)) {
-      print("You dun messed up")
-    }
-    # Sample randomly on the boundary TODO #8 explain code
-    # vectors stay the same, we multiply by the standard deviation.
-    rand_dir <- generate_unit_matrix(1, length(mle_coefs))
-    spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
+  # Sample randomly on the boundary TODO #8 explain code
+  # vectors stay the same, we multiply by the standard deviation.
+  rand_dir <- generate_unit_matrix(1, length(mle_coefs))
+  spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
 
-    samples[, i] <- mle_coefs +
-      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * lerped_xi * spatial_dir)
-  }
+  samples[, i] <- mle_coefs +
+    as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * lerped_xi * spatial_dir)
   return(samples)
-}
-
-
-appendix <- function(eJ, num_samps, d, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
-  eig_vecs <- eJ$vectors
-  eig_vals <- eJ$values
-  output_samples <- lets_go_to_cpp(
-    eig_vecs,
-    eig_vals,
-    num_samps,
-    d,
-    X,
-    y,
-    mle_coefs,
-    family,
-    dispersion,
-    m,
-    tol,
-    max_it,
-    a,
-    b
-  )
 }
