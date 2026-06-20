@@ -117,7 +117,7 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     res <- glm(y ~ X - 1, family = "binomial")
     p_i <- res$fitted.values
     # Note that a matrix times a vector, the vector will get recycled. Row-wise scaling
-    J <- crossprod(X, X * (p_i * (1 - p_i)))
+    J <- crossprod(X, X * as.vector((p_i * (1 - p_i))))
     dispersion <- 1
   } else if (family == "gamma") {
     # canonical link for gamma family (1/mu) is incredibly numerically unstable. If Xb is ever close to zero during the process, we get infinities. Additionally, if xb is ever negative, then we are saying that the mean of a gamma is negative.
@@ -135,8 +135,9 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
   } else if (family == "poisson") {
     res <- glm(y ~ X - 1, family = poisson(link = "log"))
-    lambda_i <- res$fitted.values
-    J <- crossprod(X, X * (lambda_i))
+    eta <- X %*% coef(res)
+    lambda_i <- exp(eta)
+    J <- crossprod(X, X * as.vector(lambda_i))
     dispersion <- 1
   }
   J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries -- Gemini's idea
@@ -158,7 +159,7 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
   xi <- list()
   prev_xi <- rep(1, length(mle_coefs))
   # finding xi
-  pb <- progress_bar$new(
+  pb <- progress::progress_bar$new(
     total = length(AA),
     format = "[:bar] :percent eta :eta",
     show_after = 0,
@@ -180,10 +181,11 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
       as.matrix(eJ$vectors),
       as.vector(eJ$values),
       dispersion,
-      tol = 1e-2,
-      a = 5,
+      tol = .01,
+      a = 2,
       b = 1,
-      max_it = 25
+      max_it = 25,
+      parallel = FALSE
     )
     prev_xi <- xi[[i]]
   }
@@ -211,7 +213,7 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
 
     samples[, i] <- mle_coefs +
-      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * sqrt(lerped_xi) * spatial_dir)
+      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * sqrt(lerped_xi) * spatial_dir * dispersion)
   }
   return(samples)
 }
@@ -229,7 +231,7 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
     eta <- X %*% mle_coefs
     ratio <- y / exp(eta)
     n <- length(y)
-    ll_mle_original_data <- compute_gamma_ll(
+    ll_mle_original_data <- compute_gamma_ll_r(
       y,
       eta,
       1 / mle_estimate_dispersion_gamma(y, exp(eta), length(mle_coefs))
@@ -293,22 +295,19 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
   return(sapply(ll_val, function(x) sum(ll_val_samps < x)) / length(ll_val_samps))
 }
 
-
 #' Will throw an error if the_compared_theta is a scalar
 #' @export
 prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
   eta <- X %*% samples
-  initial_coefs <- rep(1, length.out = ncol(X))
+  initial_coefs <- coef(lm(log(y) ~ X - 1))
+  print(names(initial_coefs))
   mle_coefs <- fit_gamma_log_cpp(X, t(X) %*% X, y, initial_coefs)
   est_shape <- 1 / mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
   # pearson_estimate_dispersion_gamma relies on the beta coefficients to be maximized
-  ll_val_samps <- compute_gamma_ll_r(y, eta, shape = est_shape)
-  print(dim(ll_val_samps))
-  print(dim(X %*% the_compared_theta))
-  print(length(y))
-  ll_val <- compute_gamma_ll_r(y, X %*% the_compared_theta, shape = est_shape)
-  print(dim(ll_val))
-  return(sum(ll_val_samps > ll_val) / length(ll_val_samps))
+  ll_val_samps <- as.vector(compute_gamma_ll_r(y, eta, shape = est_shape))
+  ll_val <- as.vector(compute_gamma_ll_r(y, X %*% the_compared_theta, shape = est_shape))
+  message("Is ll_val sorted? ", !is.unsorted(ll_val))
+  sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
 }
 
 
@@ -398,14 +397,14 @@ glim_inner_prob_approx_samples_2 <- function(
   lerped_xi <- c()
   for (i in 1:m) {
     if (u[i] < 1 / length(AA)) {
-      lerped_xi = matrix_of_xis[, 1]
+      lerped_xi <- matrix_of_xis[, 1]
     } else if (u[i] > 1 - 1 / length(AA)) {
-      lerped_xi = matrix_of_xis[, length(AA)]
+      lerped_xi <- matrix_of_xis[, length(AA)]
     } else {
       # A simple method because we are assuming that our alpha values are equally spaced
       where_located <- findInterval(u[i], AA)
       w <- u[i] - AA[where_located]
-      lerped_xi = w * matrix_of_xis[, where_located] + (1 - w) * matrix_of_xis[, where_located + 1]
+      lerped_xi <- w * matrix_of_xis[, where_located] + (1 - w) * matrix_of_xis[, where_located + 1]
     }
     if (is.na(lerped_xi)) {
       print("You dun messed up")

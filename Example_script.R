@@ -4,6 +4,7 @@
 # IMVAR approximation is broken. Gamma and Logistic fast, though!
 
 library(GLIM)
+library(progress)
 # Data setup
 
 X <- matrix(
@@ -101,15 +102,28 @@ New_X_gamma <- X_gamma
 New_X_gamma[, 2] <- scale(X_gamma[, 2]) # standardize the x-predictor
 
 
+# Rcpp::sourceCpp("src/possibilistic_computations.cpp")
+# coef(glm(y_gamma ~ New_X_gamma - 1, family = Gamma("log")))
+# fit_gamma_log_cpp(New_X_gamma, t(New_X_gamma) %*% New_X_gamma, y_gamma, c(1, 1))
+
+# y_gamma <- c(10, 40, 30, 60, 50)
+# X_gamma <- matrix(c(1, 1, 1, 1, 1, 30, 60, 30, 45, 50), nrow = 5)
+# res <- glm(y_gamma ~ X_gamma - 1, family = Gamma("log"))
+# mle_coefs <- coef(res)
+# disp <- pearson_estimate_dispersion_gamma(y_gamma, exp(X_gamma %*% mle_coefs), length(mle_coefs))
+
+# fit_gamma_log_cpp(X_gamma, t(X_gamma) %*% X_gamma, y_gamma, mle_coefs)
+# New_X_gamma <- X_gamma
+
 # Only if grid is needed
-beta_0_grid <- seq(11.8, 12.2, by = .05)
+dbeta_0_grid <- seq(11.8, 12.2, by = .05)
 beta_1_grid <- seq(.48, .53, by = .025)
 beta_grid <- expand.grid(beta_0_grid, beta_1_grid)
 beta_grid <- as.matrix(beta_grid)
 # beta_grid <- matrix(c(12.09, .51), nrow = 1)
 
 res <- glm(y_gamma ~ New_X_gamma - 1, family = Gamma("log"))
-res$coefficients
+coef(res)
 
 start_time <- Sys.time()
 Rprof()
@@ -143,11 +157,13 @@ summaryRprof()
 
 beta1_grid <- seq(min(output[1, ]), max(output[1, ]), length.out = 30)
 beta2_grid <- seq(min(output[2, ]), max(output[2, ]), length.out = 30)
+
+
 beta_p2p_grid <- expand.grid(beta1_grid, beta2_grid)
 beta_p2p_grid <- t(as.matrix(beta_p2p_grid))
 
 possibils <- prob2poss_gamma(
-  X = X_gamma,
+  X = New_X_gamma,
   y = y_gamma,
   samples = output,
   the_compared_theta = beta_p2p_grid
@@ -155,10 +171,119 @@ possibils <- prob2poss_gamma(
 
 profiled_mat_glim <- matrix(possibils, nrow = length(beta1_grid), ncol = length(beta2_grid))
 contour(
+  beta1_grid,
+  beta2_grid,
+  profiled_mat_glim,
+  main = "Gamma GLM possibility",
+  xlab = "beta_0",
+  ylab = "beta_1"
+)
+
+## Poisson case:
+#
+#
+#
+#
+#
+#
+
+Rcpp::sourceCpp("src/possibilistic_computations.cpp")
+glm_poisson_pl_cpp(X_poisson, y_poisson, as.matrix(c(.3, .2)), as.matrix(c(-1.8, .2)), 1000, FALSE)
+
+library(GLIM)
+library(dplyr)
+library(Lahman)
+data(BattingPost)
+liveball_ws <- BattingPost |> filter(yearID >= 1920) |> filter(round == "WS")
+
+y_poisson <- liveball_ws$R
+X_poisson <- liveball_ws$H
+X_poisson <- cbind(rep(1, length(X_poisson)), X_poisson)
+X_poisson <- as.matrix(X_poisson)
+
+#mle coefs are -1.075, .295
+
+# Only if grid is needed
+beta_0_grid <- seq(-1.2, -1, by = .007)
+beta_1_grid <- seq(.27, .33, by = .01)
+beta_grid <- expand.grid(beta_0_grid, beta_1_grid)
+beta_grid <- as.matrix(beta_grid)
+
+start_time <- Sys.time()
+Rprof()
+output <- glim(
+  X_poisson,
+  y_poisson,
+  "poisson",
+  beta_grid,
+  m = 100,
+  approx = FALSE,
+  parallel = FALSE
+)
+Rprof(NULL)
+end_time <- Sys.time()
+end_time - start_time
+
+summaryRprof()
+
+profiled_mat_glim <- matrix(output, nrow = length(beta_0_grid), ncol = length(beta_1_grid))
+contour(
   beta_0_grid,
   beta_1_grid,
   profiled_mat_glim,
-  main = "Gamma GLM possibility",
+  main = "Poisson GLM possibility",
+  xlab = "beta_0",
+  ylab = "beta_1"
+)
+
+
+res <- glm(y_poisson ~ X_poisson - 1, family = "poisson")
+mle_coefs <- coef(res)
+eta <- X_poisson %*% mle_coefs
+mu <- exp(eta)
+
+y_poisson %*% eta - sum(mu) - sum(log(gamma(y_poisson + 1)))
+
+Rcpp::sourceCpp("src/possibilistic_computations.cpp")
+fit_poisson_log_cpp(as.matrix(X_poisson), y_poisson, as.matrix(c(1, 1), nrow = 2))
+
+
+y_poisson %*% eta - sum(mu) - sum(log(gamma(y_poisson + 1)))
+
+
+# gamma approx:
+start_time <- Sys.time()
+Rprof()
+output <- glim(X_poisson, y_poisson, "poisson", beta_grid, m = 100, approx = TRUE, parallel = TRUE)
+Rprof(NULL)
+end_time <- Sys.time()
+end_time - start_time
+
+summaryRprof()
+
+
+possibils <- prob2poss_poisson(
+  X = X_gamma,
+  y = y_gamma,
+  samples = output,
+  the_compared_theta = beta_p2p_grid
+)
+
+output <- matrix(possibils, nrow = length(beta1_grid), ncol = length(beta2_grid))
+
+beta1_grid <- seq(min(output[1, ]), max(output[1, ]), length.out = 30)
+beta2_grid <- seq(min(output[2, ]), max(output[2, ]), length.out = 30)
+beta_p2p_grid <- expand.grid(beta1_grid, beta2_grid)
+beta_p2p_grid <- t(as.matrix(beta_p2p_grid))
+
+plot(output[1, ], output[2, ])
+
+
+contour(
+  beta1_grid,
+  beta2_grid,
+  output,
+  main = "Poisson GLM possibility",
   xlab = "beta_0",
   ylab = "beta_1"
 )
