@@ -38,21 +38,25 @@ double calculate_deviance_poisson(const arma::vec &y,
 // [[Rcpp::export]]
 arma::vec fit_poisson_log_cpp(const arma::mat &X, const arma::vec &y,
                               const arma::vec &mle_coefs) {
-  arma::vec proposed_beta = mle_coefs;
-  arma::vec initial_mu = arma::exp(arma::clamp(X * proposed_beta, -30.0, 30.0));
+  // Prevent log(0) by capping minimum values to 0.1
+  arma::vec safe_y = y;
+  safe_y.elem(arma::find(safe_y < 0.1)).fill(0.1);
+  arma::vec eta_init = arma::log(safe_y);
 
-  double current_dev = calculate_deviance_poisson(y, initial_mu);
+  arma::vec proposed_beta;
+  // Get rough starting point. Fallback to zeros if X is ill-conditioned.
+  if (!arma::solve(proposed_beta, X, eta_init)) {
+    proposed_beta = arma::zeros<arma::vec>(X.n_cols);
+  }
+
+  arma::vec eta = X * proposed_beta;
+  arma::vec mu = arma::exp(arma::clamp(eta, -50.0, 50.0));
+  double current_dev = calculate_deviance_poisson(y, mu);
   arma::vec step(X.n_cols);
 
-  for (int i = 0; i < 20; i++) {
-    arma::vec eta = X * proposed_beta;
-
-    arma::vec mu = arma::exp(arma::clamp(eta, -30.0, 30.0));
-    mu = arma::clamp(mu, std::numeric_limits<double>::epsilon(), 1e15);
-
-    // Weights for Poisson log-link
+  for (int i = 0; i < 25; i++) {
     arma::vec w = mu;
-    w.elem(arma::find(w < 1e-8)).fill(1e-8);
+    w.elem(arma::find(w < 1e-8)).fill(1e-8); // Stabilize tiny weights
 
     arma::mat XtWX = X.t() * arma::diagmat(w) * X;
     arma::vec grad = X.t() * (y - mu);
@@ -61,42 +65,48 @@ arma::vec fit_poisson_log_cpp(const arma::mat &X, const arma::vec &y,
     if (!success) {
       success = arma::solve(step, XtWX, grad);
       if (!success) {
-        Rcpp::Rcout << "[fit_poisson_log_cpp] iter " << i
-                    << ": solve failed, breaking\n";
-        break;
+        break; // Matrix is singular, accept current beta
       }
     }
-    if (!step.is_finite()) {
-      Rcpp::Rcout << "[fit_poisson_log_cpp] iter " << i
-                  << ": step has non-finite values\n";
+
+    if (!step.is_finite())
       break;
+
+    // cap the norm(step-size) to be 20. Since the mean and the variance of the
+    // poisson are linked, we are preventing drastic oversteps
+    double max_step = 3.0;
+    double step_norm = arma::norm(step);
+    if (step_norm > max_step) {
+      step = step * (max_step / step_norm);
     }
 
-    // Propose a new beta
     arma::vec temp_beta = proposed_beta + step;
-    arma::vec proposed_mu = arma::exp(arma::clamp(X * temp_beta, -30.0, 30.0));
-    proposed_mu =
-        arma::clamp(proposed_mu, std::numeric_limits<double>::epsilon(), 1e15);
+    arma::vec temp_eta = X * temp_beta;
+    arma::vec proposed_mu = arma::exp(arma::clamp(temp_eta, -50.0, 50.0));
     double proposed_dev = calculate_deviance_poisson(y, proposed_mu);
-    // Step-Halving Loop
+
+    // step-half
     int half_iter = 0;
     while ((!std::isfinite(proposed_dev) || proposed_dev > current_dev) &&
-           half_iter < 25) {
-      step = step / 2.0;                // Cut the step in half
-      temp_beta = proposed_beta + step; // Try again
-      proposed_mu = arma::exp(arma::clamp(X * temp_beta, -30.0, 30.0));
-      proposed_mu = arma::clamp(proposed_mu,
-                                std::numeric_limits<double>::epsilon(), 1e15);
+           half_iter < 10) {
+      step = step / 2.0;
+      temp_beta = proposed_beta + step;
+      temp_eta = X * temp_beta;
+      proposed_mu = arma::exp(arma::clamp(temp_eta, -50.0, 50.0));
       proposed_dev = calculate_deviance_poisson(y, proposed_mu);
       half_iter++;
     }
+
+    // Update state
     proposed_beta = temp_beta;
+    mu = proposed_mu;
     current_dev = proposed_dev;
 
     if (arma::norm(step) < 1e-6) {
       break;
     }
   }
+
   return proposed_beta;
 }
 
@@ -178,10 +188,11 @@ double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
       Y(i, j) = rpois(gen);
     }
   }
+  Rcpp::Rcout << "here";
 
   int count_less = 0;
 
-  for (int j = 0; j < m; ++j) {
+  for (int j = 0; j < m; j++) {
     arma::vec y_sim = Y.col(j);
 
     arma::vec coefs_sim = fit_poisson_log_cpp(X, y_sim, beta_vals);

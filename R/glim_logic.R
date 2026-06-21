@@ -8,7 +8,7 @@ library(RhpcBLASctl)
 # pkgbuild::compile_dll() validates the package directory differently. Rcpp might implement it's directory check differently
 # After making changes, restart R, get in the package directory
 #devtools::document()
-#devtools::install()
+#devtools::install() or devtools::load_all()
 # Pass everything to our single unified C++ dispatcher function
 
 # Evaluates possibility for beta/dispersion values
@@ -440,4 +440,20 @@ appendix <- function(eJ, num_samps, d, X, y, mle_coefs, family, dispersion, m, t
     a,
     b
   )
+}
+
+#' @export
+prob2poss_poisson <- function(X, y, samples, the_compared_theta) {
+  return(NULL)
+}
+
+
+#' @export
+fit_glm_omp_r <- function(X, y, mle_coefs, betas, family, approx, num_threads, m, parallel) {
+  return(fit_glm_omp_cpp(X, y, mle_coefs, betas, family, approx, num_threads, m, parallel))
+}
+
+#' @export
+pois_pos <- function(X, y, mle_coefs, beta_vals, m, approx) {
+  return(glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m, approx))
 }

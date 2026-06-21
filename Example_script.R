@@ -187,8 +187,25 @@ contour(
 #
 #
 
+beta_grid[c(40, 100), ]
+
 Rcpp::sourceCpp("src/possibilistic_computations.cpp")
-glm_poisson_pl_cpp(X_poisson, y_poisson, as.matrix(c(.3, .2)), as.matrix(c(-1.8, .2)), 1000, FALSE)
+
+
+pois_pos(X_poisson, y_poisson, as.matrix(c(-1.1, .25), nrow = 1), beta_grid[100, ], 100, FALSE)
+
+fit_glm_omp_r(
+  X_poisson,
+  y_poisson,
+  as.matrix(c(-1.1, .25), nrow = 1),
+  beta_grid[1:2, ],
+  "poisson",
+  FALSE,
+  1,
+  100,
+  FALSE
+)
+
 
 library(GLIM)
 library(dplyr)
@@ -263,8 +280,8 @@ summaryRprof()
 
 
 possibils <- prob2poss_poisson(
-  X = X_gamma,
-  y = y_gamma,
+  X = X_poisson,
+  y = y_poisson,
   samples = output,
   the_compared_theta = beta_p2p_grid
 )
