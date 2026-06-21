@@ -152,7 +152,6 @@ glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m
     betas_matrix <- if (is.matrix(z)) z else matrix(z, nrow = 1)
 
     glim_raw(X, y, family, betas_matrix, mle_coefs, mle_val = mle_val, m, parallel, approx = TRUE)
-    # TODO could look at having a seperate case for when betas_matrix is not a matrix, rather than just converting
   }
 
   i <- 0

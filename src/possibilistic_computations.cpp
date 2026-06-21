@@ -36,8 +36,8 @@ double calculate_deviance_poisson(const arma::vec &y,
 
 // IRLS Poisson regression solver (Log link)
 // [[Rcpp::export]]
-arma::vec fit_poisson_log_cpp(const arma::mat &X, const arma::vec &y,
-                              const arma::vec &mle_coefs) {
+arma::vec fit_poisson_log_cpp(const arma::mat &X, const arma::vec &y) {
+  // Don't need to worry about an initial value, since this comes from the data
   // Prevent log(0) by capping minimum values to 0.1
   arma::vec safe_y = y;
   safe_y.elem(arma::find(safe_y < 0.1)).fill(0.1);
@@ -132,79 +132,53 @@ double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
 
   // Will get me into issues when parallel is true....
   // Need to check first.
-  if (y.n_elem != X.n_rows || mle_coefs.n_elem != X.n_cols ||
-      beta_vals.n_elem != X.n_cols) {
-    Rcpp::stop("Dimension mismatch: X is %d x %d, y has %d, mle_coefs has %d, "
-               "beta_vals has %d",
-               X.n_rows, X.n_cols, y.n_elem, mle_coefs.n_elem,
-               beta_vals.n_elem);
-  }
   int n = X.n_rows;
 
   arma::vec eta = X * beta_vals;
-  eta = arma::clamp(eta, -30.0, 30.0);
+  eta = arma::clamp(eta, -50.0, 50.0);
   arma::vec mu = arma::exp(eta);
-  mu = arma::clamp(mu, std::numeric_limits<double>::epsilon(), 1e15);
 
-  double true_ll = glm_poisson_ll(eta, mu, y);
+  // If the value of mu is too large, then the parameter is not possible
+  if (!mu.is_finite() || mu.max() > 1e7) {
+    return 0.0;
+  }
+
   arma::vec eta_hat = X * mle_coefs;
-  eta_hat = arma::clamp(eta_hat, -30.0, 30.0);
+  eta_hat = arma::clamp(eta_hat, -50.0, 50.0);
   arma::vec mu_hat = arma::exp(eta_hat);
   mu_hat = arma::clamp(mu_hat, std::numeric_limits<double>::epsilon(), 1e15);
-  double mle_ll = glm_poisson_ll(eta_hat, mu_hat, y);
 
+  double true_ll = glm_poisson_ll(eta, mu, y);
+  double mle_ll = glm_poisson_ll(eta_hat, mu_hat, y);
   double f_x = true_ll - mle_ll;
 
-  if (!mu.is_finite()) {
-    Rcpp::Rcout << "mu contains NaN/Inf!\n";
-    arma::uvec bad_idx = arma::find_nonfinite(mu);
-    if (!bad_idx.is_empty()) {
-      Rcpp::Rcout << "Found " << bad_idx.n_elem
-                  << " non-finite mu values at indices: " << bad_idx.t()
-                  << "\n";
-      Rcpp::Rcout << "Offending mu values: " << mu.elem(bad_idx).t() << "\n";
-    }
-  }
-  if (mu.max() > 1e7) {
-    Rcpp::Rcout << "[WARNING] mu max is " << mu.max()
-                << " — poisson_distribution may misbehave\n";
-  }
-
-  arma::mat Y(n, m);
+  arma::mat Y_sim(n, m);
 
   // Constructor
   thread_local std::random_device rd;
   // rd() is a non-deterministic random number
   thread_local std::mt19937 gen(rd());
   // Is using the random import to get access to these distributions
-  for (int j = 0; j < m; ++j) {
-    for (int i = 0; i < n; i++) {
-      if (!std::isfinite(mu(i)) || mu(i) > 1e7) {
-        Rcpp::Rcout << "[j=" << j << ", i=" << i << "] bad mu: " << mu(i)
-                    << "\n";
-        Rcpp::stop("mu out of safe range for poisson_distribution");
-      }
-      std::poisson_distribution<int> rpois(mu(i));
-      Y(i, j) = rpois(gen);
+  for (int i = 0; i < n; i++) {
+    std::poisson_distribution<int> rpois(mu(i));
+    for (int j = 0; j < m; j++) {
+      Y_sim(i, j) = rpois(gen);
     }
   }
-  Rcpp::Rcout << "here";
 
   int count_less = 0;
 
   for (int j = 0; j < m; j++) {
-    arma::vec y_sim = Y.col(j);
+    arma::vec y_sim = Y_sim.col(j);
 
-    arma::vec coefs_sim = fit_poisson_log_cpp(X, y_sim, beta_vals);
+    arma::vec coefs_sim = fit_poisson_log_cpp(X, y_sim);
     if (!coefs_sim.is_finite()) {
       Rcpp::Rcout << "[j=" << j << "] coefs_sim is non-finite!\n";
       Rcpp::Rcout << coefs_sim.t() << "\n";
     }
     arma::vec eta_hat_sim = X * coefs_sim;
-    eta_hat_sim = arma::clamp(eta_hat_sim, -30.0, 30.0);
+    eta_hat_sim = arma::clamp(eta_hat_sim, -50.0, 50.0);
     arma::vec mu_hat_sim = arma::exp(eta_hat_sim);
-    mu_hat_sim =
-        arma::clamp(mu_hat_sim, std::numeric_limits<double>::epsilon(), 1e15);
 
     double mle_sim = 0.0;
     double llX_j = 0.0;
@@ -216,12 +190,9 @@ double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
       llX_j += y_sim(i) * eta(i) - mu(i);
     }
 
-    // Rcpp::Rcout << "coefs_sim - mle_coefs: " << coefs_sim - mle_coefs <<
-    // "\n";
     double f_X_j = llX_j - mle_sim;
-    // Rcpp::Rcout << "f_X_j: " << f_X_j << "\n";
 
-    if (f_X_j < f_x) {
+    if (f_X_j <= f_x) {
       count_less++;
     }
   }

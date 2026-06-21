@@ -73,8 +73,8 @@ imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, di
     .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a, b, max_it, parallel)
 }
 
-fit_poisson_log_cpp <- function(X, y, mle_coefs) {
-    .Call(`_GLIM_fit_poisson_log_cpp`, X, y, mle_coefs)
+fit_poisson_log_cpp <- function(X, y) {
+    .Call(`_GLIM_fit_poisson_log_cpp`, X, y)
 }
 
 glm_poisson_ll <- function(eta, mu, y) {

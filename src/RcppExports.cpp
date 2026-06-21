@@ -277,15 +277,14 @@ BEGIN_RCPP
 END_RCPP
 }
 // fit_poisson_log_cpp
-arma::vec fit_poisson_log_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs);
-RcppExport SEXP _GLIM_fit_poisson_log_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP) {
+arma::vec fit_poisson_log_cpp(const arma::mat& X, const arma::vec& y);
+RcppExport SEXP _GLIM_fit_poisson_log_cpp(SEXP XSEXP, SEXP ySEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_poisson_log_cpp(X, y, mle_coefs));
+    rcpp_result_gen = Rcpp::wrap(fit_poisson_log_cpp(X, y));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -338,7 +337,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_GLIM_glm_invgauss_pl_cpp", (DL_FUNC) &_GLIM_glm_invgauss_pl_cpp, 6},
     {"_GLIM_fit_glm_omp_cpp", (DL_FUNC) &_GLIM_fit_glm_omp_cpp, 9},
     {"_GLIM_imvar", (DL_FUNC) &_GLIM_imvar, 15},
-    {"_GLIM_fit_poisson_log_cpp", (DL_FUNC) &_GLIM_fit_poisson_log_cpp, 3},
+    {"_GLIM_fit_poisson_log_cpp", (DL_FUNC) &_GLIM_fit_poisson_log_cpp, 2},
     {"_GLIM_glm_poisson_ll", (DL_FUNC) &_GLIM_glm_poisson_ll, 3},
     {"_GLIM_glm_poisson_pl_cpp", (DL_FUNC) &_GLIM_glm_poisson_pl_cpp, 6},
     {NULL, NULL, 0}

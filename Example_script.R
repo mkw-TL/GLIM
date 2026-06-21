@@ -187,24 +187,34 @@ contour(
 #
 #
 
-beta_grid[c(40, 100), ]
-
-Rcpp::sourceCpp("src/possibilistic_computations.cpp")
-
-
-pois_pos(X_poisson, y_poisson, as.matrix(c(-1.1, .25), nrow = 1), beta_grid[100, ], 100, FALSE)
-
-fit_glm_omp_r(
-  X_poisson,
-  y_poisson,
-  as.matrix(c(-1.1, .25), nrow = 1),
-  beta_grid[1:2, ],
-  "poisson",
-  FALSE,
-  1,
-  100,
-  FALSE
+mle_coefs <- coef(glm(y_poisson ~ X_poisson - 1, family = "poisson"))
+aaa <- matrix(
+  c(
+    -1.10,
+    -1.10,
+    -1.10,
+    -1.07,
+    -1.07,
+    -1.07,
+    -1.05,
+    -1.05,
+    -1.05,
+    .3,
+    .295,
+    .29,
+    .3,
+    .295,
+    .29,
+    .3,
+    .295,
+    .29
+  ),
+  ncol = 2,
+  byrow = FALSE
 )
+
+
+outtt <- fit_glm_omp_r(X_poisson, y_poisson, mle_coefs, beta_grid, "poisson", FALSE, 1, 100, FALSE)
 
 
 library(GLIM)
@@ -221,22 +231,14 @@ X_poisson <- as.matrix(X_poisson)
 #mle coefs are -1.075, .295
 
 # Only if grid is needed
-beta_0_grid <- seq(-1.2, -1, by = .007)
-beta_1_grid <- seq(.27, .33, by = .01)
+beta_0_grid <- seq(-1.15, -1, by = .002)
+beta_1_grid <- seq(.28, .31, by = .002)
 beta_grid <- expand.grid(beta_0_grid, beta_1_grid)
 beta_grid <- as.matrix(beta_grid)
 
 start_time <- Sys.time()
 Rprof()
-output <- glim(
-  X_poisson,
-  y_poisson,
-  "poisson",
-  beta_grid,
-  m = 100,
-  approx = FALSE,
-  parallel = FALSE
-)
+output <- glim(X_poisson, y_poisson, "poisson", beta_grid, m = 100, approx = FALSE, parallel = TRUE)
 Rprof(NULL)
 end_time <- Sys.time()
 end_time - start_time
@@ -252,20 +254,6 @@ contour(
   xlab = "beta_0",
   ylab = "beta_1"
 )
-
-
-res <- glm(y_poisson ~ X_poisson - 1, family = "poisson")
-mle_coefs <- coef(res)
-eta <- X_poisson %*% mle_coefs
-mu <- exp(eta)
-
-y_poisson %*% eta - sum(mu) - sum(log(gamma(y_poisson + 1)))
-
-Rcpp::sourceCpp("src/possibilistic_computations.cpp")
-fit_poisson_log_cpp(as.matrix(X_poisson), y_poisson, as.matrix(c(1, 1), nrow = 2))
-
-
-y_poisson %*% eta - sum(mu) - sum(log(gamma(y_poisson + 1)))
 
 
 # gamma approx:

@@ -671,17 +671,34 @@ arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
   arma::vec plausabilities(n_evals);
   arma::mat XtX = X.t() * X;
 
+  if (y.n_elem != X.n_rows || mle_coefs.n_elem != X.n_cols ||
+      betas.row(1).n_elem != X.n_cols) {
+    Rcpp::stop("Dimension mismatch: X is %d x %d, y has %d, mle_coefs has %d, "
+               "beta_vals has %d",
+               X.n_rows, X.n_cols, y.n_elem, mle_coefs.n_elem,
+               betas.row(1).n_elem);
+  }
+
+  std::atomic<int> progress_count(0);
+  // Only update the console every 2% of total iterations to protect performance
+  int tick_step = n_evals / 50;
+  if (tick_step < 1)
+    tick_step = 1;
+
 // If _OPENMP is defined, then it will run the omp function. Otherwise, will not
 // throw an error
 #ifdef _OPENMP
   omp_set_num_threads(num_threads);
 #endif
 
+  int next_percentage_milestone = 0;
+  int percentage_step = 2; // Update every 2%
+
 // The Parallel Loop. Schedule(static) means that each thread is assigned
 // roughly the same amount of work schedule(dynamic) has a bit more overhead
 // which we don't need here. Don't want the overhead of allocating different
 // threads if it is fast enough to execute on a single
-#pragma omp parallel for schedule(static) if (approx == false &&               \
+#pragma omp parallel for schedule(guided) if (approx == false &&               \
                                                   parallel == true)
   for (int i = 0; i < n_evals; i++) {
     arma::vec beta_vals = betas.row(i).t();
@@ -717,6 +734,39 @@ arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
     }
 
     plausabilities(i) = pl;
+    int current_progress = ++progress_count; // This is atomic!
+
+    int thread_id = 0;
+#ifdef _OPENMP
+    thread_id = omp_get_thread_num();
+#endif
+
+    if (thread_id == 0) {
+      // Calculate what the *actual current loop progress* is right now
+      int current_percentage =
+          (int)((double)current_progress / n_evals * 100.0);
+
+      // If the actual progress has caught up to or passed our next milestone,
+      // print it!
+      if (current_percentage >= next_percentage_milestone) {
+        int bar_width = 40;
+        int pos = (int)(bar_width * (current_percentage / 100.0));
+
+        Rcpp::Rcout << "\rCalculating Plausibilities: [";
+        for (int b = 0; b < bar_width; ++b) {
+          if (b < pos)
+            Rcpp::Rcout << "=";
+          else if (b == pos)
+            Rcpp::Rcout << ">";
+          else
+            Rcpp::Rcout << " ";
+        }
+        Rcpp::Rcout << "] " << current_percentage << "%" << std::flush;
+
+        // Advance the milestone target past the current percentage
+        next_percentage_milestone = current_percentage + percentage_step;
+      }
+    }
   }
 
   return plausabilities;
@@ -737,9 +787,11 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
   // Setup Chi-Squared distribution to replicate R's qchisq()
   boost::math::chi_squared dist(D);
   double q_val = boost::math::quantile(dist, 1.0 - alpha);
+  Rcpp::Rcout << "imvar called";
 
   // These are all the dimensions we would like to traverse
   for (int d = 0; d < D; d++) {
+    Rcpp::Rcout << "dimension";
     // log(xi) because we are getting the exponentiated version
     double xi_d = std::log(xi(d));
 
@@ -748,6 +800,7 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
     arma::vec posts_d =
         J_vectors.col(d) *
         std::sqrt(dispersion * q_val * std::abs(1.0 / J_values(d)));
+    Rcpp::Rcout << "posts";
 
     int it = 1;
     while (true) {
@@ -755,13 +808,16 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
       xi_d = std::max(-20.0, std::min(10.0, xi_d));
       // Xi scales singular values. exp parameterization avoids negative xi.
       arma::vec posts_xi_d = posts_d * std::exp(xi_d / 2.0);
+      arma::mat MPlus(mle +
+                      posts_xi_d); // I guess this is a constructor that works..
+      arma::mat MMinus(mle + posts_xi_d);
 
-      double val1 = fit_glm_omp_cpp(X, y, mle, (mle + posts_xi_d).t(), family,
-                                    false, 1, 100, parallel)(0, 0);
-      double val2 = fit_glm_omp_cpp(X, y, mle, (mle - posts_xi_d).t(), family,
-                                    false, 1, 100, parallel)(0, 0);
+      double val1 = fit_glm_omp_cpp(X, y, mle, MPlus.t(), family, false, 1, 100,
+                                    parallel)(0, 0);
+      double val2 = fit_glm_omp_cpp(X, y, mle, MMinus.t(), family, false, 1,
+                                    100, parallel)(0, 0);
       double g_xi = std::max(val1, val2) - alpha;
-      // Rcpp::Rcout << "g_xi is: " << g_xi << "\n";
+      Rcpp::Rcout << "g_xi is: " << g_xi << "\n";
 
       if (std::abs(g_xi) <= tol || it >= max_it) {
         break;
