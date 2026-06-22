@@ -111,8 +111,8 @@ arma::vec fit_poisson_log_cpp(const arma::mat &X, const arma::vec &y) {
 }
 
 // [[Rcpp::export]]
-double glm_poisson_ll(arma::vec &eta, arma::vec &mu, const arma::vec &y) {
-
+double compute_poisson_ll(const arma::vec &eta, const arma::vec &y) {
+  arma::vec mu = arma::exp(eta);
   double term1 = arma::dot(y, eta);
 
   // Sum of mu
@@ -122,6 +122,17 @@ double glm_poisson_ll(arma::vec &eta, arma::vec &mu, const arma::vec &y) {
   double term3 = arma::accu(arma::lgamma(y + 1.0));
 
   return term1 - term2 - term3;
+}
+
+// [[Rcpp::export]]
+arma::vec compute_poisson_ll_mat(const arma::mat &eta, const arma::vec &y) {
+  arma::mat mu = arma::exp(eta);
+  arma::vec ll(eta.n_cols);
+  for (int i = 0; i < eta.n_cols; i++) {
+
+    ll(i) = compute_poisson_ll(eta.col(i), y);
+  }
+  return ll;
 }
 
 // Main simulation function for Poisson
@@ -148,8 +159,8 @@ double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
   arma::vec mu_hat = arma::exp(eta_hat);
   mu_hat = arma::clamp(mu_hat, std::numeric_limits<double>::epsilon(), 1e15);
 
-  double true_ll = glm_poisson_ll(eta, mu, y);
-  double mle_ll = glm_poisson_ll(eta_hat, mu_hat, y);
+  double true_ll = compute_poisson_ll(eta, y);
+  double mle_ll = compute_poisson_ll(eta_hat, y);
   double f_x = true_ll - mle_ll;
 
   arma::mat Y_sim(n, m);

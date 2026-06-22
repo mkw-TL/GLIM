@@ -1,18 +1,28 @@
 #' @useDynLib GLIM, .registration = TRUE
 #' @importFrom Rcpp sourceCpp
+#' @importFrom progress progress_bar
+#' @importFrom RhpcBLASctl blas_set_num_threads
+#' @importFrom parallel detectCores
 NULL
-library(progress)
-library(RhpcBLASctl)
 #
 # Original code written by Joe Harrison (jrharr25@ncsu.edu), translated to cpp by Gemini
 # pkgbuild::compile_dll() validates the package directory differently. Rcpp might implement it's directory check differently
 # After making changes, restart R, get in the package directory
 #devtools::document()
 #devtools::install() or devtools::load_all()
-# Pass everything to our single unified C++ dispatcher function
 
 # Evaluates possibility for beta/dispersion values
 # m is the number of samples for each parameter value you would like to have
+#' @param X input matrix
+#' @param y response vector
+#' @param family A string. Options include ("gaussian", "poisson", "gamma", "binomial")
+#' @param betas If approximation is equal to false, this is not needed. Otherwise, this is a grid of beta values.
+#' Each column is a new beta vector
+#' @param mle_coefs Need to check if this is needed.
+#' @param m Number of evaluations per beta
+#' @param parallel Primarily for debugging
+#' @param approx Whether or not to use the elliptical approximation
+#' @title Fits GLIM
 #' @export
 glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, parallel, approx) {
   if (is.data.frame(X)) {
@@ -39,9 +49,10 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
     mle_coefs = mle_coefs,
     betas = betas,
     family = family, # Pass the string straight down
-    approx = approx,
     num_threads = num_omp_threads,
-    m = m
+    m = m,
+    parallel = parallel,
+    approx = approx
   )
 
   # If we changed the amount of threads that blas uses, change this back. Globally for the R session.
@@ -55,6 +66,10 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
 
 #' Generates all random numbers at once, so doesn't need to use the slow apply
 #' Doesn't work if you pass in more than one column
+#' @param n TODO
+#' @param d TODO
+#' @title Generates a unit matrix
+#' @return Matrix
 #' @export
 generate_unit_matrix <- function(n, d) {
   m <- matrix(rnorm(n * d), nrow = d, ncol = n)
@@ -104,7 +119,15 @@ r_imvar <- function(xi, alpha, pl, mle, J, dispersion, tol = 1e-2, a = 5, b = .6
 
 # Function that is called if doing the elliptical approximation
 #' @export
-glim_inner_prob_approx_samples <- function(X, y, family = "gaussian", mle_val, m, parallel) {
+glim_inner_prob_approx_samples <- function(
+  X,
+  y,
+  family = "gaussian",
+  mle_coefs,
+  mle_val,
+  m,
+  parallel
+) {
   print("glim_inner_prob")
   B <- 100
   AA <- seq(0.001, 0.999, length = B)
@@ -258,9 +281,9 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
       as.matrix(betas),
       mle_coefs,
       mle_val = ll_mle_original_data,
-      m,
-      parallel,
-      approx = FALSE
+      m = m,
+      parallel = parallel,
+      approx = approx
     ))
   }
   # Need to get dispersion into this bottom function
@@ -269,6 +292,7 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
       X,
       y,
       family = family,
+      mle_coefs,
       mle_val = ll_mle_original_data,
       m = m,
       parallel
@@ -299,8 +323,7 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
 prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
   eta <- X %*% samples
   initial_coefs <- coef(lm(log(y) ~ X - 1))
-  print(names(initial_coefs))
-  mle_coefs <- fit_gamma_log_cpp(X, t(X) %*% X, y, initial_coefs)
+  mle_coefs <- fit_gamma_log_cpp(X, t(X) %*% X, y, initial_coefs, FALSE)
   est_shape <- 1 / mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
   # pearson_estimate_dispersion_gamma relies on the beta coefficients to be maximized
   ll_val_samps <- as.vector(compute_gamma_ll_r(y, eta, shape = est_shape))
@@ -316,6 +339,16 @@ compute_gamma_ll_r <- function(y, eta, shape) {
     return(compute_gamma_ll(y, eta, shape))
   } else {
     return(compute_gamma_ll_mat(y, eta, shape))
+  }
+}
+
+
+#' @export
+compute_poisson_ll_r <- function(y, eta) {
+  if (is.vector(eta)) {
+    return(compute_poisson_ll(eta, y))
+  } else {
+    return(compute_poisson_ll_mat(eta, y))
   }
 }
 
@@ -443,13 +476,18 @@ appendix <- function(eJ, num_samps, d, X, y, mle_coefs, family, dispersion, m, t
 
 #' @export
 prob2poss_poisson <- function(X, y, samples, the_compared_theta) {
-  return(NULL)
+  eta <- X %*% samples
+  mle_coefs <- fit_poisson_log_cpp(X, y)
+  ll_val_samps <- as.vector(compute_poisson_ll_r(y, eta))
+  ll_val <- as.vector(compute_poisson_ll_r(y, X %*% the_compared_theta))
+  message("Is ll_val sorted? ", !is.unsorted(ll_val))
+  sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
 }
 
 
 #' @export
-fit_glm_omp_r <- function(X, y, mle_coefs, betas, family, approx, num_threads, m, parallel) {
-  return(fit_glm_omp_cpp(X, y, mle_coefs, betas, family, approx, num_threads, m, parallel))
+fit_glm_omp_r <- function(X, y, mle_coefs, betas, family, num_threads, m, parallel, approx) {
+  return(fit_glm_omp_cpp(X, y, mle_coefs, betas, family, num_threads, m, parallel, approx))
 }
 
 #' @export

@@ -116,7 +116,7 @@ New_X_gamma[, 2] <- scale(X_gamma[, 2]) # standardize the x-predictor
 # New_X_gamma <- X_gamma
 
 # Only if grid is needed
-dbeta_0_grid <- seq(11.8, 12.2, by = .05)
+beta_0_grid <- seq(11.8, 12.2, by = .05)
 beta_1_grid <- seq(.48, .53, by = .025)
 beta_grid <- expand.grid(beta_0_grid, beta_1_grid)
 beta_grid <- as.matrix(beta_grid)
@@ -157,8 +157,6 @@ summaryRprof()
 
 beta1_grid <- seq(min(output[1, ]), max(output[1, ]), length.out = 30)
 beta2_grid <- seq(min(output[2, ]), max(output[2, ]), length.out = 30)
-
-
 beta_p2p_grid <- expand.grid(beta1_grid, beta2_grid)
 beta_p2p_grid <- t(as.matrix(beta_p2p_grid))
 
@@ -266,6 +264,11 @@ end_time - start_time
 
 summaryRprof()
 
+beta1_grid <- seq(min(output[1, ]), max(output[1, ]), length.out = 30)
+beta2_grid <- seq(min(output[2, ]), max(output[2, ]), length.out = 30)
+beta_p2p_grid <- expand.grid(beta1_grid, beta2_grid)
+beta_p2p_grid <- t(as.matrix(beta_p2p_grid))
+
 
 possibils <- prob2poss_poisson(
   X = X_poisson,
@@ -274,20 +277,12 @@ possibils <- prob2poss_poisson(
   the_compared_theta = beta_p2p_grid
 )
 
-output <- matrix(possibils, nrow = length(beta1_grid), ncol = length(beta2_grid))
-
-beta1_grid <- seq(min(output[1, ]), max(output[1, ]), length.out = 30)
-beta2_grid <- seq(min(output[2, ]), max(output[2, ]), length.out = 30)
-beta_p2p_grid <- expand.grid(beta1_grid, beta2_grid)
-beta_p2p_grid <- t(as.matrix(beta_p2p_grid))
-
-plot(output[1, ], output[2, ])
-
+profiled_mat_glim <- matrix(possibils, nrow = length(beta1_grid), ncol = length(beta2_grid))
 
 contour(
   beta1_grid,
   beta2_grid,
-  output,
+  profiled_mat_glim,
   main = "Poisson GLM possibility",
   xlab = "beta_0",
   ylab = "beta_1"

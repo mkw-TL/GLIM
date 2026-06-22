@@ -10,7 +10,7 @@ Roxygen: list(markdown = TRUE)
 LinkingTo: 
     Rcpp, RcppArmadillo, BH
 Imports: 
-    Rcpp, RcppArmadillo, pbapply, fastglm
+    Rcpp, RcppArmadillo, pbapply, fastglm, progress, RhpcBLASctl, parallel
 SystemRequirements: C++20, LAPACK, BLAS
 Config/roxygen2/version: 8.0.0
 RoxygenNote: 8.0.0

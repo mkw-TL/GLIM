@@ -39,7 +39,17 @@ GlmFamily string_to_family(const std::string &fam) {
 // mean
 // [[Rcpp::export]]
 arma::vec fit_logistic_cpp(const arma::mat &X, const arma::vec &y,
-                           const arma::vec &mle_coefs) {
+                           const arma::vec &mle_coefs, bool approx) {
+  arma::vec proposed_beta;
+  if (approx == TRUE) {
+    proposed_beta = mle_coefs;
+  } else {
+    arma::vec eta_init = log(y / ((1 - y) * 1.0));
+    // Get rough starting point. Fallback to zeros if X is ill-conditioned.
+    if (!arma::solve(proposed_beta, X, eta_init)) {
+      proposed_beta = arma::zeros<arma::vec>(X.n_cols);
+    }
+  }
   arma::vec beta = mle_coefs;
 
   for (int i = 0; i < 15;
@@ -125,7 +135,7 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec sim_coefs = fit_logistic_cpp(X, y_sim, beta_vals);
+    arma::vec sim_coefs = fit_logistic_cpp(X, y_sim, beta_vals, approx);
     arma::vec eta_sim_hat = X * sim_coefs;
 
     double mle_sim = arma::dot(y_sim, eta_sim_hat) -
@@ -151,8 +161,18 @@ double calculate_deviance_gamma(const arma::vec &y, const arma::vec &mu) {
 // IRLS Gamma regression solver (Log link), fisher weights, W = 1.
 // [[Rcpp::export]]
 arma::vec fit_gamma_log_cpp(const arma::mat &X, const arma::mat &XtX,
-                            const arma::vec &y, const arma::vec &mle_coefs) {
-  arma::vec proposed_beta = mle_coefs;
+                            const arma::vec &y, const arma::vec &mle_coefs,
+                            bool approx) {
+  arma::vec proposed_beta;
+  if (approx == TRUE) {
+    proposed_beta = mle_coefs;
+  } else {
+    arma::vec eta_init = log(y);
+    // Get rough starting point. Fallback to zeros if X is ill-conditioned.
+    if (!arma::solve(proposed_beta, X, eta_init)) {
+      proposed_beta = arma::zeros<arma::vec>(X.n_cols);
+    }
+  }
   // Initialization so that the y and eta_hat values start off close to
   // eachother.
   //
@@ -363,7 +383,8 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
 #pragma omp parallel for reduction(+ : count_less) if (approx == true)
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
-    arma::vec beta_sim_hat = fit_gamma_log_cpp(X, XtX, y_sim, mle_coefs);
+    arma::vec beta_sim_hat =
+        fit_gamma_log_cpp(X, XtX, y_sim, mle_coefs, approx);
     arma::vec eta_sim_hat = X * beta_sim_hat;
     arma::vec mu_sim_hat = exp(eta_sim_hat);
 
@@ -420,8 +441,19 @@ arma::mat generate_unit_matrix(int n, int d) {
 // Identity link Gaussian regression is just Ordinary Least Squares (OLS)
 // No IRLS loop is required.
 // [[Rcpp::export]]
-arma::vec fit_gaussian_cpp(const arma::mat &X, const arma::vec &y) {
-  arma::vec beta;
+arma::vec fit_gaussian_cpp(const arma::mat &X, const arma::vec &y,
+                           const arma::vec mle_coefs, bool approx) {
+  arma::vec proposed_beta;
+  if (approx == TRUE) {
+    proposed_beta = mle_coefs;
+  } else {
+    arma::vec eta_init = log(y);
+    // Get rough starting point. Fallback to zeros if X is ill-conditioned.
+    if (!arma::solve(proposed_beta, X, eta_init)) {
+      proposed_beta = arma::zeros<arma::vec>(X.n_cols);
+    }
+  }
+  arma::vec beta = proposed_beta;
   bool success = arma::solve(beta, X, y, arma::solve_opts::fast);
   if (!success) {
     success = arma::solve(beta, X, y);
@@ -477,7 +509,7 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec coefs = fit_gaussian_cpp(X, y_sim);
+    arma::vec coefs = fit_gaussian_cpp(X, y_sim, mle_coefs, approx);
     arma::vec mu_hat = X * coefs;
 
     double mle_sim = compute_gaussian_ll(y_sim, mu_hat, sigma, n);
@@ -533,7 +565,17 @@ double mle_estimate_dispersion_inv_gauss(const arma::vec &y,
 // IRLS Inverse Gaussian regression solver (1/mu^2 link)
 // [[Rcpp::export]]
 arma::vec fit_invgauss_cpp(const arma::mat &X, const arma::vec &y,
-                           const arma::vec &mle_coefs) {
+                           const arma::vec &mle_coefs, bool approx) {
+  arma::vec proposed_beta;
+  if (approx == TRUE) {
+    proposed_beta = mle_coefs;
+  } else {
+    arma::vec eta_init = log(y); // TODO
+    // Get rough starting point. Fallback to zeros if X is ill-conditioned.
+    if (!arma::solve(proposed_beta, X, eta_init)) {
+      proposed_beta = arma::zeros<arma::vec>(X.n_cols);
+    }
+  }
   arma::vec beta = mle_coefs;
   for (int i = 0; i < 30; i++) {
     arma::vec eta = X * beta;
@@ -629,7 +671,7 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec coefs = fit_invgauss_cpp(X, y_sim, mle_coefs);
+    arma::vec coefs = fit_invgauss_cpp(X, y_sim, mle_coefs, approx);
     arma::vec eta_hat = X * coefs;
 
     // Validate eta_hat to compute simulated MLE likelihood
@@ -656,8 +698,8 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
 arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
                           const arma::vec &mle_coefs, const arma::mat &betas,
                           std::string family, // Pass string from R
-                          bool approx, int num_threads = 1, int m = 100,
-                          bool parallel = true) {
+                          int num_threads = 1, int m = 100,
+                          bool parallel = true, bool approx = false) {
 
   // Convert the string to an Enum once right here
   GlmFamily fam = string_to_family(family);
@@ -672,7 +714,7 @@ arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
   arma::mat XtX = X.t() * X;
 
   if (y.n_elem != X.n_rows || mle_coefs.n_elem != X.n_cols ||
-      betas.row(1).n_elem != X.n_cols) {
+      betas.n_cols != X.n_cols) {
     Rcpp::stop("Dimension mismatch: X is %d x %d, y has %d, mle_coefs has %d, "
                "beta_vals has %d",
                X.n_rows, X.n_cols, y.n_elem, mle_coefs.n_elem,
@@ -741,7 +783,7 @@ arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
     thread_id = omp_get_thread_num();
 #endif
 
-    if (thread_id == 0) {
+    if (thread_id == 0 && approx == false) {
       // Calculate what the *actual current loop progress* is right now
       int current_percentage =
           (int)((double)current_progress / n_evals * 100.0);
@@ -812,10 +854,10 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
                       posts_xi_d); // I guess this is a constructor that works..
       arma::mat MMinus(mle + posts_xi_d);
 
-      double val1 = fit_glm_omp_cpp(X, y, mle, MPlus.t(), family, false, 1, 100,
-                                    parallel)(0, 0);
-      double val2 = fit_glm_omp_cpp(X, y, mle, MMinus.t(), family, false, 1,
-                                    100, parallel)(0, 0);
+      double val1 = fit_glm_omp_cpp(X, y, mle, MPlus.t(), family, 1, 100,
+                                    parallel, TRUE)(0, 0);
+      double val2 = fit_glm_omp_cpp(X, y, mle, MMinus.t(), family, 1, 100,
+                                    parallel, TRUE)(0, 0);
       double g_xi = std::max(val1, val2) - alpha;
       Rcpp::Rcout << "g_xi is: " << g_xi << "\n";
 
@@ -864,7 +906,7 @@ arma::mat get_xi(const arma::mat X, const arma::vec y, const arma::vec &AA,
 arma::vec lets_go_to_cpp(arma::mat eig_vecs, arma::mat eig_vals, int num_samps,
                          int d, arma::mat X, arma::vec y, arma::vec mle_coefs,
                          std::string family, double dispersion, int m,
-                         double tol, int max_it, int a, int b) {
+                         double tol, int max_it, int a, int b, bool approx) {
   arma::mat sampled_betas(mle_coefs.n_elem, num_samps);
   int num_omp_threads = 1;
 
@@ -894,9 +936,9 @@ arma::vec lets_go_to_cpp(arma::mat eig_vecs, arma::mat eig_vals, int num_samps,
       // exp parameterization lets us avoid negative xi (so when we do sqrt(xi)
       // we don't get imaginary) removed an if else that dealt with if D == 1
       double val1 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs + dir_xi).t(),
-                                    family, 1, m, true)(0, 0);
+                                    family, 1, m, true, approx)(0, 0);
       double val2 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs - dir_xi).t(),
-                                    family, 1, m, true)(0, 0);
+                                    family, 1, m, true, approx)(0, 0);
       double g_xi = std::max(val1, val2) - unif_alphas;
 
       if ((std::abs(g_xi) <= tol) || (it >= max_it)) {

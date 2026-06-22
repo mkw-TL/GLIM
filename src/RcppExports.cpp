@@ -12,15 +12,16 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // fit_logistic_cpp
-arma::vec fit_logistic_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs);
-RcppExport SEXP _GLIM_fit_logistic_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP) {
+arma::vec fit_logistic_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, bool approx);
+RcppExport SEXP _GLIM_fit_logistic_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP approxSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_logistic_cpp(X, y, mle_coefs));
+    Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
+    rcpp_result_gen = Rcpp::wrap(fit_logistic_cpp(X, y, mle_coefs, approx));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -41,8 +42,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // fit_gamma_log_cpp
-arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::mat& XtX, const arma::vec& y, const arma::vec& mle_coefs);
-RcppExport SEXP _GLIM_fit_gamma_log_cpp(SEXP XSEXP, SEXP XtXSEXP, SEXP ySEXP, SEXP mle_coefsSEXP) {
+arma::vec fit_gamma_log_cpp(const arma::mat& X, const arma::mat& XtX, const arma::vec& y, const arma::vec& mle_coefs, bool approx);
+RcppExport SEXP _GLIM_fit_gamma_log_cpp(SEXP XSEXP, SEXP XtXSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP approxSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -50,7 +51,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type XtX(XtXSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_gamma_log_cpp(X, XtX, y, mle_coefs));
+    Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
+    rcpp_result_gen = Rcpp::wrap(fit_gamma_log_cpp(X, XtX, y, mle_coefs, approx));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -136,14 +138,16 @@ BEGIN_RCPP
 END_RCPP
 }
 // fit_gaussian_cpp
-arma::vec fit_gaussian_cpp(const arma::mat& X, const arma::vec& y);
-RcppExport SEXP _GLIM_fit_gaussian_cpp(SEXP XSEXP, SEXP ySEXP) {
+arma::vec fit_gaussian_cpp(const arma::mat& X, const arma::vec& y, const arma::vec mle_coefs, bool approx);
+RcppExport SEXP _GLIM_fit_gaussian_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP approxSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_gaussian_cpp(X, y));
+    Rcpp::traits::input_parameter< const arma::vec >::type mle_coefs(mle_coefsSEXP);
+    Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
+    rcpp_result_gen = Rcpp::wrap(fit_gaussian_cpp(X, y, mle_coefs, approx));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -190,15 +194,16 @@ BEGIN_RCPP
 END_RCPP
 }
 // fit_invgauss_cpp
-arma::vec fit_invgauss_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs);
-RcppExport SEXP _GLIM_fit_invgauss_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP) {
+arma::vec fit_invgauss_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, bool approx);
+RcppExport SEXP _GLIM_fit_invgauss_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP approxSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_invgauss_cpp(X, y, mle_coefs));
+    Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
+    rcpp_result_gen = Rcpp::wrap(fit_invgauss_cpp(X, y, mle_coefs, approx));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -233,8 +238,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // fit_glm_omp_cpp
-arma::mat fit_glm_omp_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::mat& betas, std::string family, bool approx, int num_threads, int m, bool parallel);
-RcppExport SEXP _GLIM_fit_glm_omp_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP betasSEXP, SEXP familySEXP, SEXP approxSEXP, SEXP num_threadsSEXP, SEXP mSEXP, SEXP parallelSEXP) {
+arma::mat fit_glm_omp_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::mat& betas, std::string family, int num_threads, int m, bool parallel, bool approx);
+RcppExport SEXP _GLIM_fit_glm_omp_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP betasSEXP, SEXP familySEXP, SEXP num_threadsSEXP, SEXP mSEXP, SEXP parallelSEXP, SEXP approxSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -243,11 +248,11 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type betas(betasSEXP);
     Rcpp::traits::input_parameter< std::string >::type family(familySEXP);
-    Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
     Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
     Rcpp::traits::input_parameter< int >::type m(mSEXP);
     Rcpp::traits::input_parameter< bool >::type parallel(parallelSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_glm_omp_cpp(X, y, mle_coefs, betas, family, approx, num_threads, m, parallel));
+    Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
+    rcpp_result_gen = Rcpp::wrap(fit_glm_omp_cpp(X, y, mle_coefs, betas, family, num_threads, m, parallel, approx));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -288,16 +293,27 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// glm_poisson_ll
-double glm_poisson_ll(arma::vec& eta, arma::vec& mu, const arma::vec& y);
-RcppExport SEXP _GLIM_glm_poisson_ll(SEXP etaSEXP, SEXP muSEXP, SEXP ySEXP) {
+// compute_poisson_ll
+double compute_poisson_ll(const arma::vec& eta, const arma::vec& y);
+RcppExport SEXP _GLIM_compute_poisson_ll(SEXP etaSEXP, SEXP ySEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< arma::vec& >::type eta(etaSEXP);
-    Rcpp::traits::input_parameter< arma::vec& >::type mu(muSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type eta(etaSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
-    rcpp_result_gen = Rcpp::wrap(glm_poisson_ll(eta, mu, y));
+    rcpp_result_gen = Rcpp::wrap(compute_poisson_ll(eta, y));
+    return rcpp_result_gen;
+END_RCPP
+}
+// compute_poisson_ll_mat
+arma::vec compute_poisson_ll_mat(const arma::mat& eta, const arma::vec& y);
+RcppExport SEXP _GLIM_compute_poisson_ll_mat(SEXP etaSEXP, SEXP ySEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type eta(etaSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    rcpp_result_gen = Rcpp::wrap(compute_poisson_ll_mat(eta, y));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -319,26 +335,27 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_GLIM_fit_logistic_cpp", (DL_FUNC) &_GLIM_fit_logistic_cpp, 3},
+    {"_GLIM_fit_logistic_cpp", (DL_FUNC) &_GLIM_fit_logistic_cpp, 4},
     {"_GLIM_glm_logis_pl_cpp", (DL_FUNC) &_GLIM_glm_logis_pl_cpp, 6},
-    {"_GLIM_fit_gamma_log_cpp", (DL_FUNC) &_GLIM_fit_gamma_log_cpp, 4},
+    {"_GLIM_fit_gamma_log_cpp", (DL_FUNC) &_GLIM_fit_gamma_log_cpp, 5},
     {"_GLIM_compute_gamma_ll", (DL_FUNC) &_GLIM_compute_gamma_ll, 3},
     {"_GLIM_compute_gamma_ll_mat", (DL_FUNC) &_GLIM_compute_gamma_ll_mat, 3},
     {"_GLIM_pearson_estimate_dispersion_gamma", (DL_FUNC) &_GLIM_pearson_estimate_dispersion_gamma, 3},
     {"_GLIM_mle_estimate_dispersion_gamma", (DL_FUNC) &_GLIM_mle_estimate_dispersion_gamma, 3},
     {"_GLIM_glm_gamma_pl_cpp", (DL_FUNC) &_GLIM_glm_gamma_pl_cpp, 7},
     {"_GLIM_generate_unit_matrix", (DL_FUNC) &_GLIM_generate_unit_matrix, 2},
-    {"_GLIM_fit_gaussian_cpp", (DL_FUNC) &_GLIM_fit_gaussian_cpp, 2},
+    {"_GLIM_fit_gaussian_cpp", (DL_FUNC) &_GLIM_fit_gaussian_cpp, 4},
     {"_GLIM_compute_gaussian_ll", (DL_FUNC) &_GLIM_compute_gaussian_ll, 4},
     {"_GLIM_glm_gaussian_pl_cpp", (DL_FUNC) &_GLIM_glm_gaussian_pl_cpp, 6},
     {"_GLIM_mle_estimate_dispersion_inv_gauss", (DL_FUNC) &_GLIM_mle_estimate_dispersion_inv_gauss, 2},
-    {"_GLIM_fit_invgauss_cpp", (DL_FUNC) &_GLIM_fit_invgauss_cpp, 3},
+    {"_GLIM_fit_invgauss_cpp", (DL_FUNC) &_GLIM_fit_invgauss_cpp, 4},
     {"_GLIM_compute_invgauss_ll", (DL_FUNC) &_GLIM_compute_invgauss_ll, 4},
     {"_GLIM_glm_invgauss_pl_cpp", (DL_FUNC) &_GLIM_glm_invgauss_pl_cpp, 6},
     {"_GLIM_fit_glm_omp_cpp", (DL_FUNC) &_GLIM_fit_glm_omp_cpp, 9},
     {"_GLIM_imvar", (DL_FUNC) &_GLIM_imvar, 15},
     {"_GLIM_fit_poisson_log_cpp", (DL_FUNC) &_GLIM_fit_poisson_log_cpp, 2},
-    {"_GLIM_glm_poisson_ll", (DL_FUNC) &_GLIM_glm_poisson_ll, 3},
+    {"_GLIM_compute_poisson_ll", (DL_FUNC) &_GLIM_compute_poisson_ll, 2},
+    {"_GLIM_compute_poisson_ll_mat", (DL_FUNC) &_GLIM_compute_poisson_ll_mat, 2},
     {"_GLIM_glm_poisson_pl_cpp", (DL_FUNC) &_GLIM_glm_poisson_pl_cpp, 6},
     {NULL, NULL, 0}
 };
