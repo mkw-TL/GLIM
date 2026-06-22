@@ -4,25 +4,27 @@
 #' @importFrom RhpcBLASctl blas_set_num_threads
 #' @importFrom parallel detectCores
 NULL
-#
+
 # Original code written by Joe Harrison (jrharr25@ncsu.edu), translated to cpp by Gemini
 # pkgbuild::compile_dll() validates the package directory differently. Rcpp might implement it's directory check differently
 # After making changes, restart R, get in the package directory
-#devtools::document()
-#devtools::install() or devtools::load_all()
+# devtools::document()
+# devtools::install() or devtools::load_all()
 
-# Evaluates possibility for beta/dispersion values
-# m is the number of samples for each parameter value you would like to have
-#' @param X input matrix
-#' @param y response vector
-#' @param family A string. Options include ("gaussian", "poisson", "gamma", "binomial")
-#' @param betas If approximation is equal to false, this is not needed. Otherwise, this is a grid of beta values.
-#' Each column is a new beta vector
-#' @param mle_coefs Need to check if this is needed.
-#' @param m Number of evaluations per beta
-#' @param parallel Primarily for debugging
-#' @param approx Whether or not to use the elliptical approximation
-#' @title Fits GLIM
+#' Fits GLIM (Raw Implementation)
+#'
+#' Evaluates possibility for beta/dispersion values.
+#'
+#' @param X Input predictor matrix. If a data frame is provided, it will be coerced to a model matrix.
+#' @param y Response vector.
+#' @param family A string indicating the error distribution. Options include `"gaussian"`, `"poisson"`, `"gamma"`, `"binomial"`.
+#' @param betas A grid of beta values to evaluate, where each column is a new beta vector. Not required if `approx = TRUE`.
+#' @param mle_coefs Maximum likelihood estimates of the coefficients.
+#' @param mle_val The log-likelihood value at the maximum likelihood estimates.
+#' @param m Number of evaluations per beta (number of samples).
+#' @param parallel Logical indicating whether to run in parallel (primarily for debugging).
+#' @param approx Logical indicating whether to use the elliptical approximation.
+#' @return A matrix of evaluated possibility outputs.
 #' @export
 glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, parallel, approx) {
   if (is.data.frame(X)) {
@@ -63,61 +65,18 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
   return(output)
 }
 
-
-#' Generates all random numbers at once, so doesn't need to use the slow apply
-#' Doesn't work if you pass in more than one column
-#' @param n TODO
-#' @param d TODO
-#' @title Generates a unit matrix
-#' @return Matrix
-#' @export
-generate_unit_matrix <- function(n, d) {
-  m <- matrix(rnorm(n * d), nrow = d, ncol = n)
-  norms <- sqrt(colSums(m^2))
-  return(m / norms)
-}
-
-# Removed from namespace
-r_imvar <- function(xi, alpha, pl, mle, J, dispersion, tol = 1e-2, a = 5, b = .65, max_it = 25) {
-  D <- length(mle)
-  maxpl <- function(v) {
-    max(c(pl(as.vector(mle) + v), pl(as.vector(mle) - v)))
-  }
-  w <- function(s) a / (1 + s)**b # our weighting function, dampens over time
-  for (d in 1:D) {
-    # print(d)
-    # log(xi) because we are getting the exponentiated version (so that it is for sure positive)
-    xi_d <- log(xi[d])
-    # TODO: #4 Check if removing the case where D = 1 has any issues
-    posts <- J$vectors[, d] * (sqrt(dispersion * qchisq(1 - alpha, D) * abs(1 / J$values[d]))) # Our current best Q, and Cholesky decomp (R^1/2) (although without the scaling xi)
-    # These are the directions to go
-    # Don't I need Qsigma^-1/2 Qt? I am very confused at why we have t(J$vectors). Shouldn't we have just J$vectors as our Q matrix?
-    # Think this was a mistake in the original code, although the outputs are practically identical(?)
-
-    # Define our updating function. Cannot just do a newton rhapson to update our xi.
-    # Stochastic approximation algorithm (Robbins–Monro)
-    it <- 1
-    repeat {
-      # print(it)
-      posts.xi <- as.vector(posts * exp(xi_d / 2)) # Xi scales singular values (scalar for each directions). Again, we are going to evaluate this direction * scaling to see how far off.
-      # exp parameterization lets us avoid negative xi (so when we do sqrt(xi) we don't get imaginary)
-      # removed an if else that dealt with if D == 1
-      g.xi <- maxpl(posts.xi) - alpha
-      # print(g.xi)
-      if (all(abs(g.xi) <= tol) || (it >= max_it)) {
-        break
-      } else {
-        xi_d <- xi_d + w(it) * g.xi
-        it <- it + 1
-      }
-    }
-    xi[d] <- exp(xi_d)
-  }
-  # Return the exponential version
-  return(xi)
-}
-
-# Function that is called if doing the elliptical approximation
+#' Generate Elliptical Approximation Samples (Inner Probability)
+#'
+#' Internal function called to generate samples when the elliptical approximation is used.
+#'
+#' @param X Input predictor matrix.
+#' @param y Response vector.
+#' @param family A string indicating the error distribution. Default is `"gaussian"`.
+#' @param mle_coefs Maximum likelihood estimates of the coefficients.
+#' @param mle_val The log-likelihood value at the maximum likelihood estimates.
+#' @param m Number of samples to generate.
+#' @param parallel Logical indicating whether to use parallel processing.
+#' @return A matrix of generated samples based on the elliptical approximation.
 #' @export
 glim_inner_prob_approx_samples <- function(
   X,
@@ -133,25 +92,20 @@ glim_inner_prob_approx_samples <- function(
   AA <- seq(0.001, 0.999, length = B)
   if (family == "gaussian" || family == "normal") {
     res <- lm(y ~ X - 1)
-    # This is the observed variability for this link function
     J <- crossprod(X, X)
     dispersion <- 1
   } else if (family == "binomial") {
     res <- glm(y ~ X - 1, family = "binomial")
     p_i <- res$fitted.values
-    # Note that a matrix times a vector, the vector will get recycled. Row-wise scaling
     J <- crossprod(X, X * as.vector((p_i * (1 - p_i))))
     dispersion <- 1
   } else if (family == "gamma") {
-    # canonical link for gamma family (1/mu) is incredibly numerically unstable. If Xb is ever close to zero during the process, we get infinities. Additionally, if xb is ever negative, then we are saying that the mean of a gamma is negative.
-    # Note that the weights are one here.
     res <- glm(y ~ X - 1, family = Gamma(link = "log"))
     J <- crossprod(X, X)
     mle_coefs <- res$coefficients
     dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
   } else if (family == "inverse.gaussian") {
     res <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
-    # default link for the inverse gaussian in glm is not the canonical parameter (-1/2mu^2), but rather 1/mu. Additionally, note that the link we are using here is not a canonical link. The constant gets absorbed in a lot of places, and what ends up changing is the scaling factor outside our gradient update.
     eta <- X %*% res$coefficients
     mu_i <- as.vector(sqrt(1 / eta))
     J <- crossprod(X, X * (mu_i^3)) # TODO #7 check on this calculation
@@ -163,24 +117,20 @@ glim_inner_prob_approx_samples <- function(
     J <- crossprod(X, X * as.vector(lambda_i))
     dispersion <- 1
   }
-  J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries -- Gemini's idea
+  J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries
   eJ <- eigen(J)
-  # James' solution to needing to scale along a direction didn't work in my case
-  # can't have zeros in the eigvalues because will not be invertible
+
   eJ$values[eJ$values < 1e-4] <- .000001
   mle_coefs <- res$coefficients
 
   pl <- function(z) {
-    # If z is a vector, matrix(z, nrow = 1) makes it a 1 x p row matrix
     betas_matrix <- if (is.matrix(z)) z else matrix(z, nrow = 1)
-
     glim_raw(X, y, family, betas_matrix, mle_coefs, mle_val = mle_val, m, parallel, approx = TRUE)
   }
 
   i <- 0
   xi <- list()
   prev_xi <- rep(1, length(mle_coefs))
-  # finding xi
   pb <- progress::progress_bar$new(
     total = length(AA),
     format = "[:bar] :percent eta :eta",
@@ -191,7 +141,6 @@ glim_inner_prob_approx_samples <- function(
   for (a in AA) {
     pb$tick()
     i <- i + 1
-    # xi is our scaling
     xi[[i]] <- imvar(
       X,
       y,
@@ -229,8 +178,6 @@ glim_inner_prob_approx_samples <- function(
       lerped_xi <- (1 - w) * xi[[r]] + w * xi[[r + 1]]
     }
 
-    # Sample randomly on the boundary TODO #8 explain code
-    # vectors stay the same, we multiply by the standard deviation.
     rand_dir <- generate_unit_matrix(1, length(mle_coefs))
     spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
 
@@ -240,6 +187,18 @@ glim_inner_prob_approx_samples <- function(
   return(samples)
 }
 
+#' Generalized Linear Inferential Models (GLIM) Main Function
+#'
+#' Main wrapper function to fit a GLIM model.
+#'
+#' @param X Matrix of predictors.
+#' @param y Vector of response variables.
+#' @param family String denoting the exponential family. Choices are `"gaussian"`, `"binomial"`, `"gamma"`, `"poisson"`, `"inverse-gaussian"`.
+#' @param betas A matrix (or column vector) of different beta values to evaluate the possibility over.
+#' @param m Number of samples/evaluations to perform (default `1000`).
+#' @param approx Logical indicating whether to use the elliptical approximation (default `FALSE`).
+#' @param parallel Logical indicating whether to process in parallel.
+#' @return A matrix of outputs or samples depending on whether the approximation is used.
 #' @export
 glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, parallel) {
   print("glim_called")
@@ -247,8 +206,6 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
     mle_coefs <- glm(y ~ X - 1, family = "binomial")$coefficients
   } else if (family == "gamma") {
-    # Don't want to use R's logLik() as it uses the pearson estimate of phi.
-    # Note that the IRLS to maximize the log lik of beta doesn't rely on phi.
     mle_coefs <- glm(y ~ X - 1, family = Gamma(link = "log"))$coefficients
     eta <- X %*% mle_coefs
     ratio <- y / exp(eta)
@@ -286,7 +243,7 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
       approx = approx
     ))
   }
-  # Need to get dispersion into this bottom function
+
   if (approx == TRUE) {
     return(glim_inner_prob_approx_samples(
       X,
@@ -300,39 +257,54 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
   }
 }
 
+#' Probability to Possibility Mapping for Logistic Regression
+#'
+#' @param X Predictor matrix.
+#' @param y Response vector.
+#' @param samples Matrix of simulated sample coefficients.
+#' @param the_compared_theta The theta values to compare against.
+#' @return A vector of mapped possibility values.
 #' @export
 prob2poss_logis <- function(X, y, samples, the_compared_theta) {
-  # p <- 1/(1 + exp(-eta))
   eta <- X %*% the_compared_theta
-  # element-wise maximum and abs,exp,log(1+x)
   log_term <- pmax(eta, 0) + log1p(exp(-abs(eta)))
-
   ll_val <- y %*% eta - colSums(log_term)
 
   eta_samps <- X %*% samples
-  # p <- 1/(1 + exp(-eta_samps))
-  # Numerically stable calculation of log(1 + exp(eta))
   log_term_samps <- pmax(eta_samps, 0) + log1p(exp(-abs(eta_samps)))
   ll_val_samps <- as.vector(y %*% eta_samps) - colSums(log_term_samps)
 
   return(sapply(ll_val, function(x) sum(ll_val_samps < x)) / length(ll_val_samps))
 }
 
-#' Will throw an error if the_compared_theta is a scalar
+#' Probability to Possibility Mapping for Gamma Regression
+#'
+#' Will throw an error if \code{the_compared_theta} is a scalar.
+#'
+#' @param X Predictor matrix.
+#' @param y Response vector.
+#' @param samples Matrix of simulated sample coefficients.
+#' @param the_compared_theta The theta values to compare against.
+#' @return A vector of mapped possibility values.
 #' @export
 prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
   eta <- X %*% samples
   initial_coefs <- coef(lm(log(y) ~ X - 1))
   mle_coefs <- fit_gamma_log_cpp(X, t(X) %*% X, y, initial_coefs, FALSE)
   est_shape <- 1 / mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
-  # pearson_estimate_dispersion_gamma relies on the beta coefficients to be maximized
+
   ll_val_samps <- as.vector(compute_gamma_ll_r(y, eta, shape = est_shape))
   ll_val <- as.vector(compute_gamma_ll_r(y, X %*% the_compared_theta, shape = est_shape))
   message("Is ll_val sorted? ", !is.unsorted(ll_val))
   sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
 }
 
-
+#' Compute Gamma Log-Likelihood
+#'
+#' @param y Response vector.
+#' @param eta Linear predictor (can be a vector or a matrix).
+#' @param shape The shape parameter for the gamma distribution.
+#' @return The calculated log-likelihood.
 #' @export
 compute_gamma_ll_r <- function(y, eta, shape) {
   if (is.vector(eta)) {
@@ -342,7 +314,11 @@ compute_gamma_ll_r <- function(y, eta, shape) {
   }
 }
 
-
+#' Compute Poisson Log-Likelihood
+#'
+#' @param y Response vector.
+#' @param eta Linear predictor (can be a vector or a matrix).
+#' @return The calculated log-likelihood.
 #' @export
 compute_poisson_ll_r <- function(y, eta) {
   if (is.vector(eta)) {
@@ -352,8 +328,21 @@ compute_poisson_ll_r <- function(y, eta) {
   }
 }
 
-
-# Function that is called if doing elliptical approx (but faster)
+#' Faster Elliptical Approximation Samples (Alternative Implementation)
+#'
+#' Function called if doing elliptical approx, designed for better performance.
+#'
+#' @param X Predictor matrix.
+#' @param y Response vector.
+#' @param family A string indicating the error distribution. Default is `"gaussian"`.
+#' @param mle_val The log-likelihood value at the maximum likelihood estimates.
+#' @param m Number of samples to generate.
+#' @param parallel Logical indicating whether to use parallel processing.
+#' @param a Hyperparameter `a` for the approximation tuning.
+#' @param b Hyperparameter `b` for the approximation tuning.
+#' @param max_it Maximum number of iterations allowed for the algorithm.
+#' @param tol Tolerance criteria for convergence.
+#' @return A matrix of generated samples.
 #' @export
 glim_inner_prob_approx_samples_2 <- function(
   X,
@@ -372,25 +361,20 @@ glim_inner_prob_approx_samples_2 <- function(
   AA <- seq(0.001, 0.999, length = B)
   if (family == "gaussian" || family == "normal") {
     res <- lm(y ~ X - 1)
-    # This is the observed variability for this link function
     J <- crossprod(X, X)
     dispersion <- 1
   } else if (family == "binomial") {
     res <- glm(y ~ X - 1, family = "binomial")
     p_i <- res$fitted.values
-    # Note that a matrix times a vector, the vector will get recycled. Row-wise scaling
     J <- crossprod(X, X * (p_i * (1 - p_i)))
     dispersion <- 1
   } else if (family == "gamma") {
-    # canonical link for gamma family (1/mu) is incredibly numerically unstable. If Xb is ever close to zero during the process, we get infinities. Additionally, if xb is ever negative, then we are saying that the mean of a gamma is negative.
-    # Note that the weights are one here.
     res <- glm(y ~ X - 1, family = Gamma(link = "log"))
     J <- crossprod(X, X)
     mle_coefs <- res$coefficients
     dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
   } else if (family == "inverse.gaussian") {
     res <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
-    # default link for the inverse gaussian in glm is not the canonical parameter (-1/2mu^2), but rather 1/mu. Additionally, note that the link we are using here is not a canonical link. The constant gets absorbed in a lot of places, and what ends up changing is the scaling factor outside our gradient update.
     eta <- X %*% res$coefficients
     mu_i <- as.vector(sqrt(1 / eta))
     J <- crossprod(X, X * (mu_i^3)) # TODO #7 check on this calculation
@@ -401,10 +385,9 @@ glim_inner_prob_approx_samples_2 <- function(
     J <- crossprod(X, X * (lambda_i))
     dispersion <- 1
   }
-  J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries -- Gemini's idea
+  J <- (J + t(J)) / 2
   eJ <- eigen(J)
-  # James' solution to needing to scale along a direction didn't work in my case
-  # can't have zeros in the eigvalues because will not be invertible
+
   eJ$values[eJ$values < 1e-4] <- .000001
   mle_coefs <- res$coefficients
   eJ_vectors <- eJ$vectors
@@ -425,15 +408,14 @@ glim_inner_prob_approx_samples_2 <- function(
   )
 
   u <- runif(m)
-  # Lerping here
   lerped_xi <- c()
+  samples <- matrix(nrow = length(mle_coefs), ncol = m)
   for (i in 1:m) {
     if (u[i] < 1 / length(AA)) {
       lerped_xi <- matrix_of_xis[, 1]
     } else if (u[i] > 1 - 1 / length(AA)) {
       lerped_xi <- matrix_of_xis[, length(AA)]
     } else {
-      # A simple method because we are assuming that our alpha values are equally spaced
       where_located <- findInterval(u[i], AA)
       w <- u[i] - AA[where_located]
       lerped_xi <- w * matrix_of_xis[, where_located] + (1 - w) * matrix_of_xis[, where_located + 1]
@@ -441,8 +423,7 @@ glim_inner_prob_approx_samples_2 <- function(
     if (is.na(lerped_xi)) {
       print("You dun messed up")
     }
-    # Sample randomly on the boundary TODO #8 explain code
-    # vectors stay the same, we multiply by the standard deviation.
+
     rand_dir <- generate_unit_matrix(1, length(mle_coefs))
     spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
 
@@ -452,7 +433,25 @@ glim_inner_prob_approx_samples_2 <- function(
   return(samples)
 }
 
-
+#' Appendix C++ Bridge Function
+#'
+#' Helper function acting as a bridge to underlying C++ routines for sample generation.
+#'
+#' @param eJ Eigen decomposition object.
+#' @param num_samps Number of samples to generate.
+#' @param d Dimensionality parameter.
+#' @param X Predictor matrix.
+#' @param y Response vector.
+#' @param mle_coefs Maximum likelihood estimates for coefficients.
+#' @param family String denoting the exponential family.
+#' @param dispersion The dispersion parameter.
+#' @param m Parameter `m` defining scaling or sampling limits.
+#' @param tol Tolerance level for convergence criteria.
+#' @param max_it Maximum number of iterations.
+#' @param a Hyperparameter `a` for the underlying routine.
+#' @param b Hyperparameter `b` for the underlying routine.
+#' @return A matrix of output samples evaluated by the C++ backend.
+#' @export
 appendix <- function(eJ, num_samps, d, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
   eig_vecs <- eJ$vectors
   eig_vals <- eJ$values
@@ -472,8 +471,16 @@ appendix <- function(eJ, num_samps, d, X, y, mle_coefs, family, dispersion, m, t
     a,
     b
   )
+  return(output_samples)
 }
 
+#' Probability to Possibility Mapping for Poisson Regression
+#'
+#' @param X Predictor matrix.
+#' @param y Response vector.
+#' @param samples Matrix of simulated sample coefficients.
+#' @param the_compared_theta The theta values to compare against.
+#' @return A vector of mapped possibility values.
 #' @export
 prob2poss_poisson <- function(X, y, samples, the_compared_theta) {
   eta <- X %*% samples
@@ -484,12 +491,36 @@ prob2poss_poisson <- function(X, y, samples, the_compared_theta) {
   sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
 }
 
-
+#' Fit GLM using OpenMP via Rcpp
+#'
+#' A wrapper to the underlying `fit_glm_omp_cpp` C++ implementation.
+#'
+#' @param X Predictor matrix.
+#' @param y Response vector.
+#' @param mle_coefs Maximum likelihood estimates of the coefficients.
+#' @param betas Grid of beta values to evaluate.
+#' @param family String indicating the error distribution.
+#' @param num_threads The number of OpenMP threads to utilize.
+#' @param m Number of evaluations per beta.
+#' @param parallel Logical indicating whether to run in parallel.
+#' @param approx Logical indicating whether to use elliptical approximation.
+#' @return Resulting output from the C++ GLM routine.
 #' @export
 fit_glm_omp_r <- function(X, y, mle_coefs, betas, family, num_threads, m, parallel, approx) {
   return(fit_glm_omp_cpp(X, y, mle_coefs, betas, family, num_threads, m, parallel, approx))
 }
 
+#' Poisson Possibility Evaluation via Rcpp
+#'
+#' Evaluates profile likelihood configurations for Poisson models leveraging C++.
+#'
+#' @param X Predictor matrix.
+#' @param y Response vector.
+#' @param mle_coefs Maximum likelihood estimates of the coefficients.
+#' @param beta_vals Matrix of beta configurations.
+#' @param m Number of samples/evaluations to perform.
+#' @param approx Logical indicating whether to use approximation logic.
+#' @return A vector or matrix of profile likelihood results from the C++ backend.
 #' @export
 pois_pos <- function(X, y, mle_coefs, beta_vals, m, approx) {
   return(glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m, approx))
