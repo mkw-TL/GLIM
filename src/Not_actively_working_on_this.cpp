@@ -39,22 +39,12 @@ GlmFamily string_to_family(const std::string &fam) {
 // mean
 // [[Rcpp::export]]
 arma::vec fit_logistic_cpp(const arma::mat &X, const arma::vec &y,
-                           const arma::vec &mle_coefs, bool approx) {
-  arma::vec proposed_beta;
-  if (approx == TRUE) {
-    proposed_beta = mle_coefs;
-  } else {
-    arma::vec eta_init = log(y / ((1 - y) * 1.0));
-    // Get rough starting point. Fallback to zeros if X is ill-conditioned.
-    if (!arma::solve(proposed_beta, X, eta_init)) {
-      proposed_beta = arma::zeros<arma::vec>(X.n_cols);
-    }
-  }
-  arma::vec beta = mle_coefs;
+                           const arma::vec &initial_beta, bool approx) {
 
+  arma::vec proposed_beta = initial_beta;
   for (int i = 0; i < 15;
        i++) { // 15 iterations is usually plenty for convergence
-    arma::vec eta = X * beta;
+    arma::vec eta = X * proposed_beta;
     arma::vec p = 1.0 / (1.0 + arma::exp(-eta));
 
     // Weights for IRLS
@@ -76,13 +66,23 @@ arma::vec fit_logistic_cpp(const arma::mat &X, const arma::vec &y,
       break;
     }
 
-    beta += step;
+    proposed_beta += step;
 
     // Check for convergence
     if (arma::norm(step) < 1e-6)
       break;
   }
-  return beta;
+  return proposed_beta;
+}
+
+// Written by gemini
+inline double sum_softplus(const arma::vec &eta) {
+  double sum_val = 0.0;
+  for (int i = 0; i < eta.n_elem; ++i) {
+    sum_val += (eta(i) > 0) ? (eta(i) + std::log1p(std::exp(-eta(i))))
+                            : std::log1p(std::exp(eta(i)));
+  }
+  return sum_val;
 }
 
 // The main simulation function
@@ -97,17 +97,10 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   arma::vec p = 1.0 / (1.0 + arma::exp(-eta));
 
   arma::vec eta_hat = X * mle_coefs;
-  double mle_val =
-      arma::dot(y, eta_hat) - arma::sum(arma::log1p(arma::exp(eta_hat)));
+  double mle_val = arma::dot(y, eta_hat) - sum_softplus(eta_hat);
 
   // Precompute constant scalar for f.x
-  // soft-plus (numerical stability) idea from Gemini
-  double sum_log_term = 0.0;
-  for (int i = 0; i < eta.n_elem; ++i) {
-    // If eta > 0, log(1 + exp(eta)) = log(exp(eta)) + log(1 + exp(-eta))
-    sum_log_term += (eta(i) > 0) ? (eta(i) + std::log1p(std::exp(-eta(i))))
-                                 : std::log1p(std::exp(eta(i)));
-  }
+  double sum_log_term = sum_softplus(eta);
   double f_x = arma::dot(y, eta) - sum_log_term - mle_val;
 
   // Computing new random binomial data:
@@ -138,8 +131,7 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
     arma::vec sim_coefs = fit_logistic_cpp(X, y_sim, beta_vals, approx);
     arma::vec eta_sim_hat = X * sim_coefs;
 
-    double mle_sim = arma::dot(y_sim, eta_sim_hat) -
-                     arma::sum(arma::log1p(arma::exp(eta_sim_hat)));
+    double mle_sim = arma::dot(y_sim, eta_sim_hat) - sum_softplus(eta_sim_hat);
     double f_X_j = llX(j) - mle_sim;
 
     if (f_X_j < f_x) {
@@ -147,7 +139,7 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
     }
   }
 
-  return (double)count_less / m;
+  return (double)1.0 * count_less / m;
 }
 
 // Gamma regression (log-link)
@@ -161,18 +153,9 @@ double calculate_deviance_gamma(const arma::vec &y, const arma::vec &mu) {
 // IRLS Gamma regression solver (Log link), fisher weights, W = 1.
 // [[Rcpp::export]]
 arma::vec fit_gamma_log_cpp(const arma::mat &X, const arma::mat &XtX,
-                            const arma::vec &y, const arma::vec &mle_coefs,
+                            const arma::vec &y, const arma::vec &initial_beta,
                             bool approx) {
-  arma::vec proposed_beta;
-  if (approx == TRUE) {
-    proposed_beta = mle_coefs;
-  } else {
-    arma::vec eta_init = log(y);
-    // Get rough starting point. Fallback to zeros if X is ill-conditioned.
-    if (!arma::solve(proposed_beta, X, eta_init)) {
-      proposed_beta = arma::zeros<arma::vec>(X.n_cols);
-    }
-  }
+  arma::vec proposed_beta = initial_beta;
   // Initialization so that the y and eta_hat values start off close to
   // eachother.
   //
@@ -200,12 +183,12 @@ arma::vec fit_gamma_log_cpp(const arma::mat &X, const arma::mat &XtX,
     // decrease the varaince. Avoids wild steps. Calculate the proposed step
     bool success = arma::solve(step, XtX, grad, arma::solve_opts::fast);
     if (!success) {
-      Rcpp::Rcout << "Less fast algorithm used \n";
+      // Rcpp::Rcout << "Less fast algorithm used \n";
       success = arma::solve(step, XtX, grad);
     }
     if (!success) {
       break;
-      Rcpp::Rcout << "Things broke";
+      // Rcpp::Rcout << "Things broke";
     }
     // Propose a new beta
     arma::vec temp_beta = proposed_beta + step;
@@ -384,7 +367,7 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
     arma::vec beta_sim_hat =
-        fit_gamma_log_cpp(X, XtX, y_sim, mle_coefs, approx);
+        fit_gamma_log_cpp(X, XtX, y_sim, beta_vals, approx);
     arma::vec eta_sim_hat = X * beta_sim_hat;
     arma::vec mu_sim_hat = exp(eta_sim_hat);
 
@@ -406,7 +389,7 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
       count_less++;
     }
   }
-  return (double)count_less / m;
+  return (double)1.0 * count_less / m;
 }
 
 // [[Rcpp::export]]
@@ -442,26 +425,16 @@ arma::mat generate_unit_matrix(int n, int d) {
 // No IRLS loop is required.
 // [[Rcpp::export]]
 arma::vec fit_gaussian_cpp(const arma::mat &X, const arma::vec &y,
-                           const arma::vec mle_coefs, bool approx) {
-  arma::vec proposed_beta;
-  if (approx == TRUE) {
-    proposed_beta = mle_coefs;
-  } else {
-    arma::vec eta_init = log(y);
-    // Get rough starting point. Fallback to zeros if X is ill-conditioned.
-    if (!arma::solve(proposed_beta, X, eta_init)) {
-      proposed_beta = arma::zeros<arma::vec>(X.n_cols);
-    }
-  }
-  arma::vec beta = proposed_beta;
-  bool success = arma::solve(beta, X, y, arma::solve_opts::fast);
+                           const arma::vec initial_coefs, bool approx) {
+  arma::vec proposed_beta = initial_coefs;
+  bool success = arma::solve(proposed_beta, X, y, arma::solve_opts::fast);
   if (!success) {
-    success = arma::solve(beta, X, y);
+    success = arma::solve(proposed_beta, X, y);
   }
   if (!success) {
-    beta.zeros(X.n_cols);
+    proposed_beta.zeros(X.n_cols);
   }
-  return beta;
+  return proposed_beta;
 }
 
 // Helper function to compute Gaussian log-likelihood
@@ -509,7 +482,7 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec coefs = fit_gaussian_cpp(X, y_sim, mle_coefs, approx);
+    arma::vec coefs = fit_gaussian_cpp(X, y_sim, beta_vals, approx);
     arma::vec mu_hat = X * coefs;
 
     double mle_sim = compute_gaussian_ll(y_sim, mu_hat, sigma, n);
@@ -522,7 +495,7 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
     }
   }
 
-  return (double)count_less / m;
+  return (double)1.0 * count_less / m;
 }
 
 // =====================================================================
@@ -565,20 +538,10 @@ double mle_estimate_dispersion_inv_gauss(const arma::vec &y,
 // IRLS Inverse Gaussian regression solver (1/mu^2 link)
 // [[Rcpp::export]]
 arma::vec fit_invgauss_cpp(const arma::mat &X, const arma::vec &y,
-                           const arma::vec &mle_coefs, bool approx) {
-  arma::vec proposed_beta;
-  if (approx == TRUE) {
-    proposed_beta = mle_coefs;
-  } else {
-    arma::vec eta_init = log(y); // TODO
-    // Get rough starting point. Fallback to zeros if X is ill-conditioned.
-    if (!arma::solve(proposed_beta, X, eta_init)) {
-      proposed_beta = arma::zeros<arma::vec>(X.n_cols);
-    }
-  }
-  arma::vec beta = mle_coefs;
+                           const arma::vec &initial_beta, bool approx) {
+  arma::vec proposed_beta = initial_beta;
   for (int i = 0; i < 30; i++) {
-    arma::vec eta = X * beta;
+    arma::vec eta = X * proposed_beta;
     // Enforce strict positivity constraint for the link function
     eta.elem(arma::find(eta < 1e-6)).fill(1e-6);
 
@@ -604,21 +567,21 @@ arma::vec fit_invgauss_cpp(const arma::mat &X, const arma::vec &y,
     }
 
     // Line search (step halving) to ensure eta remains > 0
-    arma::vec new_beta = beta + step;
+    arma::vec new_beta = proposed_beta + step;
     arma::vec new_eta = X * new_beta;
     int iter_halve = 0;
     while (arma::any(new_eta <= 0.0) && iter_halve < 10) {
       step /= 2.0;
-      new_beta = beta + step;
+      new_beta = proposed_beta + step;
       new_eta = X * new_beta;
       iter_halve++;
     }
 
-    beta = new_beta;
+    proposed_beta = new_beta;
     if (arma::norm(step) < 1e-6)
       break;
   }
-  return beta;
+  return proposed_beta;
 }
 
 // Helper function to compute Inverse Gaussian log-likelihood
@@ -671,7 +634,7 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec coefs = fit_invgauss_cpp(X, y_sim, mle_coefs, approx);
+    arma::vec coefs = fit_invgauss_cpp(X, y_sim, beta_vals, approx);
     arma::vec eta_hat = X * coefs;
 
     // Validate eta_hat to compute simulated MLE likelihood
@@ -688,7 +651,7 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
     }
   }
 
-  return (double)count_less / m;
+  return (double)1.0 * count_less / m;
 }
 
 // Need to bring the main function (which calls all other functions) after any

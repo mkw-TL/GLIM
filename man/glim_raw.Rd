@@ -2,7 +2,7 @@
 % Please edit documentation in R/glim_logic.R
 \name{glim_raw}
 \alias{glim_raw}
-\title{Fits GLIM}
+\title{Fits GLIM (Raw Implementation)}
 \usage{
 glim_raw(
   X,
@@ -17,17 +17,27 @@ glim_raw(
 )
 }
 \arguments{
-\item{X}{input matrix}
+\item{X}{Input predictor matrix. If a data frame is provided, it will be coerced to a model matrix.}
 
-\item{y}{response vector}
+\item{y}{Response vector.}
 
-\item{family}{A string. Options include ("gaussian", "poisson", "gamma", "binomial")}
+\item{family}{A string indicating the error distribution. Options include \code{"gaussian"}, \code{"poisson"}, \code{"gamma"}, \code{"binomial"}.}
 
-\item{betas}{If approximation is equal to false, this is not needed. Otherwise, this is a grid of beta values.
-Each column is a new beta vector}
+\item{betas}{A grid of beta values to evaluate, where each column is a new beta vector. Not required if \code{approx = TRUE}.}
 
-\item{mle_coefs}{Need to check if this is needed.}
+\item{mle_coefs}{Maximum likelihood estimates of the coefficients.}
+
+\item{mle_val}{The log-likelihood value at the maximum likelihood estimates.}
+
+\item{m}{Number of evaluations per beta (number of samples).}
+
+\item{parallel}{Logical indicating whether to run in parallel (primarily for debugging).}
+
+\item{approx}{Logical indicating whether to use the elliptical approximation.}
+}
+\value{
+A matrix of evaluated possibility outputs.
 }
 \description{
-Fits GLIM
+Evaluates possibility for beta/dispersion values.
 }

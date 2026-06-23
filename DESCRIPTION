@@ -4,13 +4,13 @@ Version: 0.0.0.1001
 Authors@R: 
     person("Joseph", "Harrison", email = "jrharr25@ncsu.edu", role = c("aut", "cre"))
 Description: What the package does (one paragraph).
-License: MIT
+License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 LinkingTo: 
     Rcpp, RcppArmadillo, BH
 Imports: 
-    Rcpp, RcppArmadillo, pbapply, fastglm, progress, RhpcBLASctl, parallel
+    Rcpp, progress, RhpcBLASctl, parallel
 SystemRequirements: C++20, LAPACK, BLAS
 Config/roxygen2/version: 8.0.0
 RoxygenNote: 8.0.0

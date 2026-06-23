@@ -3,6 +3,7 @@
 #' @importFrom progress progress_bar
 #' @importFrom RhpcBLASctl blas_set_num_threads
 #' @importFrom parallel detectCores
+#' @importFrom stats logLik glm Gamma poisson inverse.gaussian lm coef runif
 NULL
 
 # Original code written by Joe Harrison (jrharr25@ncsu.edu), translated to cpp by Gemini
@@ -44,6 +45,10 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
   } else {
     num_omp_threads <- 1
   }
+  print("here")
+  print(mle_coefs)
+  print(betas)
+  print(family)
 
   output <- fit_glm_omp_cpp(
     X = X,
@@ -201,8 +206,48 @@ glim_inner_prob_approx_samples <- function(
 #' @return A matrix of outputs or samples depending on whether the approximation is used.
 #' @export
 glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, parallel) {
-  print("glim_called")
   if (family == "binomial" || family == "logistic") {
+    if (is.vector(y) && all(y == 0 | y == 1)) {
+      # This means that it already is in binary format. DON'T ADD INTERCEPT
+      if (length(y) != nrow(X)) {
+        print("y and X lengths differ")
+        stop()
+      }
+    } else if (is.matrix(y) && ncol(y) == 2) {
+      # Two-column integer matrix (Successes / Failures)
+      successes <- y[, 1]
+      failures <- y[, 2]
+
+      idx_success <- rep(1:nrow(X), times = successes)
+      idx_fail <- rep(1:nrow(X), times = failures)
+
+      # I did not know this, but X[c(2, 2), ] will repeat the second index twice
+      # drop = FALSE means that it stays as a matrix, rather than going to a vector
+      X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
+      y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
+      X <- cbind(rep(1, length(y)), X)
+      print(X)
+      print(y)
+    } else if (is.factor(y)) {
+      # Success is any level that is NOT the first level
+
+      is_success <- as.integer(y != levels(y)[1])
+      successes <- is_success * rep(1, length(y))
+      failures <- (1 - is_success) * rep(1, length(y))
+
+      idx_success <- rep(1:nrow(X), times = successes)
+      idx_fail <- rep(1:nrow(X), times = failures)
+
+      # I did not know this, but X[c(2, 2), ] will repeat the second index twice
+      # drop = FALSE means that it stays as a matrix, rather than going to a vector
+      y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
+      X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
+      X <- cbind(rep(1, length(y)), X)
+      print(X)
+      print(y)
+      # TODOOOO Need to make sure if everything is predicted as a 1, then the variance will be zero and issues will arise
+      # TODOOO Dealing with intercept
+    }
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
     mle_coefs <- glm(y ~ X - 1, family = "binomial")$coefficients
   } else if (family == "gamma") {
@@ -230,6 +275,7 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
   } else {
     stop("Family not supported")
   }
+  print(mle_coefs)
   if (approx == FALSE) {
     return(glim_raw(
       X,
@@ -328,151 +374,151 @@ compute_poisson_ll_r <- function(y, eta) {
   }
 }
 
-#' Faster Elliptical Approximation Samples (Alternative Implementation)
-#'
-#' Function called if doing elliptical approx, designed for better performance.
-#'
-#' @param X Predictor matrix.
-#' @param y Response vector.
-#' @param family A string indicating the error distribution. Default is `"gaussian"`.
-#' @param mle_val The log-likelihood value at the maximum likelihood estimates.
-#' @param m Number of samples to generate.
-#' @param parallel Logical indicating whether to use parallel processing.
-#' @param a Hyperparameter `a` for the approximation tuning.
-#' @param b Hyperparameter `b` for the approximation tuning.
-#' @param max_it Maximum number of iterations allowed for the algorithm.
-#' @param tol Tolerance criteria for convergence.
-#' @return A matrix of generated samples.
-#' @export
-glim_inner_prob_approx_samples_2 <- function(
-  X,
-  y,
-  family = "gaussian",
-  mle_val,
-  m,
-  parallel,
-  a,
-  b,
-  max_it,
-  tol
-) {
-  print("glim_inner_prob")
-  B <- 100
-  AA <- seq(0.001, 0.999, length = B)
-  if (family == "gaussian" || family == "normal") {
-    res <- lm(y ~ X - 1)
-    J <- crossprod(X, X)
-    dispersion <- 1
-  } else if (family == "binomial") {
-    res <- glm(y ~ X - 1, family = "binomial")
-    p_i <- res$fitted.values
-    J <- crossprod(X, X * (p_i * (1 - p_i)))
-    dispersion <- 1
-  } else if (family == "gamma") {
-    res <- glm(y ~ X - 1, family = Gamma(link = "log"))
-    J <- crossprod(X, X)
-    mle_coefs <- res$coefficients
-    dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
-  } else if (family == "inverse.gaussian") {
-    res <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
-    eta <- X %*% res$coefficients
-    mu_i <- as.vector(sqrt(1 / eta))
-    J <- crossprod(X, X * (mu_i^3)) # TODO #7 check on this calculation
-    dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
-  } else if (family == "poisson") {
-    res <- glm(y ~ X - 1, family = poisson(link = "log"))
-    lambda_i <- res$fitted.values
-    J <- crossprod(X, X * (lambda_i))
-    dispersion <- 1
-  }
-  J <- (J + t(J)) / 2
-  eJ <- eigen(J)
+# #' Faster Elliptical Approximation Samples (Alternative Implementation)
+# #'
+# #' Function called if doing elliptical approx, designed for better performance.
+# #'
+# #' @param X Predictor matrix.
+# #' @param y Response vector.
+# #' @param family A string indicating the error distribution. Default is `"gaussian"`.
+# #' @param mle_val The log-likelihood value at the maximum likelihood estimates.
+# #' @param m Number of samples to generate.
+# #' @param parallel Logical indicating whether to use parallel processing.
+# #' @param a Hyperparameter `a` for the approximation tuning.
+# #' @param b Hyperparameter `b` for the approximation tuning.
+# #' @param max_it Maximum number of iterations allowed for the algorithm.
+# #' @param tol Tolerance criteria for convergence.
+# #' @return A matrix of generated samples.
+# #' @export
+# glim_inner_prob_approx_samples_2 <- function(
+#   X,
+#   y,
+#   family = "gaussian",
+#   mle_val,
+#   m,
+#   parallel,
+#   a,
+#   b,
+#   max_it,
+#   tol
+# ) {
+#   print("glim_inner_prob")
+#   B <- 100
+#   AA <- seq(0.001, 0.999, length = B)
+#   if (family == "gaussian" || family == "normal") {
+#     res <- lm(y ~ X - 1)
+#     J <- crossprod(X, X)
+#     dispersion <- 1
+#   } else if (family == "binomial") {
+#     res <- glm(y ~ X - 1, family = "binomial")
+#     p_i <- res$fitted.values
+#     J <- crossprod(X, X * (p_i * (1 - p_i)))
+#     dispersion <- 1
+#   } else if (family == "gamma") {
+#     res <- glm(y ~ X - 1, family = Gamma(link = "log"))
+#     J <- crossprod(X, X)
+#     mle_coefs <- res$coefficients
+#     dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
+#   } else if (family == "inverse.gaussian") {
+#     res <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
+#     eta <- X %*% res$coefficients
+#     mu_i <- as.vector(sqrt(1 / eta))
+#     J <- crossprod(X, X * (mu_i^3)) # TODO #7 check on this calculation
+#     dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
+#   } else if (family == "poisson") {
+#     res <- glm(y ~ X - 1, family = poisson(link = "log"))
+#     lambda_i <- res$fitted.values
+#     J <- crossprod(X, X * (lambda_i))
+#     dispersion <- 1
+#   }
+#   J <- (J + t(J)) / 2
+#   eJ <- eigen(J)
 
-  eJ$values[eJ$values < 1e-4] <- .000001
-  mle_coefs <- res$coefficients
-  eJ_vectors <- eJ$vectors
-  ej_values <- diag(eJ$values)
+#   eJ$values[eJ$values < 1e-4] <- .000001
+#   mle_coefs <- res$coefficients
+#   eJ_vectors <- eJ$vectors
+#   ej_values <- diag(eJ$values)
 
-  matrix_of_xis <- get_xi(
-    AA,
-    mle_coefs,
-    family,
-    eJ_vectors,
-    eJ_values,
-    dispersion,
-    mle_val,
-    a,
-    b,
-    max_it,
-    tol
-  )
+#   matrix_of_xis <- get_xi(
+#     AA,
+#     mle_coefs,
+#     family,
+#     eJ_vectors,
+#     eJ_values,
+#     dispersion,
+#     mle_val,
+#     a,
+#     b,
+#     max_it,
+#     tol
+#   )
 
-  u <- runif(m)
-  lerped_xi <- c()
-  samples <- matrix(nrow = length(mle_coefs), ncol = m)
-  for (i in 1:m) {
-    if (u[i] < 1 / length(AA)) {
-      lerped_xi <- matrix_of_xis[, 1]
-    } else if (u[i] > 1 - 1 / length(AA)) {
-      lerped_xi <- matrix_of_xis[, length(AA)]
-    } else {
-      where_located <- findInterval(u[i], AA)
-      w <- u[i] - AA[where_located]
-      lerped_xi <- w * matrix_of_xis[, where_located] + (1 - w) * matrix_of_xis[, where_located + 1]
-    }
-    if (is.na(lerped_xi)) {
-      print("You dun messed up")
-    }
+#   u <- runif(m)
+#   lerped_xi <- c()
+#   samples <- matrix(nrow = length(mle_coefs), ncol = m)
+#   for (i in 1:m) {
+#     if (u[i] < 1 / length(AA)) {
+#       lerped_xi <- matrix_of_xis[, 1]
+#     } else if (u[i] > 1 - 1 / length(AA)) {
+#       lerped_xi <- matrix_of_xis[, length(AA)]
+#     } else {
+#       where_located <- findInterval(u[i], AA)
+#       w <- u[i] - AA[where_located]
+#       lerped_xi <- w * matrix_of_xis[, where_located] + (1 - w) * matrix_of_xis[, where_located + 1]
+#     }
+#     if (is.na(lerped_xi)) {
+#       print("You dun messed up")
+#     }
 
-    rand_dir <- generate_unit_matrix(1, length(mle_coefs))
-    spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
+#     rand_dir <- generate_unit_matrix(1, length(mle_coefs))
+#     spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
 
-    samples[, i] <- mle_coefs +
-      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * lerped_xi * spatial_dir)
-  }
-  return(samples)
-}
+#     samples[, i] <- mle_coefs +
+#       as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * lerped_xi * spatial_dir)
+#   }
+#   return(samples)
+# }
 
-#' Appendix C++ Bridge Function
-#'
-#' Helper function acting as a bridge to underlying C++ routines for sample generation.
-#'
-#' @param eJ Eigen decomposition object.
-#' @param num_samps Number of samples to generate.
-#' @param d Dimensionality parameter.
-#' @param X Predictor matrix.
-#' @param y Response vector.
-#' @param mle_coefs Maximum likelihood estimates for coefficients.
-#' @param family String denoting the exponential family.
-#' @param dispersion The dispersion parameter.
-#' @param m Parameter `m` defining scaling or sampling limits.
-#' @param tol Tolerance level for convergence criteria.
-#' @param max_it Maximum number of iterations.
-#' @param a Hyperparameter `a` for the underlying routine.
-#' @param b Hyperparameter `b` for the underlying routine.
-#' @return A matrix of output samples evaluated by the C++ backend.
-#' @export
-appendix <- function(eJ, num_samps, d, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
-  eig_vecs <- eJ$vectors
-  eig_vals <- eJ$values
-  output_samples <- lets_go_to_cpp(
-    eig_vecs,
-    eig_vals,
-    num_samps,
-    d,
-    X,
-    y,
-    mle_coefs,
-    family,
-    dispersion,
-    m,
-    tol,
-    max_it,
-    a,
-    b
-  )
-  return(output_samples)
-}
+# #' Appendix C++ Bridge Function
+# #'
+# #' Helper function acting as a bridge to underlying C++ routines for sample generation.
+# #'
+# #' @param eJ Eigen decomposition object.
+# #' @param num_samps Number of samples to generate.
+# #' @param d Dimensionality parameter.
+# #' @param X Predictor matrix.
+# #' @param y Response vector.
+# #' @param mle_coefs Maximum likelihood estimates for coefficients.
+# #' @param family String denoting the exponential family.
+# #' @param dispersion The dispersion parameter.
+# #' @param m Parameter `m` defining scaling or sampling limits.
+# #' @param tol Tolerance level for convergence criteria.
+# #' @param max_it Maximum number of iterations.
+# #' @param a Hyperparameter `a` for the underlying routine.
+# #' @param b Hyperparameter `b` for the underlying routine.
+# #' @return A matrix of output samples evaluated by the C++ backend.
+# #' @export
+# appendix <- function(eJ, num_samps, d, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
+#   eig_vecs <- eJ$vectors
+#   eig_vals <- eJ$values
+#   output_samples <- lets_go_to_cpp(
+#     eig_vecs,
+#     eig_vals,
+#     num_samps,
+#     d,
+#     X,
+#     y,
+#     mle_coefs,
+#     family,
+#     dispersion,
+#     m,
+#     tol,
+#     max_it,
+#     a,
+#     b
+#   )
+#   return(output_samples)
+# }
 
 #' Probability to Possibility Mapping for Poisson Regression
 #'
@@ -524,4 +570,18 @@ fit_glm_omp_r <- function(X, y, mle_coefs, betas, family, num_threads, m, parall
 #' @export
 pois_pos <- function(X, y, mle_coefs, beta_vals, m, approx) {
   return(glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m, approx))
+}
+
+
+#' Returns a confidence interval
+#'
+#' Note that a 95% confidence interval corresponds to alpha = .95
+#'
+#' @param alpha Note that a 95% confidence interval corresponds to alpha = .95
+#' @param betas The grid of beta values which we are evaluating on
+#' @param possibilities The vector of possibilities
+#' @return A matrix of compatable beta values from the grid.
+#' @export
+get_CI <- function(alpha, betas, possibilities) {
+  return(betas[output > alpha, ])
 }
