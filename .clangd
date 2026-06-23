@@ -1,0 +1,10 @@
+CompileFlags:
+  Compiler: /usr/bin/g++
+  Add: [
+    "-xc++",
+    "-fopenmp",
+    "-I/usr/share/R/include",
+    "-I/home/joeh/R/x86_64-pc-linux-gnu-library/4.6/RcppArmadillo/include",
+    "-I/home/joeh/R/x86_64-pc-linux-gnu-library/4.6/Rcpp/include",
+    "-I/usr/lib/llvm-14/lib/clang/14.0.0/include"
+  ]

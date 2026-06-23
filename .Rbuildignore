@@ -1,0 +1,6 @@
+^GLIM\.Rproj$
+^Rprof\.out$
+^\.Rproj\.user$
+^[.]?air[.]toml$
+^air\.toml$
+^\.vscode$
