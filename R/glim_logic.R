@@ -41,14 +41,12 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
     if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
       original_blas_threads <- RhpcBLASctl::blas_get_num_procs()
       RhpcBLASctl::blas_set_num_threads(1)
+      # If we get a function crash, reset the threads back to what it originally was
+      on.exit(RhpcBLASctl::blas_set_num_threads(original_blas_threads), add = TRUE)
     }
   } else {
     num_omp_threads <- 1
   }
-  print("here")
-  print(mle_coefs)
-  print(betas)
-  print(family)
 
   output <- fit_glm_omp_cpp(
     X = X,
@@ -61,7 +59,6 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
     parallel = parallel,
     approx = approx
   )
-
   # If we changed the amount of threads that blas uses, change this back. Globally for the R session.
   if (parallel && requireNamespace("RhpcBLASctl", quietly = TRUE)) {
     RhpcBLASctl::blas_set_num_threads(original_blas_threads)
@@ -113,7 +110,7 @@ glim_inner_prob_approx_samples <- function(
     res <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
     eta <- X %*% res$coefficients
     mu_i <- as.vector(sqrt(1 / eta))
-    J <- crossprod(X, X * (mu_i^3)) # TODO #7 check on this calculation
+    J <- crossprod(X, X * (mu_i^3) / 4)
     dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
   } else if (family == "poisson") {
     res <- glm(y ~ X - 1, family = poisson(link = "log"))
@@ -271,17 +268,20 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
     mle_coefs <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))$coefficients
   } else if (family == "normal" || family == "gaussian") {
     ll_mle_original_data <- as.numeric(logLik(lm(y ~ X - 1)))
-    mle_coefs <- lm(y ~ X - 1)$coefficients
+    mle_coefs <- fit_gaussian_cpp(X, y)
   } else {
     stop("Family not supported")
   }
   print(mle_coefs)
+  if (is.vector(betas)) {
+    betas <- matrix(betas, nrow = 1)
+  }
   if (approx == FALSE) {
     return(glim_raw(
       X,
       y,
       family = family,
-      as.matrix(betas),
+      betas,
       mle_coefs,
       mle_val = ll_mle_original_data,
       m = m,
@@ -583,5 +583,5 @@ pois_pos <- function(X, y, mle_coefs, beta_vals, m, approx) {
 #' @return A matrix of compatable beta values from the grid.
 #' @export
 get_CI <- function(alpha, betas, possibilities) {
-  return(betas[output > alpha, ])
+  return(betas[possibilities > alpha, ])
 }
