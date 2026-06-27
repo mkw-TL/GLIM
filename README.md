@@ -1,4 +1,4 @@
-Should be up and working??? As soon as I get back onto a windows machine to devtools::build(dev = TRUE)
+Should be up and working??? As soon as I get back onto a windows machine to devtools::build(binary = TRUE)
 
 To install this package, navigate to the releases tab on the right, and download the .zip. Then, install.packages("C:/file_path/GLIM.zip", dependencies = TRUE)
 
