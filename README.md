@@ -1,6 +1,7 @@
 ## GLIM
-This is a package that produces possibilistic output within the GLM framework. Computations largely based on ideas from: https://arxiv.org/abs/2501.10585
 Inferential Models allow the user to acheive Bayesian style posteriors, with no priors, and with type 1 error control.
+
+This package implements Ryan Martin's IM framework within the GLM context. Computations primarily based on ideas from: https://arxiv.org/abs/2501.10585
 
 ## To install:
 In your console, run this line:
