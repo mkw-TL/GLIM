@@ -4,7 +4,7 @@
 \alias{glim}
 \title{Generalized Linear Inferential Models (GLIM) Main Function}
 \usage{
-glim(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, parallel)
+glim(X, y, family = "gaussian", betas, m = 10000, approx = FALSE, parallel)
 }
 \arguments{
 \item{X}{Matrix of predictors.}
@@ -15,7 +15,7 @@ glim(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, parallel)
 
 \item{betas}{A matrix (or column vector) of different beta values to evaluate the possibility over.}
 
-\item{m}{Number of samples/evaluations to perform (default \code{1000}).}
+\item{m}{Number of samples/evaluations to perform (default \code{10000}).}
 
 \item{approx}{Logical indicating whether to use the elliptical approximation (default \code{FALSE}).}
 

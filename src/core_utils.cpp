@@ -64,7 +64,7 @@ arma::mat generate_unit_matrix(int n, int d) {
 arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
                           const arma::vec &mle_coefs, const arma::mat &betas,
                           std::string family, // Pass string from R
-                          int num_threads = 1, int m = 100,
+                          int num_threads = 1, int m = 1000,
                           bool parallel = true, bool approx = false) {
 
   // Convert the string to an Enum once right here
@@ -151,13 +151,13 @@ arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
     if (thread_id == 0 && approx == false) {
       // Calculate what the *actual current loop progress* is right now
       int current_percentage =
-          (int)((double)current_progress / n_evals * 100.0);
+          (int)((double)current_progress / n_evals * 1000.0);
 
       // If the actual progress has caught up to or passed our next milestone,
       // print it!
       if (current_percentage >= next_percentage_milestone) {
         int bar_width = 40;
-        int pos = (int)(bar_width * (current_percentage / 100.0));
+        int pos = (int)(bar_width * (current_percentage / 1000.0));
 
         Rcpp::Rcout << "\rCalculating Plausibilities: [";
         for (int b = 0; b < bar_width; ++b) {
@@ -194,11 +194,9 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
   // Setup Chi-Squared distribution to replicate R's qchisq()
   boost::math::chi_squared dist(D);
   double q_val = boost::math::quantile(dist, 1.0 - alpha);
-  Rcpp::Rcout << "imvar called";
 
   // These are all the dimensions we would like to traverse
   for (int d = 0; d < D; d++) {
-    Rcpp::Rcout << "dimension";
     // log(xi) because we are getting the exponentiated version
     double xi_d = std::log(xi(d));
 
@@ -207,7 +205,6 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
     arma::vec posts_d =
         J_vectors.col(d) *
         std::sqrt(dispersion * q_val * std::abs(1.0 / J_values(d)));
-    Rcpp::Rcout << "posts";
 
     int it = 1;
     while (true) {
@@ -219,12 +216,11 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
                       posts_xi_d); // I guess this is a constructor that works..
       arma::mat MMinus(mle + posts_xi_d);
 
-      double val1 = fit_glm_omp_cpp(X, y, mle, MPlus.t(), family, 1, 100,
+      double val1 = fit_glm_omp_cpp(X, y, mle, MPlus.t(), family, 1, 1000,
                                     parallel, TRUE)(0, 0);
-      double val2 = fit_glm_omp_cpp(X, y, mle, MMinus.t(), family, 1, 100,
+      double val2 = fit_glm_omp_cpp(X, y, mle, MMinus.t(), family, 1, 1000,
                                     parallel, TRUE)(0, 0);
       double g_xi = std::max(val1, val2) - alpha;
-      Rcpp::Rcout << "g_xi is: " << g_xi << "\n";
 
       if (std::abs(g_xi) <= tol || it >= max_it) {
         break;

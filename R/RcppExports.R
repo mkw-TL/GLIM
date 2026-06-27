@@ -5,7 +5,7 @@ generate_unit_matrix <- function(n, d) {
     .Call(`_GLIM_generate_unit_matrix`, n, d)
 }
 
-fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, num_threads = 1L, m = 100L, parallel = TRUE, approx = FALSE) {
+fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, num_threads = 1L, m = 1000L, parallel = TRUE, approx = FALSE) {
     .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family, num_threads, m, parallel, approx)
 }
 

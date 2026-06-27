@@ -6,6 +6,9 @@
 #' @importFrom stats logLik glm Gamma poisson inverse.gaussian lm coef runif
 NULL
 
+
+# TODO Warnings on whether p > n
+
 # Original code written by Joe Harrison (jrharr25@ncsu.edu), translated to cpp by Gemini
 # pkgbuild::compile_dll() validates the package directory differently. Rcpp might implement it's directory check differently
 # After making changes, restart R, get in the package directory
@@ -89,7 +92,6 @@ glim_inner_prob_approx_samples <- function(
   m,
   parallel
 ) {
-  print("glim_inner_prob")
   B <- 100
   AA <- seq(0.001, 0.999, length = B)
   if (family == "gaussian" || family == "normal") {
@@ -197,12 +199,12 @@ glim_inner_prob_approx_samples <- function(
 #' @param y Vector of response variables.
 #' @param family String denoting the exponential family. Choices are `"gaussian"`, `"binomial"`, `"gamma"`, `"poisson"`, `"inverse-gaussian"`.
 #' @param betas A matrix (or column vector) of different beta values to evaluate the possibility over.
-#' @param m Number of samples/evaluations to perform (default `1000`).
+#' @param m Number of samples/evaluations to perform (default `10000`).
 #' @param approx Logical indicating whether to use the elliptical approximation (default `FALSE`).
 #' @param parallel Logical indicating whether to process in parallel.
 #' @return A matrix of outputs or samples depending on whether the approximation is used.
 #' @export
-glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, parallel) {
+glim <- function(X, y, family = "gaussian", betas, m = 10000, approx = FALSE, parallel) {
   if (family == "binomial" || family == "logistic") {
     if (is.vector(y) && all(y == 0 | y == 1)) {
       # This means that it already is in binary format. DON'T ADD INTERCEPT
@@ -312,6 +314,43 @@ glim <- function(X, y, family = "gaussian", betas, m = 1000, approx = FALSE, par
 #' @return A vector of mapped possibility values.
 #' @export
 prob2poss_logis <- function(X, y, samples, the_compared_theta) {
+  if (is.vector(y) && all(y == 0 | y == 1)) {
+    # This means that it already is in binary format. DON'T ADD INTERCEPT
+    if (length(y) != nrow(X)) {
+      print("y and X lengths differ")
+      stop()
+    }
+  } else if (is.matrix(y) && ncol(y) == 2) {
+    # Two-column integer matrix (Successes / Failures)
+    successes <- y[, 1]
+    failures <- y[, 2]
+
+    idx_success <- rep(1:nrow(X), times = successes)
+    idx_fail <- rep(1:nrow(X), times = failures)
+
+    # I did not know this, but X[c(2, 2), ] will repeat the second index twice
+    # drop = FALSE means that it stays as a matrix, rather than going to a vector
+    X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
+    y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
+    X <- cbind(rep(1, length(y)), X)
+    print(X)
+    print(y)
+  } else if (is.factor(y)) {
+    # Success is any level that is NOT the first level
+
+    is_success <- as.integer(y != levels(y)[1])
+    successes <- is_success * rep(1, length(y))
+    failures <- (1 - is_success) * rep(1, length(y))
+
+    idx_success <- rep(1:nrow(X), times = successes)
+    idx_fail <- rep(1:nrow(X), times = failures)
+
+    # I did not know this, but X[c(2, 2), ] will repeat the second index twice
+    # drop = FALSE means that it stays as a matrix, rather than going to a vector
+    y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
+    X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
+    X <- cbind(rep(1, length(y)), X)
+  }
   eta <- X %*% the_compared_theta
   log_term <- pmax(eta, 0) + log1p(exp(-abs(eta)))
   ll_val <- y %*% eta - colSums(log_term)
@@ -403,7 +442,7 @@ compute_poisson_ll_r <- function(y, eta) {
 #   tol
 # ) {
 #   print("glim_inner_prob")
-#   B <- 100
+#   B <- 1000
 #   AA <- seq(0.001, 0.999, length = B)
 #   if (family == "gaussian" || family == "normal") {
 #     res <- lm(y ~ X - 1)
