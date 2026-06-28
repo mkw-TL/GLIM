@@ -1,8 +1,13 @@
-Should be up and working??? As soon as I get back onto a windows machine to devtools::build(dev = TRUE)
+## GLIM
+Inferential Models allow the user to acheive Bayesian style posteriors, with no priors, and with type 1 error control.
 
-To install this package, navigate to the releases tab on the right, and download the .zip. Then, install.packages("C:/file_path/GLIM.zip", dependencies = TRUE)
+This package implements Ryan Martin's IM framework within the GLM context. Computations primarily based on ideas from: https://arxiv.org/abs/2501.10585
 
-In the source, there is an Example_script.R which should be able to be run and produce a contour plot.
+## To install:
+In your console, run this line:
+remotes::install_github("mkw-TL/GLIM", ref = "alpha1")
+
+In the source files, there is an Example_script.R which will show you how to run the program.
 
 Linux users are on their own as always. You may need to:
 sudo apt-get install libomp-dev
