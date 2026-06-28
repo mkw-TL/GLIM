@@ -1,0 +1,21 @@
+* installing *source* package ‘GLIM’ ...
+** this is package ‘GLIM’ version ‘0.0.0.1001’
+** using staged installation
+** libs
+specified C++20
+using C++ compiler: ‘g++ (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0’
+using C++20
+g++ -std=gnu++20 -I"/usr/share/R/include" -DNDEBUG  -I'/home/joeh/R/x86_64-pc-linux-gnu-library/4.6/Rcpp/include' -I'/home/joeh/R/x86_64-pc-linux-gnu-library/4.6/RcppArmadillo/include'    -fopenmp -fpic  -g -O2 -ffile-prefix-map=/build/r-base-gN72Ro/r-base-4.6.0=. -fstack-protector-strong -Wformat -Werror=format-security -Wdate-time -D_FORTIFY_SOURCE=2   -c RcppExports.cpp -o RcppExports.o
+g++ -std=gnu++20 -I"/usr/share/R/include" -DNDEBUG  -I'/home/joeh/R/x86_64-pc-linux-gnu-library/4.6/Rcpp/include' -I'/home/joeh/R/x86_64-pc-linux-gnu-library/4.6/RcppArmadillo/include'    -fopenmp -fpic  -g -O2 -ffile-prefix-map=/build/r-base-gN72Ro/r-base-4.6.0=. -fstack-protector-strong -Wformat -Werror=format-security -Wdate-time -D_FORTIFY_SOURCE=2   -c possibilistic_computations.cpp -o possibilistic_computations.o
+g++ -std=gnu++20 -shared -L/usr/lib/R/lib -Wl,-Bsymbolic-functions -flto=auto -ffat-lto-objects -flto=auto -Wl,-z,relro -o GLIM.so RcppExports.o possibilistic_computations.o -fopenmp -llapack -lblas -lgfortran -lm -lquadmath -L/usr/lib/R/lib -lR
+installing to /home/joeh/Documents/Ryan_Meeting/GLIM/GLIM.Rcheck/00LOCK-GLIM/00new/GLIM/libs
+** R
+** byte-compile and prepare package for lazy loading
+** help
+*** installing help indices
+** building package indices
+** testing if installed package can be loaded from temporary location
+** checking absolute paths in shared objects and dynamic libraries
+** testing if installed package can be loaded from final location
+** testing if installed package keeps a record of temporary installation path
+* DONE (GLIM)

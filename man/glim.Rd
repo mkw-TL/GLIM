@@ -4,7 +4,16 @@
 \alias{glim}
 \title{Generalized Linear Inferential Models (GLIM) Main Function}
 \usage{
-glim(X, y, family = "gaussian", betas, m = 10000, approx = FALSE, parallel)
+glim(
+  X,
+  y,
+  family = "gaussian",
+  betas,
+  m = 10000,
+  approx = FALSE,
+  parallel = TRUE,
+  intercept = TRUE
+)
 }
 \arguments{
 \item{X}{Matrix of predictors.}
@@ -20,6 +29,8 @@ glim(X, y, family = "gaussian", betas, m = 10000, approx = FALSE, parallel)
 \item{approx}{Logical indicating whether to use the elliptical approximation (default \code{FALSE}).}
 
 \item{parallel}{Logical indicating whether to process in parallel.}
+
+\item{intercept}{Logical indicating whether to add an intercept term}
 }
 \value{
 A matrix of outputs or samples depending on whether the approximation is used.

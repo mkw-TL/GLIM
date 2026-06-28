@@ -1,0 +1,5 @@
+generate_unit_matrix    Generates all random numbers at once, so
+                        doesn't need to use the slow apply Doesn't work
+                        if you pass in more than one column
+prob2poss_gamma         Will throw an error if the_compared_theta is a
+                        scalar

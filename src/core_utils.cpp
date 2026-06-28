@@ -236,84 +236,93 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
   return xi;
 }
 
-arma::mat get_xi(const arma::mat X, const arma::vec y, const arma::vec &AA,
-                 const arma::vec &mle_coefs, const std::string family_input,
-                 const arma::mat &eJ_vectors, const arma::mat &eJ_values,
-                 double dispersion, double mle_val, int a, int b, int max_it,
-                 double tol) {
-  std::string family = family_input;
+// arma::mat get_xi(const arma::mat X, const arma::vec y, const arma::vec &AA,
+//                  const arma::vec &mle_coefs, const std::string family_input,
+//                  const arma::mat &eJ_vectors, const arma::mat &eJ_values,
+//                  double dispersion, double mle_val, int a, int b, int max_it,
+//                  double tol) {
+//   std::string family = family_input;
 
-  arma::vec prev_xi(mle_coefs.size());
-  prev_xi.ones();
-  arma::mat xi_mat(
-      mle_coefs.size(),
-      AA.size()); // Want to allocate size here. Mindful of off by one errors
-  bool parallel = false;
-#pragma omp for schedule(static)
-  for (int i = 0; i < AA.size(); i++) {
-    double a_val = AA(i);
-    // xi is our scaling
-    arma::vec current_xi =
-        imvar(X, y, prev_xi, family, a_val, mle_coefs, mle_val, eJ_vectors,
-              eJ_values, dispersion, tol, a, b, max_it, parallel);
+//   arma::vec prev_xi(mle_coefs.size());
+//   prev_xi.ones();
+//   arma::mat xi_mat(
+//       mle_coefs.size(),
+//       AA.size()); // Want to allocate size here. Mindful of off by one errors
+//   bool parallel = false;
+// #pragma omp for schedule(static)
+//   for (int i = 0; i < AA.size(); i++) {
+//     double a_val = AA(i);
+//     // xi is our scaling
+//     arma::vec current_xi =
+//         imvar(X, y, prev_xi, family, a_val, mle_coefs, mle_val, eJ_vectors,
+//               eJ_values, dispersion, tol, a, b, max_it, parallel);
 
-    xi_mat.col(i) = current_xi;
-    prev_xi = current_xi; // initialize our guess of the next xi to whatever was
-                          // just previously seen.
-  }
-  return xi_mat;
-}
+//     xi_mat.col(i) = current_xi;
+//     prev_xi = current_xi; // initialize our guess of the next xi to whatever
+//     was
+//                           // just previously seen.
+//   }
+//   return xi_mat;
+// }
 
-arma::vec lets_go_to_cpp(arma::mat eig_vecs, arma::mat eig_vals, int num_samps,
-                         int d, arma::mat X, arma::vec y, arma::vec mle_coefs,
-                         std::string family, double dispersion, int m,
-                         double tol, int max_it, int a, int b, bool approx) {
-  arma::mat sampled_betas(mle_coefs.n_elem, num_samps);
-  int num_omp_threads = 1;
+// arma::vec lets_go_to_cpp(arma::mat eig_vecs, arma::mat eig_vals, int
+// num_samps,
+//                          int d, arma::mat X, arma::vec y, arma::vec
+//                          mle_coefs, std::string family, double dispersion,
+//                          int m, double tol, int max_it, int a, int b, bool
+//                          approx) {
+//   arma::mat sampled_betas(mle_coefs.n_elem, num_samps);
+//   int num_omp_threads = 1;
 
-  // We are definitely not parallelizing across the beta grid, so no if
-  // statement needed
-  thread_local std::random_device rd;
-  thread_local std::mt19937 gen(rd());
-#pragma omp parallel for schedule(static)
-  for (int j = 0; j < num_samps; j++) {
-    std::uniform_real_distribution<double> runif(0.0, 1.0);
-    double unif_alphas = runif(gen);
-    arma::vec dir = generate_unit_matrix(1, d);
+//   // We are definitely not parallelizing across the beta grid, so no if
+//   // statement needed
+//   thread_local std::random_device rd;
+//   thread_local std::mt19937 gen(rd());
+// #pragma omp parallel for schedule(static)
+//   for (int j = 0; j < num_samps; j++) {
+//     std::uniform_real_distribution<double> runif(0.0, 1.0);
+//     double unif_alphas = runif(gen);
+//     arma::vec dir = generate_unit_matrix(1, d);
 
-    // Could have something where it looks for xi in related alpha, or related
-    // directions. That being said, if parallelization is happening here, then
-    // can't really do that
-    double starting_xi = 1;
-    // Time for our stochastic approximation algorithm. Relies on Robbins and
-    // Monroe
-    int it = 1;
-    while (true) {
-      arma::vec dir_xi =
-          (dir * exp(starting_xi /
-                     2)); // Xi scales singular values (scalar for each
-                          // directions). Again, we are going to evaluate this
-                          // direction * scaling to see how far off.
-      // exp parameterization lets us avoid negative xi (so when we do sqrt(xi)
-      // we don't get imaginary) removed an if else that dealt with if D == 1
-      double val1 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs + dir_xi).t(),
-                                    family, 1, m, true, approx)(0, 0);
-      double val2 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs - dir_xi).t(),
-                                    family, 1, m, true, approx)(0, 0);
-      double g_xi = std::max(val1, val2) - unif_alphas;
+//     // Could have something where it looks for xi in related alpha, or
+//     related
+//     // directions. That being said, if parallelization is happening here,
+//     then
+//     // can't really do that
+//     double starting_xi = 1;
+//     // Time for our stochastic approximation algorithm. Relies on Robbins and
+//     // Monroe
+//     int it = 1;
+//     while (true) {
+//       arma::vec dir_xi =
+//           (dir * exp(starting_xi /
+//                      2)); // Xi scales singular values (scalar for each
+//                           // directions). Again, we are going to evaluate
+//                           this
+//                           // direction * scaling to see how far off.
+//       // exp parameterization lets us avoid negative xi (so when we do
+//       sqrt(xi)
+//       // we don't get imaginary) removed an if else that dealt with if D == 1
+//       double val1 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs +
+//       dir_xi).t(),
+//                                     family, 1, m, true, approx)(0, 0);
+//       double val2 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs -
+//       dir_xi).t(),
+//                                     family, 1, m, true, approx)(0, 0);
+//       double g_xi = std::max(val1, val2) - unif_alphas;
 
-      if ((std::abs(g_xi) <= tol) || (it >= max_it)) {
-        if (abs(val1 - unif_alphas) > abs(val2 - unif_alphas)) {
-          sampled_betas.col(j) = mle_coefs - dir_xi;
-        } else {
-          sampled_betas.col(j) = mle_coefs + dir_xi;
-        }
-        break;
-      } else {
-        starting_xi = starting_xi + w(a, b, it) * g_xi;
-        it = it + 1;
-      }
-    }
-  }
-  return sampled_betas;
-}
+//       if ((std::abs(g_xi) <= tol) || (it >= max_it)) {
+//         if (abs(val1 - unif_alphas) > abs(val2 - unif_alphas)) {
+//           sampled_betas.col(j) = mle_coefs - dir_xi;
+//         } else {
+//           sampled_betas.col(j) = mle_coefs + dir_xi;
+//         }
+//         break;
+//       } else {
+//         starting_xi = starting_xi + w(a, b, it) * g_xi;
+//         it = it + 1;
+//       }
+//     }
+//   }
+//   return sampled_betas;
+// }

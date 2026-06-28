@@ -1,0 +1,86 @@
+Hmm ... looks like a package
+Converting parsed Rd's to LaTeX 
+Creating pdf output from LaTeX ...
+Warning in texi2dvi(file = file, pdf = TRUE, clean = clean, quiet = quiet,  :
+  texi2dvi script/program not available, using emulation
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex)
+ restricted \write18 enabled.
+entering extended mode
+(./Rd2.tex
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-04-28>
+
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/book.cls
+Document Class: book 2025/01/22 v1.4n Standard LaTeX document class
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/bk10.clo)) (/usr/share/R/share/texmf/tex/latex/Rd.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/ifthen.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/iftex/iftex.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/tools/longtable.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/tools/bm.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/alltt.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/tools/verbatim.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/url/url.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/textcomp.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amsmath.sty
+For additional information on amsmath, use the `?' option.
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amstext.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amsgen.sty)) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amsbsy.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amsopn.sty)) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsfonts/amsfonts.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsfonts/amssymb.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/jknapltx/mathrsfs.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/fontenc.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/psnfss/times.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/inconsolata/zi4.sty `inconsolata-zi4' v1.12, 2019/05/17 Text macros for Inconsolata (msharpe) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/xkeyval/xkeyval.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/xkeyval/xkeyval.tex (/home/joeh/.TinyTeX/texmf-dist/tex/generic/xkeyval/xkvutils.tex (/home/joeh/.TinyTeX/texmf-dist/tex/generic/xkeyval/keyval.tex))))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/graphics/color.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/graphics-cfg/color.cfg) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/graphics-def/pdftex.def) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/graphics/mathcolor.ltx)) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/hyperref.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/kvsetkeys/kvsetkeys.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/kvdefinekeys/kvdefinekeys.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/pdfescape/pdfescape.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/ltxcmds/ltxcmds.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/pdftexcmds/pdftexcmds.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/infwarerr/infwarerr.sty))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hycolor/hycolor.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/nameref.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/refcount/refcount.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/gettitlestring/gettitlestring.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/kvoptions/kvoptions.sty))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/etoolbox/etoolbox.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/stringenc/stringenc.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/pd1enc.def) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/intcalc/intcalc.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/puenc.def) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/bitset/bitset.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/bigintcalc/bigintcalc.sty))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/hpdftex.def (/home/joeh/.TinyTeX/texmf-dist/tex/latex/rerunfilecheck/rerunfilecheck.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/uniquecounter/uniquecounter.sty)))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/makeidx.sty)
+Writing index file Rd2.idx
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/psnfss/t1ptm.fd) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def)
+No file Rd2.aux.
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/inconsolata/t1zi4.fd)
+No file Rd2.toc.
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsfonts/umsa.fd) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsfonts/umsb.fd) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/jknapltx/ursfs.fd) [1{/home/joeh/.TinyTeX/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/home/joeh/.TinyTeX/texmf-dist/fonts/enc/dvips/base/8r.enc}{/home/joeh/.TinyTeX/texmf-dist/fonts/enc/dvips/inconsolata/i4-t1-0.enc}]
+No file Rd2.ind.
+[2] (./Rd2.aux)
+
+Package rerunfilecheck Warning: File `Rd2.out' has changed.
+(rerunfilecheck)                Rerun to get outlines right
+(rerunfilecheck)                or use package `bookmark'.
+
+ )</home/joeh/.TinyTeX/texmf-dist/fonts/type1/public/inconsolata/Inconsolata-zi4r.pfb></home/joeh/.TinyTeX/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></home/joeh/.TinyTeX/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></home/joeh/.TinyTeX/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></home/joeh/.TinyTeX/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
+Output written on Rd2.pdf (2 pages, 67858 bytes).
+Transcript written on Rd2.log.
+This is makeindex, version 2.18 [TeX Live 2026] (kpathsea + Thai support).
+Scanning input file Rd2.idx....done (2 entries accepted, 0 rejected).
+Sorting entries....done (2 comparisons).
+Generating output file Rd2.ind....done (9 lines written, 0 warnings).
+Output written in Rd2.ind.
+Transcript written in Rd2.ilg.
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex)
+ restricted \write18 enabled.
+entering extended mode
+(./Rd2.tex
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-04-28>
+
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/book.cls
+Document Class: book 2025/01/22 v1.4n Standard LaTeX document class
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/bk10.clo)) (/usr/share/R/share/texmf/tex/latex/Rd.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/ifthen.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/iftex/iftex.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/tools/longtable.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/tools/bm.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/alltt.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/tools/verbatim.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/url/url.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/textcomp.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amsmath.sty
+For additional information on amsmath, use the `?' option.
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amstext.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amsgen.sty)) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amsbsy.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amsopn.sty)) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsfonts/amsfonts.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsfonts/amssymb.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/jknapltx/mathrsfs.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/fontenc.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/psnfss/times.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/inconsolata/zi4.sty `inconsolata-zi4' v1.12, 2019/05/17 Text macros for Inconsolata (msharpe) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/xkeyval/xkeyval.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/xkeyval/xkeyval.tex (/home/joeh/.TinyTeX/texmf-dist/tex/generic/xkeyval/xkvutils.tex (/home/joeh/.TinyTeX/texmf-dist/tex/generic/xkeyval/keyval.tex))))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/graphics/color.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/graphics-cfg/color.cfg) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/graphics-def/pdftex.def) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/graphics/mathcolor.ltx)) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/hyperref.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/kvsetkeys/kvsetkeys.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/kvdefinekeys/kvdefinekeys.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/pdfescape/pdfescape.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/ltxcmds/ltxcmds.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/pdftexcmds/pdftexcmds.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/infwarerr/infwarerr.sty))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hycolor/hycolor.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/nameref.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/refcount/refcount.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/gettitlestring/gettitlestring.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/kvoptions/kvoptions.sty))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/etoolbox/etoolbox.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/stringenc/stringenc.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/pd1enc.def) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/intcalc/intcalc.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/puenc.def) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/bitset/bitset.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/bigintcalc/bigintcalc.sty))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/hpdftex.def (/home/joeh/.TinyTeX/texmf-dist/tex/latex/rerunfilecheck/rerunfilecheck.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/uniquecounter/uniquecounter.sty)))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/makeidx.sty)
+Writing index file Rd2.idx
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/psnfss/t1ptm.fd) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def) (./Rd2.aux) (./Rd2.out) (./Rd2.out) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/inconsolata/t1zi4.fd) (./Rd2.toc (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsfonts/umsa.fd) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsfonts/umsb.fd) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/jknapltx/ursfs.fd)) [1{/home/joeh/.TinyTeX/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/home/joeh/.TinyTeX/texmf-dist/fonts/enc/dvips/base/8r.enc}{/home/joeh/.TinyTeX/texmf-dist/fonts/enc/dvips/inconsolata/i4-t1-0.enc}] (./Rd2.ind [2] [3]) (./Rd2.aux)
+
+Package rerunfilecheck Warning: File `Rd2.out' has changed.
+(rerunfilecheck)                Rerun to get outlines right
+(rerunfilecheck)                or use package `bookmark'.
+
+ )</home/joeh/.TinyTeX/texmf-dist/fonts/type1/public/inconsolata/Inconsolata-zi4r.pfb></home/joeh/.TinyTeX/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></home/joeh/.TinyTeX/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></home/joeh/.TinyTeX/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></home/joeh/.TinyTeX/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
+Output written on Rd2.pdf (3 pages, 69044 bytes).
+Transcript written on Rd2.log.
+This is makeindex, version 2.18 [TeX Live 2026] (kpathsea + Thai support).
+Scanning input file Rd2.idx....done (2 entries accepted, 0 rejected).
+Sorting entries....done (2 comparisons).
+Generating output file Rd2.ind....done (9 lines written, 0 warnings).
+Output written in Rd2.ind.
+Transcript written in Rd2.ilg.
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex)
+ restricted \write18 enabled.
+entering extended mode
+(./Rd2.tex
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-04-28>
+
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/book.cls
+Document Class: book 2025/01/22 v1.4n Standard LaTeX document class
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/bk10.clo)) (/usr/share/R/share/texmf/tex/latex/Rd.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/ifthen.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/iftex/iftex.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/tools/longtable.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/tools/bm.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/alltt.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/tools/verbatim.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/url/url.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/textcomp.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amsmath.sty
+For additional information on amsmath, use the `?' option.
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amstext.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amsgen.sty)) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amsbsy.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsmath/amsopn.sty)) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsfonts/amsfonts.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsfonts/amssymb.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/jknapltx/mathrsfs.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/fontenc.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/psnfss/times.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/inconsolata/zi4.sty `inconsolata-zi4' v1.12, 2019/05/17 Text macros for Inconsolata (msharpe) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/xkeyval/xkeyval.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/xkeyval/xkeyval.tex (/home/joeh/.TinyTeX/texmf-dist/tex/generic/xkeyval/xkvutils.tex (/home/joeh/.TinyTeX/texmf-dist/tex/generic/xkeyval/keyval.tex))))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/graphics/color.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/graphics-cfg/color.cfg) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/graphics-def/pdftex.def) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/graphics/mathcolor.ltx)) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/hyperref.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/kvsetkeys/kvsetkeys.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/kvdefinekeys/kvdefinekeys.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/pdfescape/pdfescape.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/ltxcmds/ltxcmds.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/pdftexcmds/pdftexcmds.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/infwarerr/infwarerr.sty))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hycolor/hycolor.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/nameref.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/refcount/refcount.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/gettitlestring/gettitlestring.sty (/home/joeh/.TinyTeX/texmf-dist/tex/latex/kvoptions/kvoptions.sty))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/etoolbox/etoolbox.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/stringenc/stringenc.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/pd1enc.def) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/intcalc/intcalc.sty) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/puenc.def) (/home/joeh/.TinyTeX/texmf-dist/tex/generic/bitset/bitset.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/bigintcalc/bigintcalc.sty))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/hyperref/hpdftex.def (/home/joeh/.TinyTeX/texmf-dist/tex/latex/rerunfilecheck/rerunfilecheck.sty (/home/joeh/.TinyTeX/texmf-dist/tex/generic/uniquecounter/uniquecounter.sty)))) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/base/makeidx.sty)
+Writing index file Rd2.idx
+(/home/joeh/.TinyTeX/texmf-dist/tex/latex/psnfss/t1ptm.fd) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def) (./Rd2.aux) (./Rd2.out) (./Rd2.out) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/inconsolata/t1zi4.fd) (./Rd2.toc (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsfonts/umsa.fd) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/amsfonts/umsb.fd) (/home/joeh/.TinyTeX/texmf-dist/tex/latex/jknapltx/ursfs.fd)) [1{/home/joeh/.TinyTeX/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/home/joeh/.TinyTeX/texmf-dist/fonts/enc/dvips/base/8r.enc}{/home/joeh/.TinyTeX/texmf-dist/fonts/enc/dvips/inconsolata/i4-t1-0.enc}] (./Rd2.ind [2] [3]) (./Rd2.aux) )</home/joeh/.TinyTeX/texmf-dist/fonts/type1/public/inconsolata/Inconsolata-zi4r.pfb></home/joeh/.TinyTeX/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></home/joeh/.TinyTeX/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></home/joeh/.TinyTeX/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></home/joeh/.TinyTeX/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
+Output written on Rd2.pdf (3 pages, 69483 bytes).
+Transcript written on Rd2.log.
+Saving output to ‘GLIM-manual.pdf’ ...
+Done
+You may want to clean up by 'rm -Rf /tmp/RtmpfvQem3/Rd2pdfb4a3d6915581d'

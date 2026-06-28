@@ -23,10 +23,26 @@ arma::vec fit_gaussian_cpp(const arma::mat &X, const arma::vec &y) {
 // Helper function to compute Gaussian log-likelihood
 // [[Rcpp::export]]
 double compute_gaussian_ll(const arma::vec &y, const arma::vec &mu,
-                           double sigma, int n) {
-  double ll = -(n / 2.0) * std::log(2.0 * M_PI * sigma * sigma) -
+                           double sigma) {
+  double ll = -(y.n_elem / 2.0) * std::log(2.0 * M_PI * sigma * sigma) -
               arma::accu((y - mu) % (y - mu)) / (2 * sigma * sigma);
   return ll;
+}
+
+// [[Rcpp::export]]
+arma::vec compute_gaussian_ll_mat(const arma::vec &y, const arma::mat &mu,
+                                  double sigma) {
+  arma::vec ll(mu.n_cols);
+  for (int i = 0; i < mu.n_cols; i++) {
+
+    ll(i) = compute_gaussian_ll(y, mu, sigma);
+  }
+  return ll;
+}
+
+// [[Rcpp::export]]
+double est_dispersion(const arma::vec &y, const arma::vec &mu, int &p) {
+  return arma::accu((y - mu) % (y - mu)) / (y.n_elem - p);
 }
 
 // Main simulation function for Gaussian
@@ -38,14 +54,13 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
 
   arma::vec mu = X * beta_vals; // Identity link
   // Estimated dispersion
-  double estimated_dispersion =
-      arma::accu((y - mu) % (y - mu)) / (y.n_elem - beta_vals.n_elem);
+  int p = beta_vals.n_elem;
 
-  double sigma = std::sqrt(estimated_dispersion);
+  double sigma = std::sqrt(est_dispersion(y, mu, p));
 
-  double true_ll = compute_gaussian_ll(y, mu, sigma, n);
+  double true_ll = compute_gaussian_ll(y, mu, sigma);
   arma::vec mu_hat = X * mle_coefs;
-  double mle_val = compute_gaussian_ll(y, mu_hat, sigma, n);
+  double mle_val = compute_gaussian_ll(y, mu_hat, sigma);
   double f_x = true_ll - mle_val;
 
   thread_local std::random_device rd;
@@ -66,8 +81,8 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
 
     arma::vec coefs = fit_gaussian_cpp(X, y_sim);
     arma::vec mu_hat = X * coefs;
-    double mle_sim = compute_gaussian_ll(y_sim, mu_hat, sigma, n);
-    double llX_j = compute_gaussian_ll(y_sim, mu, sigma, n);
+    double mle_sim = compute_gaussian_ll(y_sim, mu_hat, sigma);
+    double llX_j = compute_gaussian_ll(y_sim, mu, sigma);
 
     double f_X_j = llX_j - mle_sim;
 

@@ -164,16 +164,41 @@ BEGIN_RCPP
 END_RCPP
 }
 // compute_gaussian_ll
-double compute_gaussian_ll(const arma::vec& y, const arma::vec& mu, double sigma, int n);
-RcppExport SEXP _GLIM_compute_gaussian_ll(SEXP ySEXP, SEXP muSEXP, SEXP sigmaSEXP, SEXP nSEXP) {
+double compute_gaussian_ll(const arma::vec& y, const arma::vec& mu, double sigma);
+RcppExport SEXP _GLIM_compute_gaussian_ll(SEXP ySEXP, SEXP muSEXP, SEXP sigmaSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type mu(muSEXP);
     Rcpp::traits::input_parameter< double >::type sigma(sigmaSEXP);
-    Rcpp::traits::input_parameter< int >::type n(nSEXP);
-    rcpp_result_gen = Rcpp::wrap(compute_gaussian_ll(y, mu, sigma, n));
+    rcpp_result_gen = Rcpp::wrap(compute_gaussian_ll(y, mu, sigma));
+    return rcpp_result_gen;
+END_RCPP
+}
+// compute_gaussian_ll_mat
+arma::vec compute_gaussian_ll_mat(const arma::vec& y, const arma::mat& mu, double sigma);
+RcppExport SEXP _GLIM_compute_gaussian_ll_mat(SEXP ySEXP, SEXP muSEXP, SEXP sigmaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type mu(muSEXP);
+    Rcpp::traits::input_parameter< double >::type sigma(sigmaSEXP);
+    rcpp_result_gen = Rcpp::wrap(compute_gaussian_ll_mat(y, mu, sigma));
+    return rcpp_result_gen;
+END_RCPP
+}
+// est_dispersion
+double est_dispersion(const arma::vec& y, const arma::vec& mu, int& p);
+RcppExport SEXP _GLIM_est_dispersion(SEXP ySEXP, SEXP muSEXP, SEXP pSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type mu(muSEXP);
+    Rcpp::traits::input_parameter< int& >::type p(pSEXP);
+    rcpp_result_gen = Rcpp::wrap(est_dispersion(y, mu, p));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -220,16 +245,28 @@ BEGIN_RCPP
 END_RCPP
 }
 // compute_invgauss_ll
-double compute_invgauss_ll(const arma::vec& y, const arma::vec& mu, double gamma_val, int n);
-RcppExport SEXP _GLIM_compute_invgauss_ll(SEXP ySEXP, SEXP muSEXP, SEXP gamma_valSEXP, SEXP nSEXP) {
+double compute_invgauss_ll(const arma::vec& y, const arma::vec& mu, double gamma_val);
+RcppExport SEXP _GLIM_compute_invgauss_ll(SEXP ySEXP, SEXP muSEXP, SEXP gamma_valSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type mu(muSEXP);
     Rcpp::traits::input_parameter< double >::type gamma_val(gamma_valSEXP);
-    Rcpp::traits::input_parameter< int >::type n(nSEXP);
-    rcpp_result_gen = Rcpp::wrap(compute_invgauss_ll(y, mu, gamma_val, n));
+    rcpp_result_gen = Rcpp::wrap(compute_invgauss_ll(y, mu, gamma_val));
+    return rcpp_result_gen;
+END_RCPP
+}
+// compute_invgauss_ll_mat
+arma::vec compute_invgauss_ll_mat(const arma::vec& y, const arma::mat& mu, double gamma_val);
+RcppExport SEXP _GLIM_compute_invgauss_ll_mat(SEXP ySEXP, SEXP muSEXP, SEXP gamma_valSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type mu(muSEXP);
+    Rcpp::traits::input_parameter< double >::type gamma_val(gamma_valSEXP);
+    rcpp_result_gen = Rcpp::wrap(compute_invgauss_ll_mat(y, mu, gamma_val));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -343,11 +380,14 @@ static const R_CallMethodDef CallEntries[] = {
     {"_GLIM_mle_estimate_dispersion_gamma", (DL_FUNC) &_GLIM_mle_estimate_dispersion_gamma, 3},
     {"_GLIM_glm_gamma_pl_cpp", (DL_FUNC) &_GLIM_glm_gamma_pl_cpp, 7},
     {"_GLIM_fit_gaussian_cpp", (DL_FUNC) &_GLIM_fit_gaussian_cpp, 2},
-    {"_GLIM_compute_gaussian_ll", (DL_FUNC) &_GLIM_compute_gaussian_ll, 4},
+    {"_GLIM_compute_gaussian_ll", (DL_FUNC) &_GLIM_compute_gaussian_ll, 3},
+    {"_GLIM_compute_gaussian_ll_mat", (DL_FUNC) &_GLIM_compute_gaussian_ll_mat, 3},
+    {"_GLIM_est_dispersion", (DL_FUNC) &_GLIM_est_dispersion, 3},
     {"_GLIM_glm_gaussian_pl_cpp", (DL_FUNC) &_GLIM_glm_gaussian_pl_cpp, 6},
     {"_GLIM_mle_estimate_dispersion_inv_gauss", (DL_FUNC) &_GLIM_mle_estimate_dispersion_inv_gauss, 2},
     {"_GLIM_fit_invgauss_cpp", (DL_FUNC) &_GLIM_fit_invgauss_cpp, 4},
-    {"_GLIM_compute_invgauss_ll", (DL_FUNC) &_GLIM_compute_invgauss_ll, 4},
+    {"_GLIM_compute_invgauss_ll", (DL_FUNC) &_GLIM_compute_invgauss_ll, 3},
+    {"_GLIM_compute_invgauss_ll_mat", (DL_FUNC) &_GLIM_compute_invgauss_ll_mat, 3},
     {"_GLIM_glm_invgauss_pl_cpp", (DL_FUNC) &_GLIM_glm_invgauss_pl_cpp, 6},
     {"_GLIM_fit_logistic_cpp", (DL_FUNC) &_GLIM_fit_logistic_cpp, 4},
     {"_GLIM_glm_logis_pl_cpp", (DL_FUNC) &_GLIM_glm_logis_pl_cpp, 6},

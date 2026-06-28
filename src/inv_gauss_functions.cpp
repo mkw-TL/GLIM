@@ -94,13 +94,23 @@ arma::vec fit_invgauss_cpp(const arma::mat &X, const arma::vec &y,
 // Helper function to compute Inverse Gaussian log-likelihood
 // [[Rcpp::export]]
 double compute_invgauss_ll(const arma::vec &y, const arma::vec &mu,
-                           double gamma_val, int n) {
+                           double gamma_val) {
   // gamma is 1/estimated_phi
-  double term1 = 0.5 * n * std::log(gamma_val / (2.0 * M_PI));
+  double term1 = 0.5 * y.n_elem * std::log(gamma_val / (2.0 * M_PI));
   double term2 = -1.5 * arma::sum(arma::log(y));
   double term3 = -gamma_val *
                  arma::sum(arma::pow(y - mu, 2) / (2.0 * arma::pow(mu, 2) % y));
   return term1 + term2 + term3;
+}
+
+// [[Rcpp::export]]
+arma::vec compute_invgauss_ll_mat(const arma::vec &y, const arma::mat &mu,
+                                  double gamma_val) {
+  arma::vec ll(mu.n_cols);
+  for (int i = 0; i < mu.n_cols; i++) {
+    ll(i) = compute_invgauss_ll(y, mu, gamma_val);
+  }
+  return ll;
 }
 
 // Main simulation function for Inverse Gaussian
@@ -122,8 +132,8 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
   arma::vec eta_hat = X * mle_coefs;
   arma::vec mu_hat = arma::pow(eta_hat, -.5);
 
-  double true_ll = compute_invgauss_ll(y, mu, gamma, n);
-  double mle_val = compute_invgauss_ll(y, mu_hat, gamma, n);
+  double true_ll = compute_invgauss_ll(y, mu, gamma);
+  double mle_val = compute_invgauss_ll(y, mu_hat, gamma);
   double f_x = true_ll - mle_val;
 
   thread_local std::random_device rd;
@@ -148,8 +158,8 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
     eta_hat.elem(arma::find(eta_hat < 1e-6)).fill(1e-6);
     arma::vec mu_hat = arma::pow(eta_hat, -0.5);
 
-    double mle_sim = compute_invgauss_ll(y_sim, mu_hat, gamma, n);
-    double llX_j = compute_invgauss_ll(y_sim, mu, gamma, n);
+    double mle_sim = compute_invgauss_ll(y_sim, mu_hat, gamma);
+    double llX_j = compute_invgauss_ll(y_sim, mu, gamma);
 
     double f_X_j = llX_j - mle_sim;
 

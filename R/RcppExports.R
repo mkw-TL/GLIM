@@ -41,8 +41,16 @@ fit_gaussian_cpp <- function(X, y) {
     .Call(`_GLIM_fit_gaussian_cpp`, X, y)
 }
 
-compute_gaussian_ll <- function(y, mu, sigma, n) {
-    .Call(`_GLIM_compute_gaussian_ll`, y, mu, sigma, n)
+compute_gaussian_ll <- function(y, mu, sigma) {
+    .Call(`_GLIM_compute_gaussian_ll`, y, mu, sigma)
+}
+
+compute_gaussian_ll_mat <- function(y, mu, sigma) {
+    .Call(`_GLIM_compute_gaussian_ll_mat`, y, mu, sigma)
+}
+
+est_dispersion <- function(y, mu, p) {
+    .Call(`_GLIM_est_dispersion`, y, mu, p)
 }
 
 glm_gaussian_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
@@ -57,8 +65,12 @@ fit_invgauss_cpp <- function(X, y, initial_beta, approx) {
     .Call(`_GLIM_fit_invgauss_cpp`, X, y, initial_beta, approx)
 }
 
-compute_invgauss_ll <- function(y, mu, gamma_val, n) {
-    .Call(`_GLIM_compute_invgauss_ll`, y, mu, gamma_val, n)
+compute_invgauss_ll <- function(y, mu, gamma_val) {
+    .Call(`_GLIM_compute_invgauss_ll`, y, mu, gamma_val)
+}
+
+compute_invgauss_ll_mat <- function(y, mu, gamma_val) {
+    .Call(`_GLIM_compute_invgauss_ll_mat`, y, mu, gamma_val)
 }
 
 glm_invgauss_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {

@@ -1,9 +1,9 @@
 #' @useDynLib GLIM, .registration = TRUE
 #' @importFrom Rcpp sourceCpp
 #' @importFrom progress progress_bar
-#' @importFrom RhpcBLASctl blas_set_num_threads
 #' @importFrom parallel detectCores
-#' @importFrom stats logLik glm Gamma poisson inverse.gaussian lm coef runif
+#' @importFrom stats logLik glm Gamma poisson inverse.gaussian lm coef runif qchisq model.matrix rnorm
+#' @importFrom utils head
 NULL
 
 
@@ -29,7 +29,7 @@ NULL
 #' @param parallel Logical indicating whether to run in parallel (primarily for debugging).
 #' @param approx Logical indicating whether to use the elliptical approximation.
 #' @return A matrix of evaluated possibility outputs.
-#' @export
+#' @noRd
 glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, parallel, approx) {
   if (is.data.frame(X)) {
     X <- model.matrix(X)
@@ -82,7 +82,7 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
 #' @param m Number of samples to generate.
 #' @param parallel Logical indicating whether to use parallel processing.
 #' @return A matrix of generated samples based on the elliptical approximation.
-#' @export
+#' @noRd
 glim_inner_prob_approx_samples <- function(
   X,
   y,
@@ -202,12 +202,31 @@ glim_inner_prob_approx_samples <- function(
 #' @param m Number of samples/evaluations to perform (default `10000`).
 #' @param approx Logical indicating whether to use the elliptical approximation (default `FALSE`).
 #' @param parallel Logical indicating whether to process in parallel.
+#' @param intercept Logical indicating whether to add an intercept term
 #' @return A matrix of outputs or samples depending on whether the approximation is used.
 #' @export
-glim <- function(X, y, family = "gaussian", betas, m = 10000, approx = FALSE, parallel) {
+glim <- function(
+  X,
+  y,
+  family = "gaussian",
+  betas,
+  m = 10000,
+  approx = FALSE,
+  parallel = TRUE,
+  intercept = TRUE
+) {
+  if (is.data.frame(X)) {
+    X <- as.matrix(X)
+  }
+  if (intercept == TRUE) {
+    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
+    has_intercept <- any(colSums(X == 1) == nrow(X))
+    if (!has_intercept) {
+      X <- cbind("(Intercept)" = 1, X)
+    }
+  }
   if (family == "binomial" || family == "logistic") {
     if (is.vector(y) && all(y == 0 | y == 1)) {
-      # This means that it already is in binary format. DON'T ADD INTERCEPT
       if (length(y) != nrow(X)) {
         print("y and X lengths differ")
         stop()
@@ -224,9 +243,6 @@ glim <- function(X, y, family = "gaussian", betas, m = 10000, approx = FALSE, pa
       # drop = FALSE means that it stays as a matrix, rather than going to a vector
       X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
       y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
-      X <- cbind(rep(1, length(y)), X)
-      print(X)
-      print(y)
     } else if (is.factor(y)) {
       # Success is any level that is NOT the first level
 
@@ -241,12 +257,8 @@ glim <- function(X, y, family = "gaussian", betas, m = 10000, approx = FALSE, pa
       # drop = FALSE means that it stays as a matrix, rather than going to a vector
       y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
       X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
-      X <- cbind(rep(1, length(y)), X)
-      print(X)
-      print(y)
-      # TODOOOO Need to make sure if everything is predicted as a 1, then the variance will be zero and issues will arise
-      # TODOOO Dealing with intercept
     }
+    # We are using (-1) so that R knows the X matrix we are using, we don't want to append any extra intercepts
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
     mle_coefs <- glm(y ~ X - 1, family = "binomial")$coefficients
   } else if (family == "gamma") {
@@ -274,7 +286,6 @@ glim <- function(X, y, family = "gaussian", betas, m = 10000, approx = FALSE, pa
   } else {
     stop("Family not supported")
   }
-  print(mle_coefs)
   if (is.vector(betas)) {
     betas <- matrix(betas, nrow = 1)
   }
@@ -311,11 +322,21 @@ glim <- function(X, y, family = "gaussian", betas, m = 10000, approx = FALSE, pa
 #' @param y Response vector.
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
+#' @param intercept Whether or not an intercept should be added to the design matrix
 #' @return A vector of mapped possibility values.
 #' @export
-prob2poss_logis <- function(X, y, samples, the_compared_theta) {
+prob2poss_logis <- function(X, y, samples, the_compared_theta, intercept = TRUE) {
+  if (is.data.frame(X)) {
+    X <- as.matrix(X)
+  }
+  if (intercept == TRUE) {
+    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
+    has_intercept <- any(colSums(X == 1) == nrow(X))
+    if (!has_intercept) {
+      X <- cbind(rep(1, length(y)), X)
+    }
+  }
   if (is.vector(y) && all(y == 0 | y == 1)) {
-    # This means that it already is in binary format. DON'T ADD INTERCEPT
     if (length(y) != nrow(X)) {
       print("y and X lengths differ")
       stop()
@@ -332,9 +353,6 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
     # drop = FALSE means that it stays as a matrix, rather than going to a vector
     X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
     y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
-    X <- cbind(rep(1, length(y)), X)
-    print(X)
-    print(y)
   } else if (is.factor(y)) {
     # Success is any level that is NOT the first level
 
@@ -370,9 +388,20 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
 #' @param y Response vector.
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
+#' @param intercept Whether or not an intercept should be added to the design matrix
 #' @return A vector of mapped possibility values.
 #' @export
-prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
+prob2poss_gamma <- function(X, y, samples, the_compared_theta, intercept = TRUE) {
+  if (is.data.frame(X)) {
+    X <- as.matrix(X)
+  }
+  if (intercept == TRUE) {
+    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
+    has_intercept <- any(colSums(X == 1) == nrow(X))
+    if (!has_intercept) {
+      X <- cbind(rep(1, length(y)), X)
+    }
+  }
   eta <- X %*% samples
   initial_coefs <- coef(lm(log(y) ~ X - 1))
   mle_coefs <- fit_gamma_log_cpp(X, t(X) %*% X, y, initial_coefs, FALSE)
@@ -380,7 +409,6 @@ prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
 
   ll_val_samps <- as.vector(compute_gamma_ll_r(y, eta, shape = est_shape))
   ll_val <- as.vector(compute_gamma_ll_r(y, X %*% the_compared_theta, shape = est_shape))
-  message("Is ll_val sorted? ", !is.unsorted(ll_val))
   sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
 }
 
@@ -412,6 +440,112 @@ compute_poisson_ll_r <- function(y, eta) {
     return(compute_poisson_ll_mat(eta, y))
   }
 }
+
+#' Compute Gaussian Log-Likelihood
+#' @param y Response vector.
+#' @param mu Mean (can be a vector or a matrix).
+#' @param sigma Estimated standard deviation
+#' @return The calculated log-likelihood.
+#' @export
+compute_gaussian_ll_r <- function(y, mu, sigma) {
+  if (is.vector(mu)) {
+    return(compute_gaussian_ll(y, mu, sigma))
+  } else {
+    return(compute_gaussian_ll_mat(y, mu, sigma))
+  }
+}
+#' Compute inverse gaussian Log-Likelihood
+#'
+#' @param y Response vector.
+#' @param mu Mean (can be a vector or a matrix).
+#' @param gamma_val Estimated dispersion
+#' @return The calculated log-likelihood.
+#' @export
+compute_invgauss_ll_r <- function(y, mu, gamma_val) {
+  if (is.vector(mu)) {
+    return(compute_invgauss_ll(y, mu, gamma_val))
+  } else {
+    return(compute_invgauss_ll_mat(y, mu, gamma_val))
+  }
+}
+
+
+#' Probability to Possibility Mapping for Gaussian Regression
+#'
+#' @param X Predictor matrix.
+#' @param y Response vector.
+#' @param samples Matrix of simulated sample coefficients.
+#' @param the_compared_theta The theta values to compare against.
+#' @param intercept Whether or not an intercept should be added to the design matrix
+#' @return A vector of mapped possibility values.
+#' @export
+prob2poss_gaussian <- function(X, y, samples, the_compared_theta, intercept = TRUE) {
+  if (is.data.frame(X)) {
+    X <- as.matrix(X)
+  }
+  if (intercept == TRUE) {
+    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
+    has_intercept <- any(colSums(X == 1) == nrow(X))
+    if (!has_intercept) {
+      X <- cbind(rep(1, length(y)), X)
+    }
+  }
+
+  eta <- X %*% samples
+
+  # Assuming identity link for Gaussian by default, or adjust to fit_gaussian_identity_cpp if that matches your backend
+  mle_coefs <- fit_gaussian_cpp(X, y)
+  est_sd <- sqrt(est_dispersion(y, X %*% mle_coefs, length(mle_coefs)))
+
+  ll_val_samps <- as.vector(compute_gaussian_ll_r(y, eta, sigma = est_sd))
+  ll_val <- as.vector(compute_gaussian_ll_r(y, X %*% the_compared_theta, sigma = est_sd))
+
+  sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
+}
+
+
+#' Probability to Possibility Mapping for Inverse Gaussian Regression
+#'
+#' Will throw an error if \code{the_compared_theta} is a scalar.
+#'
+#' @param X Predictor matrix.
+#' @param y Response vector.
+#' @param samples Matrix of simulated sample coefficients.
+#' @param the_compared_theta The theta values to compare against.
+#' @param intercept Whether or not an intercept should be added to the design matrix
+#' @return A vector of mapped possibility values.
+#' @export
+prob2poss_invgauss <- function(X, y, samples, the_compared_theta, intercept = TRUE) {
+  if (is.data.frame(X)) {
+    X <- as.matrix(X)
+  }
+  if (intercept == TRUE) {
+    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
+    has_intercept <- any(colSums(X == 1) == nrow(X))
+    if (!has_intercept) {
+      X <- cbind(rep(1, length(y)), X)
+    }
+  }
+  eta <- X %*% samples
+
+  # Providing initial coefficients using a rough approximation
+  initial_coefs <- coef(lm(1 / (y^2) ~ X - 1))
+
+  mle_coefs <- fit_invgauss_cpp(X, y, initial_coefs, FALSE)
+
+  est_dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
+
+  # Check whether mapping from eta to mu is correct
+  ll_val_samps <- as.vector(compute_invgauss_ll_r(y, sqrt(1 / eta), gamma_val = est_dispersion))
+  ll_val <- as.vector(compute_invgauss_ll_r(
+    y,
+    sqrt(1 / X %*% the_compared_theta), # should do it element-wise
+    gamma_val = est_dispersion
+  ))
+
+  sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
+}
+
 
 # #' Faster Elliptical Approximation Samples (Alternative Implementation)
 # #'
@@ -565,50 +699,25 @@ compute_poisson_ll_r <- function(y, eta) {
 #' @param y Response vector.
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
+#' @param intercept Whether or not an intercept should be added to the design matrix
 #' @return A vector of mapped possibility values.
 #' @export
-prob2poss_poisson <- function(X, y, samples, the_compared_theta) {
+prob2poss_poisson <- function(X, y, samples, the_compared_theta, intercept = TRUE) {
+  if (is.data.frame(X)) {
+    X <- as.matrix(X)
+  }
+  if (intercept == TRUE) {
+    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
+    has_intercept <- any(colSums(X == 1) == nrow(X))
+    if (!has_intercept) {
+      X <- cbind(rep(1, length(y)), X)
+    }
+  }
   eta <- X %*% samples
   mle_coefs <- fit_poisson_log_cpp(X, y)
   ll_val_samps <- as.vector(compute_poisson_ll_r(y, eta))
   ll_val <- as.vector(compute_poisson_ll_r(y, X %*% the_compared_theta))
-  message("Is ll_val sorted? ", !is.unsorted(ll_val))
   sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
-}
-
-#' Fit GLM using OpenMP via Rcpp
-#'
-#' A wrapper to the underlying `fit_glm_omp_cpp` C++ implementation.
-#'
-#' @param X Predictor matrix.
-#' @param y Response vector.
-#' @param mle_coefs Maximum likelihood estimates of the coefficients.
-#' @param betas Grid of beta values to evaluate.
-#' @param family String indicating the error distribution.
-#' @param num_threads The number of OpenMP threads to utilize.
-#' @param m Number of evaluations per beta.
-#' @param parallel Logical indicating whether to run in parallel.
-#' @param approx Logical indicating whether to use elliptical approximation.
-#' @return Resulting output from the C++ GLM routine.
-#' @export
-fit_glm_omp_r <- function(X, y, mle_coefs, betas, family, num_threads, m, parallel, approx) {
-  return(fit_glm_omp_cpp(X, y, mle_coefs, betas, family, num_threads, m, parallel, approx))
-}
-
-#' Poisson Possibility Evaluation via Rcpp
-#'
-#' Evaluates profile likelihood configurations for Poisson models leveraging C++.
-#'
-#' @param X Predictor matrix.
-#' @param y Response vector.
-#' @param mle_coefs Maximum likelihood estimates of the coefficients.
-#' @param beta_vals Matrix of beta configurations.
-#' @param m Number of samples/evaluations to perform.
-#' @param approx Logical indicating whether to use approximation logic.
-#' @return A vector or matrix of profile likelihood results from the C++ backend.
-#' @export
-pois_pos <- function(X, y, mle_coefs, beta_vals, m, approx) {
-  return(glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m, approx))
 }
 
 
