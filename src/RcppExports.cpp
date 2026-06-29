@@ -158,12 +158,12 @@ BEGIN_RCPP
 END_RCPP
 }
 // glm_gamma_pl_cpp
-double glm_gamma_pl_cpp(const arma::mat& X, const arma::mat& XtX, const arma::vec& y, const arma::vec& mle_coefs, const arma::vec& beta_vals, int m, bool approx);
+double glm_gamma_pl_cpp(arma::mat& X, const arma::mat& XtX, const arma::vec& y, const arma::vec& mle_coefs, const arma::vec& beta_vals, int m, bool approx);
 RcppExport SEXP _GLIM_glm_gamma_pl_cpp(SEXP XSEXP, SEXP XtXSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP beta_valsSEXP, SEXP mSEXP, SEXP approxSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type XtX(XtXSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);

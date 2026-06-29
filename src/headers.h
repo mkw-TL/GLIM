@@ -13,9 +13,9 @@ double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
                           const arma::vec &mle_coefs,
                           const arma::vec &beta_vals, int m, bool approx);
 
-double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
-                        const arma::vec &y, const arma::vec &mle_coefs,
-                        const arma::vec &beta_vals, int m, bool approx);
+double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
+                        const arma::vec &mle_coefs, const arma::vec &beta_vals,
+                        int m, bool approx);
 
 double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
                         const arma::vec &mle_coefs, const arma::vec &beta_vals,

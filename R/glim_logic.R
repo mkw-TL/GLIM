@@ -378,6 +378,8 @@ glim <- function(
   } else {
     stop("Family not supported")
   }
+  print(betas)
+  print(J)
 
   if (!is.null(J)) {
     J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries
@@ -873,7 +875,7 @@ prob2poss_poisson <- function(X, y, samples, the_compared_theta, intercept = TRU
 #'
 #' Note that a 95% confidence interval corresponds to alpha = .95
 #'
-#' @param alpha Note that a 95% confidence interval corresponds to alpha = .95
+#' @param alpha Note that a 95% confidence interval corresponds to alpha = .05
 #' @param betas The grid of beta values which we are evaluating on
 #' @param possibilities The vector of possibilities
 #' @return A matrix of compatable beta values from the grid.
