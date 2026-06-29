@@ -16,37 +16,56 @@ struct LogisticResult {
   bool separated;
 };
 
-// Regular solver that outputs a list
+// Highly optimized, allocation-free inner solver
 LogisticResult fit_logistic_inner(const arma::mat &X, const arma::vec &y,
                                   const arma::vec &initial_beta) {
+  int N = X.n_rows;
+  int P = X.n_cols;
   arma::vec proposed_beta = initial_beta;
   bool separated = false;
 
-  for (int i = 0; i < 15; i++) {
-    arma::vec eta = X * proposed_beta;
-    arma::vec p = 1.0 / (1.0 + arma::exp(-eta));
+  // Pre-allocate all memory exactly once per fit
+  arma::vec eta(N), p(N), w(N), grad(P);
+  arma::mat XTWX(P, P);
+  arma::mat XW(N, P);
 
-    // Check for complete separation
-    if (arma::any(p < 1e-8) || arma::any(p > (1.0 - 1e-8))) {
-      separated = true;
+  for (int i = 0; i < 15; i++) {
+    eta = X * proposed_beta;
+    separated = false;
+
+    // Combine probability, separation check, and weights into one pass
+    for (int k = 0; k < N; ++k) {
+      double p_k = 1.0 / (1.0 + std::exp(-eta[k]));
+      p[k] = p_k;
+
+      if (p_k < 1e-8 || p_k > (1.0 - 1e-8)) {
+        separated = true;
+      }
+
+      double w_k = p_k * (1.0 - p_k);
+      w[k] = (w_k < 1e-6) ? 1e-6 : w_k;
     }
 
-    arma::vec w = p % (1.0 - p);
+    if (separated)
+      break;
 
-    // Prevent strictly zero weights
-    w.elem(arma::find(w < 1e-6)).fill(1e-6);
+    // Guarantee ZERO temporary matrix allocations during weight multiplication
+    for (int j = 0; j < P; ++j) {
+      for (int k = 0; k < N; ++k) {
+        XW(k, j) = X(k, j) * w[k];
+      }
+    }
 
-    arma::mat XTWX = X.t() * (X.each_col() % w);
-    arma::vec grad = X.t() * (y - p);
+    XTWX = X.t() * XW;
+    grad = X.t() * (y - p);
 
     arma::vec step;
     bool success = arma::solve(step, XTWX, grad, arma::solve_opts::fast);
     if (!success) {
       success = arma::solve(step, XTWX, grad);
     }
-    if (!success) {
+    if (!success)
       break;
-    }
 
     proposed_beta += step;
 

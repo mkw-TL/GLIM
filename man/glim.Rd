@@ -8,11 +8,13 @@ glim(
   X,
   y,
   family = "gaussian",
-  betas,
-  m = 10000,
+  m = 1000,
   approx = FALSE,
+  appendix = FALSE,
   parallel = TRUE,
-  intercept = TRUE
+  intercept = TRUE,
+  tol = 0.01,
+  ...
 )
 }
 \arguments{
@@ -20,9 +22,7 @@ glim(
 
 \item{y}{Vector of response variables.}
 
-\item{family}{String denoting the exponential family. Choices are \code{"gaussian"}, \code{"binomial"}, \code{"gamma"}, \code{"poisson"}, \code{"inverse-gaussian"}.}
-
-\item{betas}{A matrix (or column vector) of different beta values to evaluate the possibility over.}
+\item{family}{String denoting the exponential family. Choices are \code{"gaussian"}, \code{"binomial"}, \code{"gamma"}, \code{"poisson"}, \code{"inverse.gaussian"}.}
 
 \item{m}{Number of samples/evaluations to perform (default \code{10000}).}
 
@@ -31,6 +31,8 @@ glim(
 \item{parallel}{Logical indicating whether to process in parallel.}
 
 \item{intercept}{Logical indicating whether to add an intercept term}
+
+\item{betas}{A matrix (or column vector) of different beta values to evaluate the possibility over.}
 }
 \value{
 A matrix of outputs or samples depending on whether the approximation is used.

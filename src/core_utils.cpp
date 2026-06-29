@@ -57,11 +57,38 @@ arma::mat generate_unit_matrix(int n, int d) {
   return arma::normalise(m, 2, 0);
 }
 
+// // [[Rcpp::export]]
+// arma::mat scale_design_matrix_cpp(arma::mat X) {
+//   int n_rows = X.n_rows;
+//   int n_cols = X.n_cols;
+
+//   // Vectors to store scaling parameters (initialized to 1 for SD)
+//   arma::vec sds = arma::ones<arma::vec>(n_cols);
+
+//   for (int j = 0; j < n_cols; ++j) {
+//     arma::vec col_data = X.col(j);
+
+//     // Find unique elements in the current column
+//     arma::vec unique_vals = arma::unique(col_data);
+
+//     // If there are more than 2 unique values, it's a continuous feature
+//     if (unique_vals.n_elem > 2) {
+//       double s =
+//           arma::stddev(col_data); // Uses N-1 normalization, matching R's
+//           sd()
+
+//       // In-place centering and scaling of the column
+//       X.col(j) = col_data / s;
+//     }
+//   }
+//   return X;
+// }
+
 // Need to bring the main function (which calls all other functions) after any
 // functions that it calls
 
 // [[Rcpp::export]]
-arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
+arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
                           const arma::vec &mle_coefs, const arma::mat &betas,
                           std::string family, // Pass string from R
                           int num_threads = 1, int m = 1000,
@@ -102,6 +129,7 @@ arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
   int next_percentage_milestone = 0;
   int percentage_step = 2; // Update every 2%
 
+  // X = scale_design_matrix_cpp(X);
   // The Parallel Loop. Schedule(static) means that each thread is assigned
   // roughly the same amount of work schedule(dynamic) has a bit more overhead
   // which we don't need here. Don't want the overhead of allocating different
@@ -134,7 +162,6 @@ arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
       break;
 
     default:
-      // Fallback or placeholder for Gaussian/Identity
       pl = -1;
       // TODO #13 need a better exit method.
       break;
@@ -151,13 +178,13 @@ arma::mat fit_glm_omp_cpp(const arma::mat &X, const arma::vec &y,
     if (thread_id == 0 && approx == false) {
       // Calculate what the *actual current loop progress* is right now
       int current_percentage =
-          (int)((double)current_progress / n_evals * 1000.0);
+          (int)((double)100.0 * current_progress / n_evals);
 
       // If the actual progress has caught up to or passed our next milestone,
       // print it!
       if (current_percentage >= next_percentage_milestone) {
         int bar_width = 40;
-        int pos = (int)(bar_width * (current_percentage / 1000.0));
+        int pos = (int)(bar_width * ((double)current_percentage / n_evals));
 
         Rcpp::Rcout << "\rCalculating Plausibilities: [";
         for (int b = 0; b < bar_width; ++b) {
@@ -186,7 +213,7 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
                 const std::string family, double alpha, const arma::vec &mle,
                 const double mle_val, const arma::mat &J_vectors,
                 const arma::vec &J_values, double dispersion, double tol = 1e-2,
-                double a = 2.0, double b = 0.65, int max_it = 25,
+                double a_val = 2.0, double b_val = 0.65, int max_it = 25,
                 bool parallel = false) {
 
   int D = mle.size();
@@ -225,7 +252,7 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
       if (std::abs(g_xi) <= tol || it >= max_it) {
         break;
       } else {
-        xi_d = xi_d + w(a, b, it) * g_xi;
+        xi_d = xi_d + w(a_val, b_val, it) * g_xi;
         it++;
       }
     }
@@ -265,64 +292,60 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
 //   return xi_mat;
 // }
 
-// arma::vec lets_go_to_cpp(arma::mat eig_vecs, arma::mat eig_vals, int
-// num_samps,
-//                          int d, arma::mat X, arma::vec y, arma::vec
-//                          mle_coefs, std::string family, double dispersion,
-//                          int m, double tol, int max_it, int a, int b, bool
-//                          approx) {
-//   arma::mat sampled_betas(mle_coefs.n_elem, num_samps);
-//   int num_omp_threads = 1;
+// [[Rcpp::export]]
+arma::vec appendix_code(arma::mat eig_vecs, arma::mat eig_vals, int num_samps,
+                        arma::mat X, arma::vec y, arma::vec mle_coefs,
+                        std::string family, double dispersion, int m,
+                        double tol, int max_it, int a, int b) {
+  arma::mat sampled_betas(mle_coefs.n_elem, num_samps);
+  int num_omp_threads = 1;
+  int d = eig_vals.n_elem;
 
-//   // We are definitely not parallelizing across the beta grid, so no if
-//   // statement needed
-//   thread_local std::random_device rd;
-//   thread_local std::mt19937 gen(rd());
-// #pragma omp parallel for schedule(static)
-//   for (int j = 0; j < num_samps; j++) {
-//     std::uniform_real_distribution<double> runif(0.0, 1.0);
-//     double unif_alphas = runif(gen);
-//     arma::vec dir = generate_unit_matrix(1, d);
+  // We are definitely not parallelizing across the beta grid, so no if
+  // statement needed
+  static thread_local std::random_device rd;
+  static thread_local std::mt19937 gen(rd());
+#pragma omp parallel for schedule(static)
+  for (int j = 0; j < num_samps; j++) {
+    std::uniform_real_distribution<double> runif(0.0, 1.0);
+    double unif_alphas = runif(gen);
+    arma::vec dir = generate_unit_matrix(1, d);
 
-//     // Could have something where it looks for xi in related alpha, or
-//     related
-//     // directions. That being said, if parallelization is happening here,
-//     then
-//     // can't really do that
-//     double starting_xi = 1;
-//     // Time for our stochastic approximation algorithm. Relies on Robbins and
-//     // Monroe
-//     int it = 1;
-//     while (true) {
-//       arma::vec dir_xi =
-//           (dir * exp(starting_xi /
-//                      2)); // Xi scales singular values (scalar for each
-//                           // directions). Again, we are going to evaluate
-//                           this
-//                           // direction * scaling to see how far off.
-//       // exp parameterization lets us avoid negative xi (so when we do
-//       sqrt(xi)
-//       // we don't get imaginary) removed an if else that dealt with if D == 1
-//       double val1 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs +
-//       dir_xi).t(),
-//                                     family, 1, m, true, approx)(0, 0);
-//       double val2 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs -
-//       dir_xi).t(),
-//                                     family, 1, m, true, approx)(0, 0);
-//       double g_xi = std::max(val1, val2) - unif_alphas;
+    // Could have something where it looks for xi in related alpha, or
+    // related directions. That being said, if parallelization is happening
+    // here, then can't really do that
+    double starting_xi = 1;
+    // Time for our stochastic approximation algorithm. Relies on Robbins and
+    // Monroe
+    int it = 1;
+    while (true) {
+      arma::vec dir_xi =
+          (dir * exp(starting_xi /
+                     2)); // Xi scales singular values (scalar for each
+                          // directions). Again, we are going to evaluate
+                          // this direction * scaling to see how far off.
+      // exp parameterization lets us avoid negative xi (so when we do sqrt(xi)
+      // we don't get imaginary)
+      bool parallel = false;
+      bool approx = false;
+      double val1 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs + dir_xi).t(),
+                                    family, 1, m, parallel, approx)(0, 0);
+      double val2 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs - dir_xi).t(),
+                                    family, 1, m, parallel, approx)(0, 0);
+      double g_xi = std::max(val1, val2) - unif_alphas;
 
-//       if ((std::abs(g_xi) <= tol) || (it >= max_it)) {
-//         if (abs(val1 - unif_alphas) > abs(val2 - unif_alphas)) {
-//           sampled_betas.col(j) = mle_coefs - dir_xi;
-//         } else {
-//           sampled_betas.col(j) = mle_coefs + dir_xi;
-//         }
-//         break;
-//       } else {
-//         starting_xi = starting_xi + w(a, b, it) * g_xi;
-//         it = it + 1;
-//       }
-//     }
-//   }
-//   return sampled_betas;
-// }
+      if ((std::abs(g_xi) <= tol) || (it >= max_it)) {
+        if (abs(val1 - unif_alphas) > abs(val2 - unif_alphas)) {
+          sampled_betas.col(j) = mle_coefs - dir_xi;
+        } else {
+          sampled_betas.col(j) = mle_coefs + dir_xi;
+        }
+        break;
+      } else {
+        starting_xi = starting_xi + w(a, b, it) * g_xi;
+        it = it + 1;
+      }
+    }
+  }
+  return sampled_betas;
+}

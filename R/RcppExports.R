@@ -9,8 +9,12 @@ fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, num_threads = 1L, m 
     .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family, num_threads, m, parallel, approx)
 }
 
-imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol = 1e-2, a = 2.0, b = 0.65, max_it = 25L, parallel = FALSE) {
-    .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a, b, max_it, parallel)
+imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, parallel = FALSE) {
+    .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, parallel)
+}
+
+appendix_code <- function(eig_vecs, eig_vals, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
+    .Call(`_GLIM_appendix_code`, eig_vecs, eig_vals, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b)
 }
 
 fit_gamma_log_cpp <- function(X, XtX, y, initial_beta, approx) {

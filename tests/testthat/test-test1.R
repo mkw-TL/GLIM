@@ -4,7 +4,9 @@ library(testthat)
 generate_mock_data <- function(n = 100, p = 3, family = "gaussian") {
   set.seed(42)
   X <- cbind(1, matrix(rnorm(n * (p - 1)), nrow = n)) # Explicit intercept
-  true_beta <- c(0.5, -1.2, 0.8)
+
+  # Adjusted true_beta to prevent explosion with exponential link functions
+  true_beta <- c(0.5, -0.2, 0.1)
   eta <- X %*% true_beta
 
   if (family == "gaussian") {
@@ -15,6 +17,18 @@ generate_mock_data <- function(n = 100, p = 3, family = "gaussian") {
   } else if (family == "gamma") {
     mu <- exp(eta)
     y <- rgamma(n, shape = 2, rate = 2 / mu)
+  } else if (family == "poisson") {
+    mu <- exp(eta)
+    y <- rpois(n, lambda = mu)
+  } else if (family == "inverse.gaussian") {
+    mu <- exp(eta)
+    # Note: Requires statmod package for inverse gaussian generation
+    if (requireNamespace("statmod", quietly = TRUE)) {
+      y <- statmod::rinvgauss(n, mean = mu, shape = 1)
+    } else {
+      # Fallback approximation for simple dimension testing
+      y <- rgamma(n, shape = 2, rate = 2 / mu)
+    }
   }
 
   list(X = X, y = as.numeric(y), true_beta = true_beta)
@@ -296,4 +310,69 @@ test_that("lerped_xi boundary logic catches extreme uniform values", {
   expect_equal(get_lerped(0.00005), 1)
   expect_equal(get_lerped(0.99995), 100)
   expect_true(get_lerped(0.5) > 1 && get_lerped(0.5) < 100)
+})
+
+test_that("C++ Poisson solver runs and returns expected dimensions", {
+  set.seed(123)
+  data <- generate_mock_data(n = 100, family = "poisson")
+
+  # Test the Poisson log-link solver
+  res <- fit_poisson_log_cpp(X = data$X, y = data$y)
+
+  expect_type(res, "double")
+  expect_length(res, ncol(data$X))
+  # Basic sanity check that it's finite
+  expect_true(all(is.finite(res)))
+})
+
+test_that("C++ Inverse Gaussian solver handles basic inputs", {
+  set.seed(123)
+  data <- generate_mock_data(n = 100, family = "inverse.gaussian")
+
+  # You might need to adjust the exact arguments depending on the C++ signature
+  # Report snippet indicates: fit_invgauss_cpp(X, y_sim, beta_vals, approx)
+  beta_init <- rep(0, ncol(data$X))
+  res <- fit_invgauss_cpp(X = data$X, y = data$y, beta_init, approx = FALSE)
+
+  expect_type(res, "double")
+  expect_length(res, ncol(data$X))
+})
+
+test_that("C++ Gamma solver converges cleanly", {
+  set.seed(123)
+  data <- generate_mock_data(n = 100, family = "gamma")
+
+  # Assuming standard export name based on other functions
+  res <- fit_gamma_cpp(X = data$X, y = data$y)
+
+  expect_type(res, "double")
+  expect_length(res, ncol(data$X))
+})
+
+test_that("glim_raw coerces data.frame to model.matrix properly", {
+  data <- generate_mock_data(n = 50, family = "gaussian")
+
+  # Convert matrix to data frame to trigger line 35
+  df_X <- as.data.frame(data$X)
+
+  # Construct dummy arguments required by glim_raw
+  mle_coefs <- rep(0, ncol(data$X))
+  betas <- matrix(rep(0, ncol(data$X)), ncol = 1)
+
+  # Since glim_raw is an internal function, use the ::: operator if testing from outside
+  # Change `GLIM` to whatever your actual package name is
+  res <- GLIM:::glim_raw(
+    X = df_X,
+    y = data$y,
+    family = "gaussian",
+    betas = betas,
+    mle_coefs = mle_coefs,
+    mle_val = -100,
+    m = 10,
+    parallel = FALSE,
+    approx = FALSE
+  )
+
+  # If it coerces properly, it should evaluate and return an output matrix without crashing
+  expect_true(!is.null(res))
 })

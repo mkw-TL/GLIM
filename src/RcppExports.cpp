@@ -24,12 +24,12 @@ BEGIN_RCPP
 END_RCPP
 }
 // fit_glm_omp_cpp
-arma::mat fit_glm_omp_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::mat& betas, std::string family, int num_threads, int m, bool parallel, bool approx);
+arma::mat fit_glm_omp_cpp(arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::mat& betas, std::string family, int num_threads, int m, bool parallel, bool approx);
 RcppExport SEXP _GLIM_fit_glm_omp_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP betasSEXP, SEXP familySEXP, SEXP num_threadsSEXP, SEXP mSEXP, SEXP parallelSEXP, SEXP approxSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type betas(betasSEXP);
@@ -43,8 +43,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // imvar
-arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi, const std::string family, double alpha, const arma::vec& mle, const double mle_val, const arma::mat& J_vectors, const arma::vec& J_values, double dispersion, double tol, double a, double b, int max_it, bool parallel);
-RcppExport SEXP _GLIM_imvar(SEXP XSEXP, SEXP ySEXP, SEXP xiSEXP, SEXP familySEXP, SEXP alphaSEXP, SEXP mleSEXP, SEXP mle_valSEXP, SEXP J_vectorsSEXP, SEXP J_valuesSEXP, SEXP dispersionSEXP, SEXP tolSEXP, SEXP aSEXP, SEXP bSEXP, SEXP max_itSEXP, SEXP parallelSEXP) {
+arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi, const std::string family, double alpha, const arma::vec& mle, const double mle_val, const arma::mat& J_vectors, const arma::vec& J_values, double dispersion, double tol, double a_val, double b_val, int max_it, bool parallel);
+RcppExport SEXP _GLIM_imvar(SEXP XSEXP, SEXP ySEXP, SEXP xiSEXP, SEXP familySEXP, SEXP alphaSEXP, SEXP mleSEXP, SEXP mle_valSEXP, SEXP J_vectorsSEXP, SEXP J_valuesSEXP, SEXP dispersionSEXP, SEXP tolSEXP, SEXP a_valSEXP, SEXP b_valSEXP, SEXP max_itSEXP, SEXP parallelSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -59,11 +59,34 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::vec& >::type J_values(J_valuesSEXP);
     Rcpp::traits::input_parameter< double >::type dispersion(dispersionSEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
-    Rcpp::traits::input_parameter< double >::type a(aSEXP);
-    Rcpp::traits::input_parameter< double >::type b(bSEXP);
+    Rcpp::traits::input_parameter< double >::type a_val(a_valSEXP);
+    Rcpp::traits::input_parameter< double >::type b_val(b_valSEXP);
     Rcpp::traits::input_parameter< int >::type max_it(max_itSEXP);
     Rcpp::traits::input_parameter< bool >::type parallel(parallelSEXP);
-    rcpp_result_gen = Rcpp::wrap(imvar(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a, b, max_it, parallel));
+    rcpp_result_gen = Rcpp::wrap(imvar(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, parallel));
+    return rcpp_result_gen;
+END_RCPP
+}
+// appendix_code
+arma::vec appendix_code(arma::mat eig_vecs, arma::mat eig_vals, int num_samps, arma::mat X, arma::vec y, arma::vec mle_coefs, std::string family, double dispersion, int m, double tol, int max_it, int a, int b);
+RcppExport SEXP _GLIM_appendix_code(SEXP eig_vecsSEXP, SEXP eig_valsSEXP, SEXP num_sampsSEXP, SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP familySEXP, SEXP dispersionSEXP, SEXP mSEXP, SEXP tolSEXP, SEXP max_itSEXP, SEXP aSEXP, SEXP bSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< arma::mat >::type eig_vecs(eig_vecsSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type eig_vals(eig_valsSEXP);
+    Rcpp::traits::input_parameter< int >::type num_samps(num_sampsSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type X(XSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type y(ySEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type mle_coefs(mle_coefsSEXP);
+    Rcpp::traits::input_parameter< std::string >::type family(familySEXP);
+    Rcpp::traits::input_parameter< double >::type dispersion(dispersionSEXP);
+    Rcpp::traits::input_parameter< int >::type m(mSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< int >::type max_it(max_itSEXP);
+    Rcpp::traits::input_parameter< int >::type a(aSEXP);
+    Rcpp::traits::input_parameter< int >::type b(bSEXP);
+    rcpp_result_gen = Rcpp::wrap(appendix_code(eig_vecs, eig_vals, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -373,6 +396,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_GLIM_generate_unit_matrix", (DL_FUNC) &_GLIM_generate_unit_matrix, 2},
     {"_GLIM_fit_glm_omp_cpp", (DL_FUNC) &_GLIM_fit_glm_omp_cpp, 9},
     {"_GLIM_imvar", (DL_FUNC) &_GLIM_imvar, 15},
+    {"_GLIM_appendix_code", (DL_FUNC) &_GLIM_appendix_code, 13},
     {"_GLIM_fit_gamma_log_cpp", (DL_FUNC) &_GLIM_fit_gamma_log_cpp, 5},
     {"_GLIM_compute_gamma_ll", (DL_FUNC) &_GLIM_compute_gamma_ll, 3},
     {"_GLIM_compute_gamma_ll_mat", (DL_FUNC) &_GLIM_compute_gamma_ll_mat, 3},

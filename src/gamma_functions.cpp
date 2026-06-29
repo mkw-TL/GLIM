@@ -175,8 +175,8 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
 
   // Compute true expected values based on proposed betas
   arma::vec eta = X * beta_vals;
-  eta.elem(arma::find(eta > 700)).fill(700);
-  eta.elem(arma::find(eta < -70)).fill(-70); // avoids D_mean explosions
+  eta.elem(arma::find(eta > 50)).fill(50);
+  eta.elem(arma::find(eta < -50)).fill(-50); // avoids D_mean explosions
   arma::vec mu = arma::exp(eta);
   // TODO: #11 Add more warnings
   // Note that Rcpp::Rcout will not play nicely with any parallelization
@@ -186,7 +186,7 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
 
   double dispersion = mle_estimate_dispersion_gamma(y, mu, beta_vals.n_elem);
   double shape = 1 / dispersion;
-
+  Rcpp::Rcout << "dispersion: " << dispersion << "\n";
   // Compute full log-likelihood for the observed data under proposed beta
   double true_ll = compute_gamma_ll(y, eta, shape);
 
@@ -204,10 +204,11 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
   // Simulate Y matrix inline using R's Gamma RNG
   arma::mat Y(n, m);
   arma::vec scale = mu * dispersion;
+  std::gamma_distribution<double> rgamma(shape, 1.0);
   for (int j = 0; j < m; ++j) {
     for (int i = 0; i < n; i++) {
-      std::gamma_distribution<double> rgamma(shape, scale(i));
-      double sim_val = rgamma(gen);
+      // Uses gamma scale property
+      double sim_val = rgamma(gen) * scale(i);
       Y(i, j) = (sim_val < 1e-10) ? 1e-10 : sim_val;
     }
   }
@@ -225,8 +226,13 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
 #pragma omp parallel for reduction(+ : count_less) if (approx == true)
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
+    Rcpp::Rcout << "y_sim first few: " << y_sim(1);
+    Rcpp::Rcout << y_sim(2);
+    Rcpp::Rcout << y_sim(3);
     arma::vec beta_sim_hat =
         fit_gamma_log_cpp(X, XtX, y_sim, beta_vals, approx);
+    // Starting the IRLS algorithm at the beta_coefs that generated the Y
+    Rcpp::Rcout << "beta_sim_hat: " << beta_sim_hat << "\n";
     arma::vec eta_sim_hat = X * beta_sim_hat;
     arma::vec mu_sim_hat = exp(eta_sim_hat);
 
@@ -239,10 +245,13 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
     // double term2_j = (shape_sim_hat - 1.0) * arma::sum(arma::log(y_sim));
     // double llX_j = constant_ll_term + term2_j + term3_all(j);
     double llX_j = compute_gamma_ll(y_sim, eta, shape_sim_hat);
+    Rcpp::Rcout << "llX_j: " << llX_j << "\n";
 
     // Evaluate simulated MLE log-likelihood
     double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
+    Rcpp::Rcout << "mle_sim: " << mle_sim << "\n";
     double f_X_j = llX_j - mle_sim;
+    Rcpp::Rcout << "f_X_j: " << f_X_j << "\n";
 
     if (f_X_j < f_x) {
       count_less++;

@@ -15,6 +15,23 @@ NULL
 # devtools::document()
 # devtools::install() or devtools::load_all()
 
+#' Scale the design matrix
+#'
+#' Scales the design matrix for numerical stability when fitting
+#'
+#' @param X design matrix
+#' @return Scaled design matrix (excludes intercepts and dummy variables)
+#' @export
+scale_design_matrix <- function(X) {
+  # Find columns with more than 2 unique values
+  continuous_cols <- apply(X, 2, function(col) length(unique(col)) > 2)
+
+  # Scale only those columns (center and scale)
+  X[, continuous_cols] <- scale(X[, continuous_cols], center = FALSE)
+
+  return(X)
+}
+
 #' Fits GLIM (Raw Implementation)
 #'
 #' Evaluates possibility for beta/dispersion values.
@@ -63,11 +80,50 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
     approx = approx
   )
   # If we changed the amount of threads that blas uses, change this back. Globally for the R session.
-  if (parallel && requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+  if (parallel & requireNamespace("RhpcBLASctl", quietly = TRUE)) {
     RhpcBLASctl::blas_set_num_threads(original_blas_threads)
   }
 
   return(output)
+}
+
+# Written by Gemini TODO
+#' @noRd
+generate_eigen_grid <- function(
+  mle_vals,
+  posts,
+  eigen_vecs,
+  eigen_vals,
+  n_steps = 20,
+  max_sd = 3,
+  IsHessian = TRUE
+) {
+  d <- length(mle_vals)
+
+  scales <- sqrt(eigen_vals) * posts
+
+  # 2. Create 1D sequences in standardized eigenspace (e.g., from -3 to +3 SDs)
+  slices <- lapply(1:d, function(i) {
+    seq(-max_sd, max_sd, length.out = n_steps)
+  })
+
+  # 3. Expand into a full multi-dimensional grid of coordinates
+  # This automatically scales from 2D to 3D to ND
+  eigenspace_grid <- as.matrix(expand.grid(slices))
+
+  # 4. Scale the coordinates by the calculated distances
+  # Vectorized operation: multiplies each column by its corresponding scale
+  scaled_eigenspace <- t(t(eigenspace_grid) * scales)
+
+  # 5. Rotate back to original parameter space using the eigenvector matrix
+  # Delta = Coordinates * V^T
+  param_deltas <- scaled_eigenspace %*% t(eigen_vecs)
+
+  # 6. Shift the entire grid so it is centered precisely at the MLE
+  param_grid <- t(t(param_deltas) + mle_vals)
+  colnames(param_grid) <- paste0("beta_", 0:(d - 1))
+
+  return(param_grid)
 }
 
 #' Generate Elliptical Approximation Samples (Inner Probability)
@@ -90,42 +146,14 @@ glim_inner_prob_approx_samples <- function(
   mle_coefs,
   mle_val,
   m,
-  parallel
+  parallel,
+  eJ,
+  dispersion,
+  a_val,
+  b_val
 ) {
   B <- 100
   AA <- seq(0.001, 0.999, length = B)
-  if (family == "gaussian" || family == "normal") {
-    res <- lm(y ~ X - 1)
-    J <- crossprod(X, X)
-    dispersion <- 1
-  } else if (family == "binomial") {
-    res <- glm(y ~ X - 1, family = "binomial")
-    p_i <- res$fitted.values
-    J <- crossprod(X, X * as.vector((p_i * (1 - p_i))))
-    dispersion <- 1
-  } else if (family == "gamma") {
-    res <- glm(y ~ X - 1, family = Gamma(link = "log"))
-    J <- crossprod(X, X)
-    mle_coefs <- res$coefficients
-    dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
-  } else if (family == "inverse.gaussian") {
-    res <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
-    eta <- X %*% res$coefficients
-    mu_i <- as.vector(sqrt(1 / eta))
-    J <- crossprod(X, X * (mu_i^3) / 4)
-    dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
-  } else if (family == "poisson") {
-    res <- glm(y ~ X - 1, family = poisson(link = "log"))
-    eta <- X %*% coef(res)
-    lambda_i <- exp(eta)
-    J <- crossprod(X, X * as.vector(lambda_i))
-    dispersion <- 1
-  }
-  J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries
-  eJ <- eigen(J)
-
-  eJ$values[eJ$values < 1e-4] <- .000001
-  mle_coefs <- res$coefficients
 
   pl <- function(z) {
     betas_matrix <- if (is.matrix(z)) z else matrix(z, nrow = 1)
@@ -142,7 +170,7 @@ glim_inner_prob_approx_samples <- function(
     force = TRUE
   )
   parallel <- FALSE
-  for (a in AA) {
+  for (alpha in AA) {
     pb$tick()
     i <- i + 1
     xi[[i]] <- imvar(
@@ -150,15 +178,15 @@ glim_inner_prob_approx_samples <- function(
       y,
       prev_xi,
       family,
-      a,
+      alpha,
       mle = mle_coefs,
       mle_val,
       as.matrix(eJ$vectors),
       as.vector(eJ$values),
       dispersion,
       tol = .01,
-      a = 2,
-      b = 1,
+      a_val = a_val,
+      b_val = b_val,
       max_it = 25,
       parallel = FALSE
     )
@@ -197,7 +225,7 @@ glim_inner_prob_approx_samples <- function(
 #'
 #' @param X Matrix of predictors.
 #' @param y Vector of response variables.
-#' @param family String denoting the exponential family. Choices are `"gaussian"`, `"binomial"`, `"gamma"`, `"poisson"`, `"inverse-gaussian"`.
+#' @param family String denoting the exponential family. Choices are `"gaussian"`, `"binomial"`, `"gamma"`, `"poisson"`, `"inverse.gaussian"`.
 #' @param betas A matrix (or column vector) of different beta values to evaluate the possibility over.
 #' @param m Number of samples/evaluations to perform (default `10000`).
 #' @param approx Logical indicating whether to use the elliptical approximation (default `FALSE`).
@@ -209,12 +237,46 @@ glim <- function(
   X,
   y,
   family = "gaussian",
-  betas,
-  m = 10000,
+  m = 1000,
   approx = FALSE,
+  appendix = FALSE,
   parallel = TRUE,
-  intercept = TRUE
+  intercept = TRUE,
+  tol = 1e-2,
+  ...
 ) {
+  args <- list(...)
+  if (approx == TRUE) {
+    if ("a_val" %in% names(args)) {
+      a_val <- args$a_val
+    } else {
+      a_val <- 2
+    }
+    if ("b_bal" %in% names(args)) {
+      b_val <- args$b_val
+    } else {
+      b_val <- .65
+    }
+    if ("max_it" %in% names(args)) {
+      max_it <- args$max_it
+    } else {
+      max_it <- 25
+    }
+  }
+  betas <- NULL
+  if (approx == FALSE) {
+    if ("betas" %in% names(args)) {
+      if (is.vector(args$betas)) {
+        betas <- matrix(args$betas, nrow = 1)
+      } else if (!(is.matrix(args$betas) & typeof(args$betas) == "double")) {
+        stop("Grid of betas not in the correct form")
+      } else {
+        betas <- args$betas
+      }
+    }
+  }
+
+  J <- NULL
   if (is.data.frame(X)) {
     X <- as.matrix(X)
   }
@@ -225,6 +287,8 @@ glim <- function(
       X <- cbind("(Intercept)" = 1, X)
     }
   }
+
+  ## Binomial setup
   if (family == "binomial" || family == "logistic") {
     if (is.vector(y) && all(y == 0 | y == 1)) {
       if (length(y) != nrow(X)) {
@@ -260,59 +324,141 @@ glim <- function(
     }
     # We are using (-1) so that R knows the X matrix we are using, we don't want to append any extra intercepts
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
-    mle_coefs <- glm(y ~ X - 1, family = "binomial")$coefficients
+    res <- glm(y ~ X - 1, family = "binomial")
+    mle_coefs <- res$coefficients
+    p_i <- res$fitted.values
+    dispersion <- 1
+    if (is.null(betas)) {
+      J <- crossprod(X, X * as.vector((p_i * (1 - p_i))))
+    }
+
+    ## Gamma setup
   } else if (family == "gamma") {
     mle_coefs <- glm(y ~ X - 1, family = Gamma(link = "log"))$coefficients
     eta <- X %*% mle_coefs
-    ratio <- y / exp(eta)
-    n <- length(y)
-    ll_mle_original_data <- compute_gamma_ll_r(
-      y,
-      eta,
-      1 / mle_estimate_dispersion_gamma(y, exp(eta), length(mle_coefs))
-    )
+    dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
+    ll_mle_original_data <- compute_gamma_ll_r(y, eta, 1 / dispersion)
+    if (is.null(betas)) {
+      J <- crossprod(X, X)
+    }
+
+    ## Poisson setup
   } else if (family == "poisson") {
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = poisson(link = "log"))))
     mle_coefs <- glm(y ~ X - 1, family = poisson(link = "log"))$coefficients
-  } else if (family == "inverse-gaussian") {
+    eta <- X %*% mle_coefs
+    lambda_i <- exp(eta)
+    dispersion <- 1
+    if (is.null(betas)) {
+      J <- crossprod(X, X * as.vector(lambda_i))
+    }
+
+    ## Inverse Gaussian setup
+  } else if (family == "inverse.gaussian") {
     ll_mle_original_data <- as.numeric(logLik(glm(
       y ~ X - 1,
       family = inverse.gaussian(link = "1/mu^2")
     )))
     mle_coefs <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))$coefficients
+    eta <- X %*% mle_coefs
+    mu_i <- as.vector(sqrt(1 / eta))
+    dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
+    if (is.null(betas)) {
+      J <- crossprod(X, X * (mu_i^3) / 4)
+    }
+
+    ## Gaussian Setup
   } else if (family == "normal" || family == "gaussian") {
     ll_mle_original_data <- as.numeric(logLik(lm(y ~ X - 1)))
     mle_coefs <- fit_gaussian_cpp(X, y)
+    dispersion <- 1
+    if (is.null(betas)) {
+      J <- crossprod(X, X)
+    }
   } else {
     stop("Family not supported")
   }
-  if (is.vector(betas)) {
-    betas <- matrix(betas, nrow = 1)
+
+  if (!is.null(J)) {
+    J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries
+    eJ <- eigen(J)
+
+    eJ$values[eJ$values < 1e-4] <- .000001
   }
-  if (approx == FALSE) {
-    return(glim_raw(
-      X,
-      y,
-      family = family,
-      betas,
-      mle_coefs,
-      mle_val = ll_mle_original_data,
-      m = m,
-      parallel = parallel,
-      approx = approx
+
+  if (approx == FALSE & appendix == FALSE) {
+    if (is.null(betas)) {
+      print("Generating a grid of beta values")
+      initial_xi <- c(1, ncol(X))
+      imvar_xi <- imvar(
+        X,
+        y,
+        matrix(initial_xi, ncol = 1),
+        family,
+        .15,
+        mle_coefs,
+        ll_mle_original_data,
+        eJ$vectors,
+        eJ$values,
+        dispersion,
+        .01,
+        2,
+        .65,
+        30,
+        FALSE
+      )
+      d <- ncol(X)
+      n_steps <- 20
+      scaling <- sqrt(1 / eJ$values) * imvar_xi
+      max_sd <- 3
+      slices <- lapply(1:d, function(i) {
+        seq(-max_sd, max_sd, length.out = n_steps)
+      })
+      eigenspace_grid <- as.matrix(expand.grid(slices))
+      scaled_eigenspace <- t(t(eigenspace_grid) * as.vector(scaling))
+      param_deltas <- scaled_eigenspace %*% t(eJ$vectors)
+      betas <- t(t(param_deltas) + as.vector(mle_coefs))
+      colnames(betas) <- paste0("beta_", 0:(d - 1))
+    }
+    return(list(
+      possibilities = glim_raw(
+        X,
+        y,
+        family = family,
+        betas,
+        mle_coefs,
+        mle_val = ll_mle_original_data,
+        m = m,
+        parallel = parallel,
+        approx = approx
+      ),
+      betas = betas
     ))
   }
 
-  if (approx == TRUE) {
+  if (approx == TRUE & appendix == FALSE) {
+    print(a_val)
+    print(b_val)
     return(glim_inner_prob_approx_samples(
-      X,
-      y,
+      X = X,
+      y = y,
       family = family,
-      mle_coefs,
+      mle_coefs = mle_coefs,
       mle_val = ll_mle_original_data,
       m = m,
-      parallel
+      parallel = parallel,
+      eJ = eJ,
+      dispersion = dispersion,
+      a_val = a_val,
+      b_val = b_val
     ))
+  }
+
+  if (appendix == TRUE & approx == TRUE) {
+    stop("Appendix and approximation methods cannot both be used")
+  }
+  if (appendix == TRUE & approx == FALSE) {
+    return(appendix(eJ, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b))
   }
 }
 
@@ -333,7 +479,11 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta, intercept = TRUE)
     # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
     has_intercept <- any(colSums(X == 1) == nrow(X))
     if (!has_intercept) {
-      X <- cbind(rep(1, length(y)), X)
+      if (is.vector(y)) {
+        X <- cbind(rep(1, length(y)), X)
+      } else {
+        X <- cbind(rep(1, nrow(y)), X)
+      }
     }
   }
   if (is.vector(y) && all(y == 0 | y == 1)) {
@@ -652,46 +802,44 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta, intercept = TR
 #   return(samples)
 # }
 
-# #' Appendix C++ Bridge Function
-# #'
-# #' Helper function acting as a bridge to underlying C++ routines for sample generation.
-# #'
-# #' @param eJ Eigen decomposition object.
-# #' @param num_samps Number of samples to generate.
-# #' @param d Dimensionality parameter.
-# #' @param X Predictor matrix.
-# #' @param y Response vector.
-# #' @param mle_coefs Maximum likelihood estimates for coefficients.
-# #' @param family String denoting the exponential family.
-# #' @param dispersion The dispersion parameter.
-# #' @param m Parameter `m` defining scaling or sampling limits.
-# #' @param tol Tolerance level for convergence criteria.
-# #' @param max_it Maximum number of iterations.
-# #' @param a Hyperparameter `a` for the underlying routine.
-# #' @param b Hyperparameter `b` for the underlying routine.
-# #' @return A matrix of output samples evaluated by the C++ backend.
-# #' @export
-# appendix <- function(eJ, num_samps, d, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
-#   eig_vecs <- eJ$vectors
-#   eig_vals <- eJ$values
-#   output_samples <- lets_go_to_cpp(
-#     eig_vecs,
-#     eig_vals,
-#     num_samps,
-#     d,
-#     X,
-#     y,
-#     mle_coefs,
-#     family,
-#     dispersion,
-#     m,
-#     tol,
-#     max_it,
-#     a,
-#     b
-#   )
-#   return(output_samples)
-# }
+#' Appendix C++ Bridge Function
+#'
+#' Helper function acting as a bridge to underlying C++ routines for sample generation.
+#'
+#' @param eJ Eigen decomposition object.
+#' @param num_samps Number of samples to generate.
+#' @param X Predictor matrix.
+#' @param y Response vector.
+#' @param mle_coefs Maximum likelihood estimates for coefficients.
+#' @param family String denoting the exponential family.
+#' @param dispersion The dispersion parameter.
+#' @param m Parameter `m` defining scaling or sampling limits.
+#' @param tol Tolerance level for convergence criteria.
+#' @param max_it Maximum number of iterations the stochastic algorithm runs for for each grid value.
+#' @param a Hyperparameter `a` (should be between X and Y TODO)
+#' @param b Hyperparameter `b` (should be between X and Y TODO)
+#' @return A matrix of output samples evaluated by the C++ backend.
+#' @noRd
+appendix <- function(eJ, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
+  eig_vecs <- eJ$vectors
+  eig_vals <- eJ$values
+  output_samples <- appendix_code(
+    eig_vecs,
+    eig_vals,
+    num_samps,
+    X,
+    y,
+    mle_coefs,
+    family,
+    dispersion,
+    m,
+    tol,
+    max_it,
+    a,
+    b
+  )
+  return(output_samples)
+}
 
 #' Probability to Possibility Mapping for Poisson Regression
 #'
