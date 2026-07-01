@@ -106,6 +106,8 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   arma::vec plausabilities(n_evals);
   arma::mat XtX = X.t() * X;
 
+  Rcpp::Rcout << "beta: " << betas;
+
   if (y.n_elem != X.n_rows || mle_coefs.n_elem != X.n_cols ||
       betas.n_cols != X.n_cols) {
     Rcpp::stop("Dimension mismatch: X is %d x %d, y has %d, mle_coefs has %d, "

@@ -7,8 +7,6 @@
 NULL
 
 
-# TODO Warnings on whether p > n
-
 # Original code written by Joe Harrison (jrharr25@ncsu.edu), translated to cpp by Gemini
 # pkgbuild::compile_dll() validates the package directory differently. Rcpp might implement it's directory check differently
 # After making changes, restart R, get in the package directory
@@ -51,6 +49,23 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
   if (is.data.frame(X)) {
     X <- as.matrix(X)
   }
+  if (nrow(X) != length(y)) {
+    stop(
+      "Input Error: The number of rows in the design matrix X must equal the length of the response vector y."
+    )
+  }
+  if (any(is.na(X)) || any(is.na(y))) {
+    warning(
+      "Input Warning: Missing values (NA) detected in X or y. This will likely cause crashes."
+    )
+  }
+
+  if (ncol(X) > nrow(X)) {
+    warning(
+      "Input Warning: The number of predictors (p) is greater than the number of observations (n)."
+    )
+  }
+
   output <- matrix()
 
   if (parallel) {
@@ -87,43 +102,53 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
   return(output)
 }
 
-# Written by Gemini TODO
+#' Generates a grid of parameter values (aligned in eigen-vector space)
+#'
+#' Each direction has a default of 20 steps
+#'
+#' @param mle_coefs The mle coef
 #' @noRd
 generate_eigen_grid <- function(
-  mle_vals,
-  posts,
+  mle_coefs,
   eigen_vecs,
   eigen_vals,
+  dispersion,
+  ll_mle_original_data,
+  column_names,
   n_steps = 20,
-  max_sd = 3,
-  IsHessian = TRUE
+  max_sd = 3
 ) {
-  d <- length(mle_vals)
-
-  scales <- sqrt(eigen_vals) * posts
-
-  # 2. Create 1D sequences in standardized eigenspace (e.g., from -3 to +3 SDs)
+  print("Generating a grid of beta values")
+  initial_xi <- c(1, ncol(X))
+  imvar_xi <- imvar(
+    X,
+    y,
+    matrix(initial_xi, ncol = 1),
+    family,
+    .1,
+    mle_coefs,
+    ll_mle_original_data,
+    eigen_vecs,
+    eigen_vals,
+    dispersion,
+    .01,
+    2,
+    .65,
+    30,
+    FALSE
+  )
+  scaling <- sqrt(1 / eigen_vals) * imvar_xi
+  max_sd <- 3
   slices <- lapply(1:d, function(i) {
     seq(-max_sd, max_sd, length.out = n_steps)
   })
-
-  # 3. Expand into a full multi-dimensional grid of coordinates
-  # This automatically scales from 2D to 3D to ND
   eigenspace_grid <- as.matrix(expand.grid(slices))
-
-  # 4. Scale the coordinates by the calculated distances
-  # Vectorized operation: multiplies each column by its corresponding scale
-  scaled_eigenspace <- t(t(eigenspace_grid) * scales)
-
-  # 5. Rotate back to original parameter space using the eigenvector matrix
-  # Delta = Coordinates * V^T
+  scaled_eigenspace <- t(t(eigenspace_grid) * as.vector(scaling))
   param_deltas <- scaled_eigenspace %*% t(eigen_vecs)
+  betas <- t(t(param_deltas) + as.vector(mle_coefs))
+  colnames(betas) <- column_names
 
-  # 6. Shift the entire grid so it is centered precisely at the MLE
-  param_grid <- t(t(param_deltas) + mle_vals)
-  colnames(param_grid) <- paste0("beta_", 0:(d - 1))
-
-  return(param_grid)
+  return(betas)
 }
 
 #' Generate Elliptical Approximation Samples (Inner Probability)
@@ -221,17 +246,20 @@ glim_inner_prob_approx_samples <- function(
 
 #' Generalized Linear Inferential Models (GLIM) Main Function
 #'
-#' Main wrapper function to fit a GLIM model.
+#' Main wrapper function to fit a GLIM model. Users can pass in their own grid of beta values to evaluate by setting betas = MATRIX.
+#' A typical use would be MATRIX = as.matrix(expand.grid(beta_0_seq, beta_1_seq))
 #'
-#' @param X Matrix of predictors.
-#' @param y Vector of response variables.
+#' If using the elliptical approximation, can tweak the Robbins-Monroe algorithm by changing a_val, b_val, and max_it.
+#'
+#' @param X Matrix of predictors. Note that any dataframe should be first run through model.matrix()
+#' @param y Vector of response variables. (Can be a nx2 matrix of successes and failures for binomial data)
 #' @param family String denoting the exponential family. Choices are `"gaussian"`, `"binomial"`, `"gamma"`, `"poisson"`, `"inverse.gaussian"`.
 #' @param betas A matrix (or column vector) of different beta values to evaluate the possibility over.
-#' @param m Number of samples/evaluations to perform (default `10000`).
+#' @param m Number of samples/evaluations to perform (default `1000`).
 #' @param approx Logical indicating whether to use the elliptical approximation (default `FALSE`).
 #' @param parallel Logical indicating whether to process in parallel.
 #' @param intercept Logical indicating whether to add an intercept term
-#' @return A matrix of outputs or samples depending on whether the approximation is used.
+#' @return If using an elliptical approximation, returns samples of parameter values. Else, returns a list containing the matrix of betas upon which it was evaluated, and a vector of the corresponding possibilities.
 #' @export
 glim <- function(
   X,
@@ -248,16 +276,30 @@ glim <- function(
   args <- list(...)
   if (approx == TRUE) {
     if ("a_val" %in% names(args)) {
-      a_val <- args$a_val
+      if (is.numeric(args$a_val) & length(args$a_val) == 1 & args$a_val > 0) {
+        a_val <- args$a_val
+      } else {
+        stop("Input Error: a_val must be a positive number")
+      }
     } else {
       a_val <- 2
     }
     if ("b_bal" %in% names(args)) {
+      if (is.numeric(args$b_val) & length(args$b_val) == 1 & args$b_val > 0) {
+        b_val <- args$b_val
+      } else {
+        stop("Input Error: b_val must be a positive number")
+      }
       b_val <- args$b_val
     } else {
       b_val <- .65
     }
     if ("max_it" %in% names(args)) {
+      if (is.integer(args$max_it) & length(args$max_it) == 1 & args$max_it > 0) {
+        max_it <- args$max_it
+      } else {
+        stop("Input Error: max_it must be a positive integer")
+      }
       max_it <- args$max_it
     } else {
       max_it <- 25
@@ -275,6 +317,62 @@ glim <- function(
       }
     }
   }
+  if (!is.null(names(args))) {
+    if (!(all(names(args)) %in% c("a_val", "b_val", "max_it", "betas"))) {
+      stop("Incorrect names of additional arguments passed")
+    }
+  }
+
+  if (!is.matrix(X)) {
+    stop(
+      "X must be a matrix. To convert a dataframe into a matrix, either run matrix(), or model.matrix() depending on whether you have categories"
+    )
+  }
+
+  # This allows users to type family = "pois" and it will auto-match to "poisson"
+  family <- match.arg(
+    family,
+    choices = c("gaussian", "poisson", "gamma", "binomial", "inverse.gaussian")
+  )
+
+  if (!is.logical(parallel) || length(parallel) != 1 || is.na(parallel)) {
+    stop("Input Error: 'parallel' must be either TRUE or FALSE.")
+  }
+
+  if (!is.logical(approx) || length(approx) != 1 || is.na(approx)) {
+    stop("Input Error: 'approx' must be either TRUE or FALSE.")
+  }
+
+  # Inside glim_raw or the main exported wrapper
+  if (family == "poisson") {
+    if (any(y < 0) || !all(y == floor(y))) {
+      stop("Input Error: For Poisson family, 'y' must contain only non-negative integers.")
+    }
+  } else if (family %in% c("gamma", "inverse.gaussian")) {
+    if (any(y <= 0)) {
+      stop(sprintf(
+        "Input Error: For %s family, all values in 'y' must be strictly positive (y > 0).",
+        family
+      ))
+    }
+  } else if (family == "binomial") {
+    if (!all(y %in% c(0, 1))) {
+      # Modify if your binomial model accepts proportions instead of binary outcomes
+      stop("Input Error: For binomial family, 'y' must consist of 0s and 1s.")
+    }
+  }
+
+  if (!is.numeric(m) || length(m) != 1 || m <= 0 || m != floor(m)) {
+    stop("Input Error: 'm' (number of samples) must be a single positive integer.")
+  }
+
+  if (!missing(tol) && (!is.numeric(tol) || length(tol) != 1 || tol <= 0)) {
+    stop("Input Error: 'tol' must be a strictly positive numeric scalar.")
+  }
+
+  if (!missing(max_it) && (!is.numeric(max_it) || length(max_it) != 1 || max_it <= 0)) {
+    stop("Input Error: 'max_it' must be a positive integer.")
+  }
 
   J <- NULL
   if (is.data.frame(X)) {
@@ -287,6 +385,8 @@ glim <- function(
       X <- cbind("(Intercept)" = 1, X)
     }
   }
+
+  column_names <- colnames(X)
 
   ## Binomial setup
   if (family == "binomial" || family == "logistic") {
@@ -385,40 +485,40 @@ glim <- function(
 
     eJ$values[eJ$values < 1e-4] <- .000001
   }
+  if (!is.null(mle_coefs)) {
+    if (length(mle_coefs) != ncol(X)) {
+      stop(
+        "Input Error: The length of 'mle_coefs' must exactly match the number of columns (predictors) in X."
+      )
+    }
+  }
+
+  if (!is.null(betas)) {
+    if (is.matrix(betas) && nrow(betas) != ncol(X)) {
+      stop(
+        "Input Error: The number of rows in the 'betas' matrix must match the number of columns in X."
+      )
+    }
+  }
+
+  if (!missing(dispersion) && (!is.numeric(dispersion) || dispersion <= 0)) {
+    stop("Input Error: 'dispersion' must be a strictly positive numeric value.")
+  }
+
+  column_names <- colnames(X)
 
   if (approx == FALSE & appendix == FALSE) {
     if (is.null(betas)) {
-      print("Generating a grid of beta values")
-      initial_xi <- c(1, ncol(X))
-      imvar_xi <- imvar(
-        X,
-        y,
-        matrix(initial_xi, ncol = 1),
-        family,
-        .15,
+      betas <- generate_eigen_grid(
         mle_coefs,
-        ll_mle_original_data,
-        eJ$vectors,
-        eJ$values,
+        eigen_vecs = eJ$vectors,
+        eigen_vals = eJ$values,
         dispersion,
-        .01,
-        2,
-        .65,
-        30,
-        FALSE
+        ll_mle_original_data,
+        column_names,
+        n_steps = 20,
+        max_sd = 3
       )
-      d <- ncol(X)
-      n_steps <- 20
-      scaling <- sqrt(1 / eJ$values) * imvar_xi
-      max_sd <- 3
-      slices <- lapply(1:d, function(i) {
-        seq(-max_sd, max_sd, length.out = n_steps)
-      })
-      eigenspace_grid <- as.matrix(expand.grid(slices))
-      scaled_eigenspace <- t(t(eigenspace_grid) * as.vector(scaling))
-      param_deltas <- scaled_eigenspace %*% t(eJ$vectors)
-      betas <- t(t(param_deltas) + as.vector(mle_coefs))
-      colnames(betas) <- paste0("beta_", 0:(d - 1))
     }
     return(list(
       possibilities = glim_raw(
@@ -880,65 +980,4 @@ prob2poss_poisson <- function(X, y, samples, the_compared_theta, intercept = TRU
 #' @export
 get_CI <- function(alpha, betas, possibilities) {
   return(betas[possibilities > alpha, ])
-}
-
-
-#' Helper function for testing
-#'
-#' Helppp
-#'
-#' @param X X
-#' @param y y
-#' @param xi xi
-#' @param family family
-#' @param alpha alpha
-#' @param mle mle
-#' @param mle_val mle_val
-#' @param J_vectors J_vectors
-#' @param J_values J_values
-#' @param dispersion dispersion
-#' @param tol tol
-#' @param a_val a_val
-#' @param b_val b_val
-#' @param max_it max_it
-#' @param parallel parallel
-#' @param m m
-#' @return value
-#' @export
-r_imvar <- function(
-  X,
-  y,
-  xi,
-  family,
-  alpha,
-  mle,
-  mle_val,
-  J_vectors,
-  J_values,
-  dispersion,
-  tol,
-  a_val,
-  b_val,
-  max_it,
-  parallel,
-  m
-) {
-  return(imvar(
-    X,
-    y,
-    xi,
-    family,
-    alpha,
-    mle,
-    mle_val,
-    J_vectors,
-    J_values,
-    dispersion,
-    tol,
-    a_val,
-    b_val,
-    max_it,
-    parallel,
-    m
-  ))
 }

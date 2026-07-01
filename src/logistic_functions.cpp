@@ -1,5 +1,5 @@
 #include "headers.h"
-#include <chrono>
+// #include <chrono>
 // [[Rcpp::depends(RcppArmadillo)]]
 // [[Rcpp::plugins(openmp)]]
 
@@ -100,7 +100,7 @@ inline double sum_softplus(const arma::vec &eta) {
 double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
                         const arma::vec &mle_coefs, const arma::vec &beta_vals,
                         int m, bool approx) {
-  auto t_start = std::chrono::high_resolution_clock::now();
+  // auto t_start = std::chrono::high_resolution_clock::now();
 
   int n = X.n_rows;
 
@@ -137,7 +137,7 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   // Fast cross-product for all M simulations
   arma::rowvec llX = eta.t() * Y - sum_log_term;
 
-  auto t_sim_end = std::chrono::high_resolution_clock::now();
+  // auto t_sim_end = std::chrono::high_resolution_clock::now();
 
   int count_less = 0;
   double total_solver_time = 0.0;
@@ -150,13 +150,14 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    auto s_start = std::chrono::high_resolution_clock::now();
+    // auto s_start = std::chrono::high_resolution_clock::now();
 
     // Call the inner thread-safe solver
     LogisticResult sim_res = fit_logistic_inner(X, y_sim, beta_vals);
-    auto s_end = std::chrono::high_resolution_clock::now();
-    total_solver_time += std::chrono::duration<double>(s_end - s_start).count();
-    auto l_start = std::chrono::high_resolution_clock::now();
+    // auto s_end = std::chrono::high_resolution_clock::now();
+    // total_solver_time += std::chrono::duration<double>(s_end -
+    // s_start).count(); auto l_start =
+    // std::chrono::high_resolution_clock::now();
 
     arma::vec eta_sim_hat = X * sim_res.beta;
 
@@ -166,9 +167,9 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
       mle_sim = arma::dot(y_sim, eta_sim_hat) - sum_softplus(eta_sim_hat);
     }
 
-    auto l_end = std::chrono::high_resolution_clock::now();
-    total_likelihood_time +=
-        std::chrono::duration<double>(l_end - l_start).count();
+    // auto l_end = std::chrono::high_resolution_clock::now();
+    // total_likelihood_time +=
+    //     std::chrono::duration<double>(l_end - l_start).count();
 
     double f_X_j = llX(j) - mle_sim;
 
@@ -176,19 +177,19 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
       count_less++;
     }
   }
-  auto t_end = std::chrono::high_resolution_clock::now();
+  // auto t_end = std::chrono::high_resolution_clock::now();
 
   // Print results to the R console
-  Rcpp::Rcout << "\n--- LOGISTIC PROFILE ---" << "\n";
-  Rcpp::Rcout << "Total Time:      "
-              << std::chrono::duration<double>(t_end - t_start).count()
-              << "s\n";
-  Rcpp::Rcout << "Data Gen Time:   "
-              << std::chrono::duration<double>(t_sim_end - t_start).count()
-              << "s\n";
-  Rcpp::Rcout << "Sum Solver Time: " << total_solver_time
-              << "s (Combined across threads)\n";
-  Rcpp::Rcout << "Sum LL Time:     " << total_likelihood_time
-              << "s (Combined across threads)\n";
+  // Rcpp::Rcout << "\n--- LOGISTIC PROFILE ---" << "\n";
+  // Rcpp::Rcout << "Total Time:      "
+  //             << std::chrono::duration<double>(t_end - t_start).count()
+  //             << "s\n";
+  // Rcpp::Rcout << "Data Gen Time:   "
+  //             << std::chrono::duration<double>(t_sim_end - t_start).count()
+  //             << "s\n";
+  // Rcpp::Rcout << "Sum Solver Time: " << total_solver_time
+  //             << "s (Combined across threads)\n";
+  // Rcpp::Rcout << "Sum LL Time:     " << total_likelihood_time
+  //             << "s (Combined across threads)\n";
   return (double)1.0 * count_less / m;
 }

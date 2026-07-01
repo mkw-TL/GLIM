@@ -380,3 +380,261 @@ test_that("glim_raw coerces data.frame to model.matrix properly", {
   # If it coerces properly, it should evaluate and return an output matrix without crashing
   expect_true(!is.null(res))
 })
+
+test_that("scale_design_matrix scales only continuous columns", {
+  # Create a matrix with continuous, binary, and constant columns
+  X <- matrix(
+    c(
+      1,
+      2,
+      3,
+      4,
+      5, # Continuous (> 2 unique values)
+      0,
+      1,
+      0,
+      1,
+      0, # Binary (<= 2 unique values)
+      1,
+      1,
+      1,
+      1,
+      1
+    ), # Constant (<= 2 unique values)
+    ncol = 3
+  )
+
+  # Run the function
+  X_scaled <- scale_design_matrix(X)
+
+  # The binary and constant columns (2 and 3) should remain unchanged
+  expect_equal(X_scaled[, 2], X[, 2])
+  expect_equal(X_scaled[, 3], X[, 3])
+
+  # The continuous column (1) should be scaled (center = FALSE)
+  expected_scaled_col1 <- scale(X[, 1], center = FALSE)
+  expect_equal(X_scaled[, 1], as.numeric(expected_scaled_col1))
+})
+
+test_that("glim_raw works with the gaussian family", {
+  # Generate dummy data for a Gaussian distribution
+  set.seed(123)
+  X <- matrix(rnorm(20), ncol = 2)
+  y <- X %*% c(1.5, -2) + rnorm(10)
+
+  # Assuming betas, mle_coefs, etc. are calculated or mocked
+  # You need to fill in the valid mock arguments based on your package's workflow
+  mle_fit <- lm(y ~ X - 1)
+  mle_coefs <- coef(mle_fit)
+
+  # Call glim_raw with family = "gaussian"
+  # Note: Add remaining required arguments like 'betas', 'm', 'parallel', 'approx'
+  result <- glim_raw(
+    X = X,
+    y = y,
+    family = "gaussian",
+    betas = matrix(c(.3, .5), nrow = 1),
+    mle_coefs = mle_coefs,
+    mle_val = logLik(mle_fit),
+    m = 100,
+    parallel = FALSE,
+    approx = TRUE
+  )
+
+  # Assert expected output type or structure
+  expect_true(is.matrix(result))
+})
+
+test_that("glim_raw executes successfully for gaussian and inverse.gaussian families", {
+  set.seed(42)
+  # Dummy design matrix (10 rows, 2 predictors)
+  X <- matrix(rnorm(20), ncol = 2)
+
+  # Dummy beta matrix for the grid (2 rows for predictors, 1 column for 1 evaluation)
+  betas <- matrix(c(0.5, -0.5), nrow = 1)
+  mle_coefs <- c(0.5, -0.5)
+  mle_val <- -15.5
+
+  # --- Test 1: Gaussian ---
+  # Response can be any real number
+  y_gauss <- rnorm(10)
+
+  res_gauss <- glim_raw(
+    X = X,
+    y = y_gauss,
+    family = "gaussian",
+    betas = betas,
+    mle_coefs = mle_coefs,
+    mle_val = mle_val,
+    m = 10,
+    parallel = FALSE,
+    approx = TRUE
+  )
+  # Just expecting it to return a matrix (the possibility outputs) without error
+  expect_true(is.matrix(res_gauss))
+
+  # --- Test 2: Inverse Gaussian ---
+  # Response must be strictly positive
+  y_inv_gauss <- runif(10, min = 0.5, max = 5.0)
+
+  res_inv_gauss <- glim_raw(
+    X = X,
+    y = y_inv_gauss,
+    family = "inverse.gaussian",
+    betas = betas,
+    mle_coefs = mle_coefs,
+    mle_val = mle_val,
+    m = 10,
+    parallel = FALSE,
+    approx = TRUE
+  )
+  expect_true(is.matrix(res_inv_gauss))
+})
+
+test_that("C++ backend robustly handles collinear design matrices via fallback solver", {
+  set.seed(123)
+
+  # Create a linearly dependent design matrix
+  # Col 3 is exactly Col 1 multiplied by 2
+  X_base <- matrix(rnorm(20), ncol = 2)
+  X_collinear <- cbind(X_base, X_base[, 1] * 2)
+
+  y_pois <- rpois(10, lambda = 3)
+
+  # 3 predictors means we need 3 coefficients
+  betas <- matrix(rep(0.1, 3), nrow = 1)
+  mle_coefs <- rep(0.1, 3)
+
+  # If the C++ code doesn't have the fallback, this would likely throw an error
+  # or crash due to the matrix inversion failing. With the fallback, it should succeed.
+  expect_no_error({
+    res <- glim_raw(
+      X = X_collinear,
+      y = y_pois,
+      family = "poisson",
+      betas = betas,
+      mle_coefs = mle_coefs,
+      mle_val = -10,
+      m = 10,
+      parallel = FALSE,
+      approx = TRUE
+    )
+  })
+})
+
+test_that("glim_raw works with gamma and poisson families", {
+  set.seed(123)
+  X <- matrix(rnorm(20), ncol = 2)
+  betas <- matrix(c(0.1, 0.2), nrow = 1)
+  mle_coefs <- c(0.1, 0.2)
+  mle_val <- -10.0
+
+  # --- Gamma ---
+  # Gamma requires strictly positive response values
+  y_gamma <- runif(10, min = 1, max = 10)
+
+  print(dim(betas))
+
+  res_gamma <- glim_raw(
+    X = X,
+    y = y_gamma,
+    family = "gamma",
+    betas = betas,
+    mle_coefs = mle_coefs,
+    mle_val = mle_val,
+    m = 10,
+    parallel = FALSE,
+    approx = TRUE
+  )
+  expect_true(is.matrix(res_gamma))
+
+  # --- Poisson ---
+  # Poisson requires non-negative integer response values
+  y_pois <- rpois(10, lambda = 3)
+
+  res_pois <- glim_raw(
+    X = X,
+    y = y_pois,
+    family = "poisson",
+    betas = betas,
+    mle_coefs = mle_coefs,
+    mle_val = mle_val,
+    m = 10,
+    parallel = FALSE,
+    approx = TRUE
+  )
+  expect_true(is.matrix(res_pois))
+})
+
+
+test_that("scale_design_matrix handles dataframes properly", {
+  data <- generate_mock_data()
+  df_X <- as.data.frame(data$X)
+
+  # Ensure it correctly works when passing a data frame
+  scaled_X <- scale_design_matrix(df_X)
+  expect_true(is.matrix(scaled_X))
+  expect_equal(ncol(scaled_X), 3)
+})
+
+test_that("glim_raw handles normal / gaussian family", {
+  data <- generate_mock_data(family = "gaussian")
+
+  # Triggering family == "gaussian"
+  # Passing betas = NULL to trigger J matrix generation (lines 371-377)
+  # Triggering approx = FALSE to run grid generation (lines 389-415)
+  result <- glim_raw(
+    X = data$X,
+    y = data$y,
+    family = "gaussian",
+    betas = NULL,
+    mle_coefs = NULL,
+    mle_val = NULL,
+    m = 100,
+    parallel = FALSE,
+    approx = FALSE
+  )
+
+  expect_type(result, "double")
+})
+
+
+# TODO fix
+test_that("glim_raw handles inverse.gaussian family", {
+  data <- generate_mock_data(family = "inverse.gaussian")
+
+  # Triggering family == "inverse.gaussian" (lines 358-369)
+  result <- glim_raw(
+    X = data$X,
+    y = data$y,
+    family = "inverse.gaussian",
+    betas = matrix(c(2, 3, 2), nrow = 1),
+    mle_coefs = c(2, 2),
+    mle_val = -10,
+    m = 100,
+    parallel = FALSE,
+    approx = FALSE
+  )
+
+  expect_type(result, "double")
+})
+
+test_that("glim_raw triggers parallel processing logic safely", {
+  data <- generate_mock_data(family = "poisson")
+  mle_fit <- glm(data$y ~ data$X - 1, family = poisson)
+
+  # Trigger parallel = TRUE block (lines 56-66)
+  result <- glim_raw(
+    X = data$X,
+    y = data$y,
+    family = "poisson",
+    betas = matrix(c(2, 3, 1), nrow = 1),
+    mle_coefs = coef(mle_fit),
+    mle_val = as.numeric(logLik(mle_fit)),
+    m = 50,
+    parallel = TRUE, # This will test the parallel core setup and RhpcBLASctl check
+    approx = TRUE
+  )
+
+  expect_type(result, "double")
+})
