@@ -7,7 +7,7 @@
 get_CI(alpha, betas, possibilities)
 }
 \arguments{
-\item{alpha}{Note that a 95\% confidence interval corresponds to alpha = .95}
+\item{alpha}{Note that a 95\% confidence interval corresponds to alpha = .05}
 
 \item{betas}{The grid of beta values which we are evaluating on}
 

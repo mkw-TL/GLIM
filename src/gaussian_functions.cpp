@@ -35,7 +35,7 @@ arma::vec compute_gaussian_ll_mat(const arma::vec &y, const arma::mat &mu,
   arma::vec ll(mu.n_cols);
   for (int i = 0; i < mu.n_cols; i++) {
 
-    ll(i) = compute_gaussian_ll(y, mu, sigma);
+    ll(i) = compute_gaussian_ll(y, mu.col(i), sigma);
   }
   return ll;
 }
@@ -53,13 +53,13 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
   int n = X.n_rows;
 
   arma::vec mu = X * beta_vals; // Identity link
+  arma::vec mu_hat = X * mle_coefs;
   // Estimated dispersion
   int p = beta_vals.n_elem;
 
-  double sigma = std::sqrt(est_dispersion(y, mu, p));
+  double sigma = std::sqrt(est_dispersion(y, mu_hat, p));
 
   double true_ll = compute_gaussian_ll(y, mu, sigma);
-  arma::vec mu_hat = X * mle_coefs;
   double mle_val = compute_gaussian_ll(y, mu_hat, sigma);
   double f_x = true_ll - mle_val;
 
@@ -79,8 +79,8 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec coefs = fit_gaussian_cpp(X, y_sim);
-    arma::vec mu_hat = X * coefs;
+    arma::vec sim_coefs = fit_gaussian_cpp(X, y_sim);
+    arma::vec mu_hat_sim = X * sim_coefs;
     double mle_sim = compute_gaussian_ll(y_sim, mu_hat, sigma);
     double llX_j = compute_gaussian_ll(y_sim, mu, sigma);
 

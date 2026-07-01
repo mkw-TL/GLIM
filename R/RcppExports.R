@@ -5,12 +5,12 @@ generate_unit_matrix <- function(n, d) {
     .Call(`_GLIM_generate_unit_matrix`, n, d)
 }
 
-fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, num_threads = 1L, m = 1000L, parallel = TRUE, approx = FALSE) {
+fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, num_threads = 1L, m = 100L, parallel = TRUE, approx = FALSE) {
     .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family, num_threads, m, parallel, approx)
 }
 
-imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, parallel = FALSE) {
-    .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, parallel)
+imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, parallel = FALSE, m = 100L) {
+    .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, parallel, m)
 }
 
 appendix_code <- function(eig_vecs, eig_vals, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
@@ -89,16 +89,12 @@ glm_logis_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
     .Call(`_GLIM_glm_logis_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
 }
 
-fit_poisson_log_cpp <- function(X, y) {
-    .Call(`_GLIM_fit_poisson_log_cpp`, X, y)
-}
-
-compute_poisson_ll <- function(eta, y) {
-    .Call(`_GLIM_compute_poisson_ll`, eta, y)
-}
-
 compute_poisson_ll_mat <- function(eta, y) {
     .Call(`_GLIM_compute_poisson_ll_mat`, eta, y)
+}
+
+fit_poisson_log_cpp <- function(X, y, initial_beta) {
+    .Call(`_GLIM_fit_poisson_log_cpp`, X, y, initial_beta)
 }
 
 glm_poisson_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {

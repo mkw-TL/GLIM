@@ -91,7 +91,7 @@ arma::mat generate_unit_matrix(int n, int d) {
 arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
                           const arma::vec &mle_coefs, const arma::mat &betas,
                           std::string family, // Pass string from R
-                          int num_threads = 1, int m = 1000,
+                          int num_threads = 1, int m = 100,
                           bool parallel = true, bool approx = false) {
 
   // Convert the string to an Enum once right here
@@ -214,7 +214,7 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
                 const double mle_val, const arma::mat &J_vectors,
                 const arma::vec &J_values, double dispersion, double tol = 1e-2,
                 double a_val = 2.0, double b_val = 0.65, int max_it = 25,
-                bool parallel = false) {
+                bool parallel = false, int m = 100) {
 
   int D = mle.size();
 
@@ -235,17 +235,17 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
 
     int it = 1;
     while (true) {
-      // Rcpp::Rcout << "xi_d is " << xi_d;
+      // Rcpp::Rcout << "xi_d is " << xi_d << "\n";
       xi_d = std::max(-20.0, std::min(10.0, xi_d));
       // Xi scales singular values. exp parameterization avoids negative xi.
       arma::vec posts_xi_d = posts_d * std::exp(xi_d / 2.0);
       arma::mat MPlus(mle +
                       posts_xi_d); // I guess this is a constructor that works..
-      arma::mat MMinus(mle + posts_xi_d);
+      arma::mat MMinus(mle - posts_xi_d);
 
-      double val1 = fit_glm_omp_cpp(X, y, mle, MPlus.t(), family, 1, 1000,
+      double val1 = fit_glm_omp_cpp(X, y, mle, MPlus.t(), family, 1, m,
                                     parallel, TRUE)(0, 0);
-      double val2 = fit_glm_omp_cpp(X, y, mle, MMinus.t(), family, 1, 1000,
+      double val2 = fit_glm_omp_cpp(X, y, mle, MMinus.t(), family, 1, m,
                                     parallel, TRUE)(0, 0);
       double g_xi = std::max(val1, val2) - alpha;
 

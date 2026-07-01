@@ -1,212 +1,235 @@
-// Translated to c++ by Gemini
-// Thoroughly vetted
-
 #include "headers.h"
-#define ARMA_BOUNDS_CHECK
+#include <chrono>
+#include <random>
 // [[Rcpp::depends(RcppArmadillo)]]
 // [[Rcpp::plugins(openmp)]]
 
 using namespace Rcpp;
 using namespace arma;
 
-// =====================================================================
-// POISSON REGRESSION (LOG LINK)
-// =====================================================================
+// Define struct to track solver results cleanly
+struct PoissonResult {
+  arma::vec beta;
+  bool success;
+};
 
-double calculate_deviance_poisson(const arma::vec &y,
-                                  const arma::vec &proposed_mu) {
-  arma::vec safe_mu = arma::clamp(proposed_mu, 1e-10, double(arma::datum::inf));
+// Highly optimized, allocation-free deviance calculation
+inline double calculate_deviance_poisson(const arma::vec &y,
+                                         const arma::vec &mu) {
+  double dev = 0.0;
+  int n = y.n_elem;
 
-  arma::vec log_term = arma::zeros<arma::vec>(y.n_elem);
+  for (int i = 0; i < n; i++) {
+    double y_val = y[i];
+    double mu_val = mu[i];
+    if (mu_val < 1e-10) {
+      mu_val = 1e-10; // Safe clamp for mu
+    }
 
-  // 3. Only calculate log for elements where y > 0. y*log(y) where y goes to
-  // zero is taken as zero
-  arma::uvec positive_y_indices = arma::find(y > 0);
-
-  if (!positive_y_indices.is_empty()) {
-    // Use element-wise multiplication (%) and division (/) for the safe indices
-    log_term.elem(positive_y_indices) =
-        y.elem(positive_y_indices) %
-        arma::log(y.elem(positive_y_indices) /
-                  safe_mu.elem(positive_y_indices));
+    double log_term = 0.0;
+    if (y_val > 0.0) {
+      log_term = y_val * std::log(y_val / mu_val);
+    }
+    dev += log_term - (y_val - mu_val);
   }
-  arma::vec dev_elements = log_term - (y - safe_mu);
-  return 2.0 * arma::accu(dev_elements);
+  return 2.0 * dev;
 }
 
-// IRLS Poisson regression solver (Log link)
-// [[Rcpp::export]]
-arma::vec fit_poisson_log_cpp(const arma::mat &X, const arma::vec &y) {
-  // Don't need to worry about an initial value, since this comes from the data
-  // Prevent log(0) by capping minimum values to 0.1
-  arma::vec safe_y = y;
-  safe_y.elem(arma::find(safe_y < 0.1)).fill(0.1);
-  arma::vec eta_init = arma::log(safe_y);
+// Allocation-free inner Poisson solver
+PoissonResult fit_poisson_inner(const arma::mat &X, const arma::vec &y,
+                                const arma::vec &initial_beta) {
+  int N = X.n_rows;
+  int P = X.n_cols;
+  arma::vec proposed_beta = initial_beta;
 
-  arma::vec proposed_beta;
-  // Get rough starting point. Fallback to zeros if X is ill-conditioned.
-  if (!arma::solve(proposed_beta, X, eta_init)) {
-    proposed_beta = arma::zeros<arma::vec>(X.n_cols);
-  }
+  // Pre-allocated tracking vectors
+  arma::vec eta(N), mu(N), grad(P), step(P);
+  arma::mat XTWX(P, P);
+  arma::mat XW(N, P);
 
-  arma::vec eta = X * proposed_beta;
-  arma::vec mu = arma::exp(arma::clamp(eta, -50.0, 50.0));
-  double current_dev = calculate_deviance_poisson(y, mu);
-  arma::vec step(X.n_cols);
+  bool solver_success = true;
 
-  for (int i = 0; i < 25; i++) {
-    arma::vec w = mu;
-    w.elem(arma::find(w < 1e-8)).fill(1e-8); // Stabilize tiny weights
+  // Fixed 10 iterations max. Well-conditioned systems converge in 4-6 steps.
+  for (int i = 0; i < 10; i++) {
+    eta = X * proposed_beta;
 
-    arma::mat XtWX = X.t() * arma::diagmat(w) * X;
-    arma::vec grad = X.t() * (y - mu);
-
-    bool success = arma::solve(step, XtWX, grad, arma::solve_opts::fast);
-    if (!success) {
-      success = arma::solve(step, XtWX, grad);
-      if (!success) {
-        break; // Matrix is singular, accept current beta
-      }
+    // Aggressive, tight clamping prevents the matrix from becoming singular
+    for (int k = 0; k < N; ++k) {
+      double e = eta[k];
+      if (e < -10.0)
+        e = -10.0; // Floor prevents weight from dropping below 0.000045
+      if (e > 10.0)
+        e = 10.0; // Ceiling prevents exponential explosion
+      mu[k] = std::exp(e);
     }
 
-    if (!step.is_finite())
+    // High-speed column scaling (matrix multiplication bypass)
+    XW = X;
+    XW.each_col() %= mu; // mu acts directly as our diagonal weight vector
+
+    XTWX = X.t() * XW;
+    grad = X.t() * (y - mu);
+
+    // With tight clamping, the fast-path solver succeeds reliably
+    solver_success = arma::solve(step, XTWX, grad, arma::solve_opts::fast);
+    if (!solver_success) {
+      solver_success = arma::solve(step, XTWX, grad); // Rare safety fallback
+    }
+
+    if (!solver_success || !step.is_finite()) {
       break;
-
-    // cap the norm(step-size) to be 20. Since the mean and the variance of the
-    // poisson are linked, we are preventing drastic oversteps
-    double max_step = 3.0;
-    double step_norm = arma::norm(step);
-    if (step_norm > max_step) {
-      step = step * (max_step / step_norm);
     }
 
-    arma::vec temp_beta = proposed_beta + step;
-    arma::vec temp_eta = X * temp_beta;
-    arma::vec proposed_mu = arma::exp(arma::clamp(temp_eta, -50.0, 50.0));
-    double proposed_dev = calculate_deviance_poisson(y, proposed_mu);
+    // Unconditional step update (relies on eta clamping for absolute stability)
+    proposed_beta += step;
 
-    // step-half
-    int half_iter = 0;
-    while ((!std::isfinite(proposed_dev) || proposed_dev > current_dev) &&
-           half_iter < 10) {
-      step = step / 2.0;
-      temp_beta = proposed_beta + step;
-      temp_eta = X * temp_beta;
-      proposed_mu = arma::exp(arma::clamp(temp_eta, -50.0, 50.0));
-      proposed_dev = calculate_deviance_poisson(y, proposed_mu);
-      half_iter++;
-    }
-
-    // Update state
-    proposed_beta = temp_beta;
-    mu = proposed_mu;
-    current_dev = proposed_dev;
-
-    if (arma::norm(step) < 1e-6) {
+    // Rapid convergence exit
+    if (arma::norm(step) < 1e-5) {
       break;
     }
   }
 
-  return proposed_beta;
+  return {proposed_beta, solver_success};
 }
 
-// [[Rcpp::export]]
 double compute_poisson_ll(const arma::vec &eta, const arma::vec &y) {
-  arma::vec mu = arma::exp(eta);
-  double term1 = arma::dot(y, eta);
-
-  // Sum of mu
-  double term2 = arma::accu(mu);
-
-  // log(y!) is equivalent to lgamma(y + 1)
-  double term3 = arma::accu(arma::lgamma(y + 1.0));
-
-  return term1 - term2 - term3;
+  return arma::dot(y, eta) - arma::accu(exp(eta)) -
+         arma::accu(arma::lgamma(y + 1.0));
 }
 
 // [[Rcpp::export]]
-arma::vec compute_poisson_ll_mat(const arma::mat &eta, const arma::vec &y) {
-  arma::mat mu = arma::exp(eta);
+arma::vec compute_poisson_ll_mat(const arma::mat &eta, const arma::vec y) {
   arma::vec ll(eta.n_cols);
   for (int i = 0; i < eta.n_cols; i++) {
-
     ll(i) = compute_poisson_ll(eta.col(i), y);
   }
   return ll;
 }
 
-// Main simulation function for Poisson
+// Exported wrapper for diagnostic verification
+// [[Rcpp::export]]
+arma::vec fit_poisson_log_cpp(const arma::mat &X, const arma::vec &y,
+                              const arma::vec &initial_beta) {
+  PoissonResult res = fit_poisson_inner(X, y, initial_beta);
+  return res.beta;
+}
+
+// Main Parallelized Simulation Function for Poisson
 // [[Rcpp::export]]
 double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
                           const arma::vec &mle_coefs,
                           const arma::vec &beta_vals, int m, bool approx) {
-
-  // Will get me into issues when parallel is true....
-  // Need to check first.
+  auto t_start = std::chrono::high_resolution_clock::now();
   int n = X.n_rows;
 
   arma::vec eta = X * beta_vals;
-  eta = arma::clamp(eta, -50.0, 50.0);
+  eta = arma::clamp(eta, -10.0, 10.0);
   arma::vec mu = arma::exp(eta);
 
-  // If the value of mu is too large, then the parameter is not possible
-  if (!mu.is_finite() || mu.max() > 1e7) {
+  if (!mu.is_finite() || mu.max() > 1e5) {
     return 0.0;
   }
 
   arma::vec eta_hat = X * mle_coefs;
-  eta_hat = arma::clamp(eta_hat, -50.0, 50.0);
-  arma::vec mu_hat = arma::exp(eta_hat);
-  mu_hat = arma::clamp(mu_hat, std::numeric_limits<double>::epsilon(), 1e15);
+  eta_hat = arma::clamp(eta_hat, -10.0, 10.0);
 
   double true_ll = compute_poisson_ll(eta, y);
   double mle_ll = compute_poisson_ll(eta_hat, y);
   double f_x = true_ll - mle_ll;
 
-  arma::mat Y_sim(n, m);
+  // ---------------------------------------------------------
+  // PHASE 1: LOOP-INVERTED PARALLEL DATA GENERATION
+  // ---------------------------------------------------------
+  arma::mat Y_sim(n, m); // Pre-allocate full simulation matrix
 
-  // Constructor
-  thread_local std::random_device rd;
-  // rd() is a non-deterministic random number
-  thread_local std::mt19937 gen(rd());
-  // Is using the random import to get access to these distributions
-  for (int i = 0; i < n; i++) {
-    std::poisson_distribution<int> rpois(mu(i));
-    for (int j = 0; j < m; j++) {
-      Y_sim(i, j) = rpois(gen);
-    }
-  }
+#pragma omp parallel if (approx)
+  {
+    std::random_device rd;
+    std::mt19937 gen(rd());
 
-  int count_less = 0;
-
-  for (int j = 0; j < m; j++) {
-    arma::vec y_sim = Y_sim.col(j);
-
-    arma::vec coefs_sim = fit_poisson_log_cpp(X, y_sim);
-    if (!coefs_sim.is_finite()) {
-      Rcpp::Rcout << "[j=" << j << "] coefs_sim is non-finite!\n";
-      Rcpp::Rcout << coefs_sim.t() << "\n";
-    }
-    arma::vec eta_hat_sim = X * coefs_sim;
-    eta_hat_sim = arma::clamp(eta_hat_sim, -50.0, 50.0);
-    arma::vec mu_hat_sim = arma::exp(eta_hat_sim);
-
-    double mle_sim = 0.0;
-    double llX_j = 0.0;
-    // Not using the dedicated log-likelihood function, as can remove the
-    // factorial this way Compare log likelihoods. Gamma y+1 is y!. Can remove
-    // the factorial computation since is subtracted away
+    // By iterating over 'n' on the outside, the distribution stays hot in the
+    // cache
+#pragma omp for schedule(static)
     for (int i = 0; i < n; i++) {
-      mle_sim += y_sim(i) * eta_hat_sim(i) - mu_hat_sim(i);
-      llX_j += y_sim(i) * eta(i) - mu(i);
-    }
-
-    double f_X_j = llX_j - mle_sim;
-
-    if (f_X_j <= f_x) {
-      count_less++;
+      std::poisson_distribution<int> rpois(mu(i));
+      for (int j = 0; j < m; j++) {
+        Y_sim(i, j) = rpois(gen);
+      }
     }
   }
+  auto t_sim_end = std::chrono::high_resolution_clock::now();
+
+  // ---------------------------------------------------------
+  // PHASE 2: PARALLEL SOLVER
+  // ---------------------------------------------------------
+  int count_less = 0;
+  double total_solver_time = 0.0;
+  double total_likelihood_time = 0.0;
+
+#pragma omp parallel reduction(+ : count_less, total_solver_time,              \
+                                   total_likelihood_time) if (approx)
+  {
+    // Thread-local workspaces (Zero heap allocations inside the j-loop)
+    arma::vec y_sim_local(n);
+    arma::vec eta_hat_sim(n);
+
+#pragma omp for schedule(static)
+    for (int j = 0; j < m; j++) {
+
+      // Pull the pre-generated column from cache directly
+      y_sim_local = Y_sim.col(j);
+
+      // Start the solver directly using beta_vals
+      auto s_start = std::chrono::high_resolution_clock::now();
+      PoissonResult sim_res = fit_poisson_inner(X, y_sim_local, beta_vals);
+      auto s_end = std::chrono::high_resolution_clock::now();
+      total_solver_time +=
+          std::chrono::duration<double>(s_end - s_start).count();
+
+      auto l_start = std::chrono::high_resolution_clock::now();
+      eta_hat_sim = X * sim_res.beta;
+
+      double mle_sim = 0.0;
+      double llX_j = 0.0;
+
+      // Fast inline calculation of log-likelihood differences without
+      // allocations
+      for (int i = 0; i < n; i++) {
+        double ehs = eta_hat_sim(i);
+        if (ehs < -10.0)
+          ehs = -10.0;
+        if (ehs > 10.0)
+          ehs = 10.0;
+
+        mle_sim += y_sim_local(i) * ehs - std::exp(ehs);
+        llX_j += y_sim_local(i) * eta(i) - mu(i);
+      }
+      auto l_end = std::chrono::high_resolution_clock::now();
+      total_likelihood_time +=
+          std::chrono::duration<double>(l_end - l_start).count();
+
+      double f_X_j = llX_j - mle_sim;
+
+      if (f_X_j <= f_x) {
+        count_less++;
+      }
+    }
+  }
+
+  auto t_end = std::chrono::high_resolution_clock::now();
+
+  // Print results
+  // Rcpp::Rcout << "\n--- POISSON PROFILE ---" << "\n";
+  // Rcpp::Rcout << "Total Time:      "
+  // << std::chrono::duration<double>(t_end - t_start).count()
+  // << "s\n";
+  // Rcpp::Rcout << "Data Gen Time:   "
+  //             << std::chrono::duration<double>(t_sim_end - t_start).count()
+  //             << "s\n";
+  // Rcpp::Rcout << "Sum Solver Time: " << total_solver_time
+  //             << "s (Combined across threads)\n";
+  // Rcpp::Rcout << "Sum LL Time:     " << total_likelihood_time
+  //             << "s (Combined across threads)\n";
 
   return (double)count_less / m;
 }

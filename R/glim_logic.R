@@ -378,8 +378,6 @@ glim <- function(
   } else {
     stop("Family not supported")
   }
-  print(betas)
-  print(J)
 
   if (!is.null(J)) {
     J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries
@@ -864,7 +862,7 @@ prob2poss_poisson <- function(X, y, samples, the_compared_theta, intercept = TRU
     }
   }
   eta <- X %*% samples
-  mle_coefs <- fit_poisson_log_cpp(X, y)
+  mle_coefs <- coef(glm(y ~ X - 1, family = poisson("log")))
   ll_val_samps <- as.vector(compute_poisson_ll_r(y, eta))
   ll_val <- as.vector(compute_poisson_ll_r(y, X %*% the_compared_theta))
   sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
@@ -882,4 +880,65 @@ prob2poss_poisson <- function(X, y, samples, the_compared_theta, intercept = TRU
 #' @export
 get_CI <- function(alpha, betas, possibilities) {
   return(betas[possibilities > alpha, ])
+}
+
+
+#' Helper function for testing
+#'
+#' Helppp
+#'
+#' @param X X
+#' @param y y
+#' @param xi xi
+#' @param family family
+#' @param alpha alpha
+#' @param mle mle
+#' @param mle_val mle_val
+#' @param J_vectors J_vectors
+#' @param J_values J_values
+#' @param dispersion dispersion
+#' @param tol tol
+#' @param a_val a_val
+#' @param b_val b_val
+#' @param max_it max_it
+#' @param parallel parallel
+#' @param m m
+#' @return value
+#' @export
+r_imvar <- function(
+  X,
+  y,
+  xi,
+  family,
+  alpha,
+  mle,
+  mle_val,
+  J_vectors,
+  J_values,
+  dispersion,
+  tol,
+  a_val,
+  b_val,
+  max_it,
+  parallel,
+  m
+) {
+  return(imvar(
+    X,
+    y,
+    xi,
+    family,
+    alpha,
+    mle,
+    mle_val,
+    J_vectors,
+    J_values,
+    dispersion,
+    tol,
+    a_val,
+    b_val,
+    max_it,
+    parallel,
+    m
+  ))
 }
