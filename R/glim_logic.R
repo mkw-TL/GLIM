@@ -49,7 +49,7 @@ scale_design_matrix <- function(X) {
 #' @noRd
 glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, parallel, approx) {
   if (is.data.frame(X)) {
-    X <- model.matrix(X)
+    X <- as.matrix(X)
   }
   output <- matrix()
 

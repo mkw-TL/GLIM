@@ -317,7 +317,7 @@ test_that("C++ Poisson solver runs and returns expected dimensions", {
   data <- generate_mock_data(n = 100, family = "poisson")
 
   # Test the Poisson log-link solver
-  res <- fit_poisson_log_cpp(X = data$X, y = data$y)
+  res <- fit_poisson_log_cpp(X = data$X, y = data$y, initial_beta = c(1, 1, 1))
 
   expect_type(res, "double")
   expect_length(res, ncol(data$X))
@@ -342,8 +342,13 @@ test_that("C++ Gamma solver converges cleanly", {
   set.seed(123)
   data <- generate_mock_data(n = 100, family = "gamma")
 
-  # Assuming standard export name based on other functions
-  res <- fit_gamma_cpp(X = data$X, y = data$y)
+  res <- fit_gamma_log_cpp(
+    X = data$X,
+    y = data$y,
+    XtX = t(data$X) %*% data$X,
+    initial_beta = rep(1, length = 3),
+    approx = FALSE
+  )
 
   expect_type(res, "double")
   expect_length(res, ncol(data$X))
@@ -357,10 +362,9 @@ test_that("glim_raw coerces data.frame to model.matrix properly", {
 
   # Construct dummy arguments required by glim_raw
   mle_coefs <- rep(0, ncol(data$X))
-  betas <- matrix(rep(0, ncol(data$X)), ncol = 1)
+  betas <- matrix(rep(0, ncol(data$X)), nrow = 1) # Note that glim does the flipping if a vector, glim_raw doesn't
 
   # Since glim_raw is an internal function, use the ::: operator if testing from outside
-  # Change `GLIM` to whatever your actual package name is
   res <- GLIM:::glim_raw(
     X = df_X,
     y = data$y,
