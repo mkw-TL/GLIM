@@ -324,124 +324,122 @@ compute_gamma_ll_r <- function(y, eta, shape) {
   }
 }
 
+# # Function that is called if doing elliptical approx (but faster)
+# #' @export
+# glim_inner_prob_approx_samples_2 <- function(
+#   X,
+#   y,
+#   family = "gaussian",
+#   mle_val,
+#   m,
+#   parallel,
+#   a,
+#   b,
+#   max_it,
+#   tol
+# ) {
+#   print("glim_inner_prob")
+#   B <- 100
+#   AA <- seq(0.001, 0.999, length = B)
+#   if (family == "gaussian" || family == "normal") {
+#     res <- lm(y ~ X - 1)
+#     # This is the observed variability for this link function
+#     J <- crossprod(X, X)
+#     dispersion <- 1
+#   } else if (family == "binomial") {
+#     res <- glm(y ~ X - 1, family = "binomial")
+#     p_i <- res$fitted.values
+#     # Note that a matrix times a vector, the vector will get recycled. Row-wise scaling
+#     J <- crossprod(X, X * (p_i * (1 - p_i)))
+#     dispersion <- 1
+#   } else if (family == "gamma") {
+#     # canonical link for gamma family (1/mu) is incredibly numerically unstable. If Xb is ever close to zero during the process, we get infinities. Additionally, if xb is ever negative, then we are saying that the mean of a gamma is negative.
+#     # Note that the weights are one here.
+#     res <- glm(y ~ X - 1, family = Gamma(link = "log"))
+#     J <- crossprod(X, X)
+#     mle_coefs <- res$coefficients
+#     dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
+#   } else if (family == "inverse.gaussian") {
+#     res <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
+#     # default link for the inverse gaussian in glm is not the canonical parameter (-1/2mu^2), but rather 1/mu. Additionally, note that the link we are using here is not a canonical link. The constant gets absorbed in a lot of places, and what ends up changing is the scaling factor outside our gradient update.
+#     eta <- X %*% res$coefficients
+#     mu_i <- as.vector(sqrt(1 / eta))
+#     J <- crossprod(X, X * (mu_i^3)) # TODO #7 check on this calculation
+#     dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
+#   } else if (family == "poisson") {
+#     res <- glm(y ~ X - 1, family = poisson(link = "log"))
+#     lambda_i <- res$fitted.values
+#     J <- crossprod(X, X * (lambda_i))
+#     dispersion <- 1
+#   }
+#   J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries -- Gemini's idea
+#   eJ <- eigen(J)
+#   # James' solution to needing to scale along a direction didn't work in my case
+#   # can't have zeros in the eigvalues because will not be invertible
+#   eJ$values[eJ$values < 1e-4] <- .000001
+#   mle_coefs <- res$coefficients
+#   eJ_vectors <- eJ$vectors
+#   ej_values <- diag(eJ$values)
 
-# Function that is called if doing elliptical approx (but faster)
-#' @export
-glim_inner_prob_approx_samples_2 <- function(
-  X,
-  y,
-  family = "gaussian",
-  mle_val,
-  m,
-  parallel,
-  a,
-  b,
-  max_it,
-  tol
-) {
-  print("glim_inner_prob")
-  B <- 100
-  AA <- seq(0.001, 0.999, length = B)
-  if (family == "gaussian" || family == "normal") {
-    res <- lm(y ~ X - 1)
-    # This is the observed variability for this link function
-    J <- crossprod(X, X)
-    dispersion <- 1
-  } else if (family == "binomial") {
-    res <- glm(y ~ X - 1, family = "binomial")
-    p_i <- res$fitted.values
-    # Note that a matrix times a vector, the vector will get recycled. Row-wise scaling
-    J <- crossprod(X, X * (p_i * (1 - p_i)))
-    dispersion <- 1
-  } else if (family == "gamma") {
-    # canonical link for gamma family (1/mu) is incredibly numerically unstable. If Xb is ever close to zero during the process, we get infinities. Additionally, if xb is ever negative, then we are saying that the mean of a gamma is negative.
-    # Note that the weights are one here.
-    res <- glm(y ~ X - 1, family = Gamma(link = "log"))
-    J <- crossprod(X, X)
-    mle_coefs <- res$coefficients
-    dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
-  } else if (family == "inverse.gaussian") {
-    res <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
-    # default link for the inverse gaussian in glm is not the canonical parameter (-1/2mu^2), but rather 1/mu. Additionally, note that the link we are using here is not a canonical link. The constant gets absorbed in a lot of places, and what ends up changing is the scaling factor outside our gradient update.
-    eta <- X %*% res$coefficients
-    mu_i <- as.vector(sqrt(1 / eta))
-    J <- crossprod(X, X * (mu_i^3)) # TODO #7 check on this calculation
-    dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
-  } else if (family == "poisson") {
-    res <- glm(y ~ X - 1, family = poisson(link = "log"))
-    lambda_i <- res$fitted.values
-    J <- crossprod(X, X * (lambda_i))
-    dispersion <- 1
-  }
-  J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries -- Gemini's idea
-  eJ <- eigen(J)
-  # James' solution to needing to scale along a direction didn't work in my case
-  # can't have zeros in the eigvalues because will not be invertible
-  eJ$values[eJ$values < 1e-4] <- .000001
-  mle_coefs <- res$coefficients
-  eJ_vectors <- eJ$vectors
-  ej_values <- diag(eJ$values)
+#   matrix_of_xis <- get_xi(
+#     AA,
+#     mle_coefs,
+#     family,
+#     eJ_vectors,
+#     eJ_values,
+#     dispersion,
+#     mle_val,
+#     a,
+#     b,
+#     max_it,
+#     tol
+#   )
 
-  matrix_of_xis <- get_xi(
-    AA,
-    mle_coefs,
-    family,
-    eJ_vectors,
-    eJ_values,
-    dispersion,
-    mle_val,
-    a,
-    b,
-    max_it,
-    tol
-  )
+#   u <- runif(m)
+#   # Lerping here
+#   lerped_xi <- c()
+#   for (i in 1:m) {
+#     if (u[i] < 1 / length(AA)) {
+#       lerped_xi = matrix_of_xis[, 1]
+#     } else if (u[i] > 1 - 1 / length(AA)) {
+#       lerped_xi = matrix_of_xis[, length(AA)]
+#     } else {
+#       # A simple method because we are assuming that our alpha values are equally spaced
+#       where_located <- findInterval(u[i], AA)
+#       w <- u[i] - AA[where_located]
+#       lerped_xi = w * matrix_of_xis[, where_located] + (1 - w) * matrix_of_xis[, where_located + 1]
+#     }
+#     if (is.na(lerped_xi)) {
+#       print("You dun messed up")
+#     }
+#     # Sample randomly on the boundary TODO #8 explain code
+#     # vectors stay the same, we multiply by the standard deviation.
+#     rand_dir <- generate_unit_matrix(1, length(mle_coefs))
+#     spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
 
-  u <- runif(m)
-  # Lerping here
-  lerped_xi <- c()
-  for (i in 1:m) {
-    if (u[i] < 1 / length(AA)) {
-      lerped_xi = matrix_of_xis[, 1]
-    } else if (u[i] > 1 - 1 / length(AA)) {
-      lerped_xi = matrix_of_xis[, length(AA)]
-    } else {
-      # A simple method because we are assuming that our alpha values are equally spaced
-      where_located <- findInterval(u[i], AA)
-      w <- u[i] - AA[where_located]
-      lerped_xi = w * matrix_of_xis[, where_located] + (1 - w) * matrix_of_xis[, where_located + 1]
-    }
-    if (is.na(lerped_xi)) {
-      print("You dun messed up")
-    }
-    # Sample randomly on the boundary TODO #8 explain code
-    # vectors stay the same, we multiply by the standard deviation.
-    rand_dir <- generate_unit_matrix(1, length(mle_coefs))
-    spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
+#     samples[, i] <- mle_coefs +
+#       as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * lerped_xi * spatial_dir)
+#   }
+#   return(samples)
+# }
 
-    samples[, i] <- mle_coefs +
-      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * lerped_xi * spatial_dir)
-  }
-  return(samples)
-}
-
-
-appendix <- function(eJ, num_samps, d, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
-  eig_vecs <- eJ$vectors
-  eig_vals <- eJ$values
-  output_samples <- lets_go_to_cpp(
-    eig_vecs,
-    eig_vals,
-    num_samps,
-    d,
-    X,
-    y,
-    mle_coefs,
-    family,
-    dispersion,
-    m,
-    tol,
-    max_it,
-    a,
-    b
-  )
-}
+# appendix <- function(eJ, num_samps, d, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
+#   eig_vecs <- eJ$vectors
+#   eig_vals <- eJ$values
+#   output_samples <- lets_go_to_cpp(
+#     eig_vecs,
+#     eig_vals,
+#     num_samps,
+#     d,
+#     X,
+#     y,
+#     mle_coefs,
+#     family,
+#     dispersion,
+#     m,
+#     tol,
+#     max_it,
+#     a,
+#     b
+#   )
+# }

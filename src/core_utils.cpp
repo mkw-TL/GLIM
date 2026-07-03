@@ -106,8 +106,6 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   arma::vec plausabilities(n_evals);
   arma::mat XtX = X.t() * X;
 
-  Rcpp::Rcout << "beta: " << betas;
-
   if (y.n_elem != X.n_rows || mle_coefs.n_elem != X.n_cols ||
       betas.n_cols != X.n_cols) {
     Rcpp::stop("Dimension mismatch: X is %d x %d, y has %d, mle_coefs has %d, "
@@ -186,7 +184,7 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
       // print it!
       if (current_percentage >= next_percentage_milestone) {
         int bar_width = 40;
-        int pos = (int)(bar_width * ((double)current_percentage / n_evals));
+        int pos = (int)(bar_width * ((double)current_percentage / 100.0));
 
         Rcpp::Rcout << "\rCalculating Plausibilities: [";
         for (int b = 0; b < bar_width; ++b) {
@@ -203,6 +201,15 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
         next_percentage_milestone = current_percentage + percentage_step;
       }
     }
+  }
+  if (approx == false) {
+    int bar_width = 40;
+    Rcpp::Rcout << "\rCalculating Plausibilities: [";
+    for (int b = 0; b < bar_width; ++b) {
+      Rcpp::Rcout << "="; // Fill the entire bar cleanly
+    }
+    Rcpp::Rcout << "] 100%\n"
+                << std::flush; // Print 100% and break to a new line
   }
 
   return plausabilities;

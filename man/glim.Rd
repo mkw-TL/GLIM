@@ -18,13 +18,13 @@ glim(
 )
 }
 \arguments{
-\item{X}{Matrix of predictors.}
+\item{X}{Matrix of predictors. Note that any dataframe should be first run through model.matrix()}
 
-\item{y}{Vector of response variables.}
+\item{y}{Vector of response variables. (Can be a nx2 matrix of successes and failures for binomial data)}
 
 \item{family}{String denoting the exponential family. Choices are \code{"gaussian"}, \code{"binomial"}, \code{"gamma"}, \code{"poisson"}, \code{"inverse.gaussian"}.}
 
-\item{m}{Number of samples/evaluations to perform (default \code{10000}).}
+\item{m}{Number of samples/evaluations to perform (default \code{1000}).}
 
 \item{approx}{Logical indicating whether to use the elliptical approximation (default \code{FALSE}).}
 
@@ -35,8 +35,12 @@ glim(
 \item{betas}{A matrix (or column vector) of different beta values to evaluate the possibility over.}
 }
 \value{
-A matrix of outputs or samples depending on whether the approximation is used.
+If using an elliptical approximation, returns samples of parameter values. Else, returns a list containing the matrix of betas upon which it was evaluated, and a vector of the corresponding possibilities.
 }
 \description{
-Main wrapper function to fit a GLIM model.
+Main wrapper function to fit a GLIM model. Users can pass in their own grid of beta values to evaluate by setting betas = MATRIX.
+A typical use would be MATRIX = as.matrix(expand.grid(beta_0_seq, beta_1_seq))
+}
+\details{
+If using the elliptical approximation, can tweak the Robbins-Monroe algorithm by changing a_val, b_val, and max_it.
 }

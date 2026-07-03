@@ -15,7 +15,8 @@ arma::vec fit_gaussian_cpp(const arma::mat &X, const arma::vec &y) {
     success = arma::solve(proposed_beta, X, y);
   }
   if (!success) {
-    proposed_beta.zeros(X.n_cols);
+    // pseudo inverse for a full rank matrix X^g = (X^t X)^-1 * X^T
+    proposed_beta = arma::pinv(X) * y;
   }
   return proposed_beta;
 }
@@ -41,7 +42,7 @@ arma::vec compute_gaussian_ll_mat(const arma::vec &y, const arma::mat &mu,
 }
 
 // [[Rcpp::export]]
-double est_dispersion(const arma::vec &y, const arma::vec &mu, int &p) {
+double est_dispersion(const arma::vec &y, const arma::vec &mu, int p) {
   return arma::accu((y - mu) % (y - mu)) / (y.n_elem - p);
 }
 
@@ -84,7 +85,13 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
     double mle_sim = compute_gaussian_ll(y_sim, mu_hat, sigma);
     double llX_j = compute_gaussian_ll(y_sim, mu, sigma);
 
+    // Rcpp::Rcout << "llX_j: " << llX_j << "\n";
+    // Rcpp::Rcout << "true_ll: " << true_ll << "\n";
+    // Rcpp::Rcout << "mle_sim: " << mle_sim << "\n";
+    // Rcpp::Rcout << "mle_val: " << mle_val << "\n";
     double f_X_j = llX_j - mle_sim;
+    // Rcpp::Rcout << "f_x: " << f_x << "\n";
+    // Rcpp::Rcout << "f_X_j: " << f_X_j << "\n";
 
     if (f_X_j <= f_x) {
       count_less++;

@@ -102,6 +102,7 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
   return(output)
 }
 
+
 #' Generates a grid of parameter values (aligned in eigen-vector space)
 #'
 #' Each direction has a default of 20 steps
@@ -109,21 +110,24 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
 #' @param mle_coefs The mle coef
 #' @noRd
 generate_eigen_grid <- function(
+  X,
+  y,
+  family,
   mle_coefs,
   eigen_vecs,
   eigen_vals,
   dispersion,
   ll_mle_original_data,
   column_names,
-  n_steps = 20,
-  max_sd = 3
+  n_steps = 31,
+  max_sd = 2.5
 ) {
   print("Generating a grid of beta values")
-  initial_xi <- c(1, ncol(X))
+  initial_xi <- rep(1, length(mle_coefs))
   imvar_xi <- imvar(
     X,
     y,
-    matrix(initial_xi, ncol = 1),
+    initial_xi,
     family,
     .1,
     mle_coefs,
@@ -131,15 +135,15 @@ generate_eigen_grid <- function(
     eigen_vecs,
     eigen_vals,
     dispersion,
-    .01,
-    2,
-    .65,
-    30,
+    .05, # this is the alpha level to which imvar is attempting to scale to
+    2, # alpha_val
+    .65, # beta_val
+    30, # max_it
     FALSE
   )
   scaling <- sqrt(1 / eigen_vals) * imvar_xi
-  max_sd <- 3
-  slices <- lapply(1:d, function(i) {
+  max_sd <- 2.5
+  slices <- lapply(1:length(mle_coefs), function(i) {
     seq(-max_sd, max_sd, length.out = n_steps)
   })
   eigenspace_grid <- as.matrix(expand.grid(slices))
@@ -175,7 +179,8 @@ glim_inner_prob_approx_samples <- function(
   eJ,
   dispersion,
   a_val,
-  b_val
+  b_val,
+  max_it
 ) {
   B <- 100
   AA <- seq(0.001, 0.999, length = B)
@@ -212,7 +217,7 @@ glim_inner_prob_approx_samples <- function(
       tol = .01,
       a_val = a_val,
       b_val = b_val,
-      max_it = 25,
+      max_it = max_it,
       parallel = FALSE
     )
     prev_xi <- xi[[i]]
@@ -284,7 +289,7 @@ glim <- function(
     } else {
       a_val <- 2
     }
-    if ("b_bal" %in% names(args)) {
+    if ("b_val" %in% names(args)) {
       if (is.numeric(args$b_val) & length(args$b_val) == 1 & args$b_val > 0) {
         b_val <- args$b_val
       } else {
@@ -318,7 +323,7 @@ glim <- function(
     }
   }
   if (!is.null(names(args))) {
-    if (!(all(names(args)) %in% c("a_val", "b_val", "max_it", "betas"))) {
+    if (!(all(names(args) %in% c("a_val", "b_val", "max_it", "betas")))) {
       stop("Incorrect names of additional arguments passed")
     }
   }
@@ -355,23 +360,14 @@ glim <- function(
         family
       ))
     }
-  } else if (family == "binomial") {
-    if (!all(y %in% c(0, 1))) {
-      # Modify if your binomial model accepts proportions instead of binary outcomes
-      stop("Input Error: For binomial family, 'y' must consist of 0s and 1s.")
-    }
   }
 
   if (!is.numeric(m) || length(m) != 1 || m <= 0 || m != floor(m)) {
     stop("Input Error: 'm' (number of samples) must be a single positive integer.")
   }
 
-  if (!missing(tol) && (!is.numeric(tol) || length(tol) != 1 || tol <= 0)) {
+  if ((!is.numeric(tol) || length(tol) != 1 || tol <= 0)) {
     stop("Input Error: 'tol' must be a strictly positive numeric scalar.")
-  }
-
-  if (!missing(max_it) && (!is.numeric(max_it) || length(max_it) != 1 || max_it <= 0)) {
-    stop("Input Error: 'max_it' must be a positive integer.")
   }
 
   J <- NULL
@@ -422,7 +418,7 @@ glim <- function(
       y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
       X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
     }
-    # We are using (-1) so that R knows the X matrix we are using, we don't want to append any extra intercepts
+    # We are using (-1) so that R knows the X matrix we are using; we don't want to append any extra intercepts
     ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
     res <- glm(y ~ X - 1, family = "binomial")
     mle_coefs <- res$coefficients
@@ -493,14 +489,6 @@ glim <- function(
     }
   }
 
-  if (!is.null(betas)) {
-    if (is.matrix(betas) && nrow(betas) != ncol(X)) {
-      stop(
-        "Input Error: The number of rows in the 'betas' matrix must match the number of columns in X."
-      )
-    }
-  }
-
   if (!missing(dispersion) && (!is.numeric(dispersion) || dispersion <= 0)) {
     stop("Input Error: 'dispersion' must be a strictly positive numeric value.")
   }
@@ -510,6 +498,9 @@ glim <- function(
   if (approx == FALSE & appendix == FALSE) {
     if (is.null(betas)) {
       betas <- generate_eigen_grid(
+        X,
+        y,
+        family,
         mle_coefs,
         eigen_vecs = eJ$vectors,
         eigen_vals = eJ$values,
@@ -537,8 +528,6 @@ glim <- function(
   }
 
   if (approx == TRUE & appendix == FALSE) {
-    print(a_val)
-    print(b_val)
     return(glim_inner_prob_approx_samples(
       X = X,
       y = y,
@@ -550,7 +539,8 @@ glim <- function(
       eJ = eJ,
       dispersion = dispersion,
       a_val = a_val,
-      b_val = b_val
+      b_val = b_val,
+      max_it = max_it
     ))
   }
 
@@ -627,7 +617,7 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta, intercept = TRUE)
   log_term_samps <- pmax(eta_samps, 0) + log1p(exp(-abs(eta_samps)))
   ll_val_samps <- as.vector(y %*% eta_samps) - colSums(log_term_samps)
 
-  return(sapply(ll_val, function(x) sum(ll_val_samps < x)) / length(ll_val_samps))
+  return(sapply(ll_val, function(x) sum(ll_val_samps <= x)) / length(ll_val_samps))
 }
 
 #' Probability to Possibility Mapping for Gamma Regression
@@ -659,7 +649,7 @@ prob2poss_gamma <- function(X, y, samples, the_compared_theta, intercept = TRUE)
 
   ll_val_samps <- as.vector(compute_gamma_ll_r(y, eta, shape = est_shape))
   ll_val <- as.vector(compute_gamma_ll_r(y, X %*% the_compared_theta, shape = est_shape))
-  sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
+  sapply(ll_val, function(x) sum(ll_val_samps <= x) / length(ll_val_samps))
 }
 
 #' Compute Gamma Log-Likelihood
@@ -743,14 +733,14 @@ prob2poss_gaussian <- function(X, y, samples, the_compared_theta, intercept = TR
 
   eta <- X %*% samples
 
-  # Assuming identity link for Gaussian by default, or adjust to fit_gaussian_identity_cpp if that matches your backend
+  # Assuming identity link for Gaussian by default
   mle_coefs <- fit_gaussian_cpp(X, y)
   est_sd <- sqrt(est_dispersion(y, X %*% mle_coefs, length(mle_coefs)))
 
   ll_val_samps <- as.vector(compute_gaussian_ll_r(y, eta, sigma = est_sd))
   ll_val <- as.vector(compute_gaussian_ll_r(y, X %*% the_compared_theta, sigma = est_sd))
 
-  sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
+  sapply(ll_val, function(x) sum(ll_val_samps <= x) / length(ll_val_samps))
 }
 
 
@@ -793,7 +783,7 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta, intercept = TR
     gamma_val = est_dispersion
   ))
 
-  sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
+  sapply(ll_val, function(x) sum(ll_val_samps <= x) / length(ll_val_samps))
 }
 
 
@@ -965,7 +955,7 @@ prob2poss_poisson <- function(X, y, samples, the_compared_theta, intercept = TRU
   mle_coefs <- coef(glm(y ~ X - 1, family = poisson("log")))
   ll_val_samps <- as.vector(compute_poisson_ll_r(y, eta))
   ll_val <- as.vector(compute_poisson_ll_r(y, X %*% the_compared_theta))
-  sapply(ll_val, function(x) sum(ll_val_samps < x) / length(ll_val_samps))
+  sapply(ll_val, function(x) sum(ll_val_samps <= x) / length(ll_val_samps))
 }
 
 
@@ -980,4 +970,13 @@ prob2poss_poisson <- function(X, y, samples, the_compared_theta, intercept = TRU
 #' @export
 get_CI <- function(alpha, betas, possibilities) {
   return(betas[possibilities > alpha, ])
+}
+
+
+comput_gauss <- function(y, mu, sigma) {
+  return(compute_gaussian_ll(y, mu, sigma))
+}
+
+est_sig_sq <- function(y, mu, p) {
+  return(est_dispersion(y, mu, p))
 }

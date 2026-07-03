@@ -214,14 +214,14 @@ BEGIN_RCPP
 END_RCPP
 }
 // est_dispersion
-double est_dispersion(const arma::vec& y, const arma::vec& mu, int& p);
+double est_dispersion(const arma::vec& y, const arma::vec& mu, int p);
 RcppExport SEXP _GLIM_est_dispersion(SEXP ySEXP, SEXP muSEXP, SEXP pSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type mu(muSEXP);
-    Rcpp::traits::input_parameter< int& >::type p(pSEXP);
+    Rcpp::traits::input_parameter< int >::type p(pSEXP);
     rcpp_result_gen = Rcpp::wrap(est_dispersion(y, mu, p));
     return rcpp_result_gen;
 END_RCPP
