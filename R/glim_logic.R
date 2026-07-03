@@ -103,6 +103,66 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
 }
 
 
+#' Generates a grid of parameter values (cut by imvar)
+#'
+#' Aligned in parameter grid, rather than eigen-vector space for easier marginalization
+#' @noRd
+generate_grid <- function(
+  X,
+  y,
+  family,
+  mle_coefs,
+  eigen_vecs,
+  eigen_vals,
+  dispersion,
+  ll_mle_original_data,
+  # column_names,
+  n_steps = 31,
+  max_sd = 2.5
+) {
+  print("Generating a grid of beta values")
+  initial_xi <- rep(1, length(mle_coefs))
+  imvar_xi <- imvar(
+    X,
+    y,
+    initial_xi,
+    family,
+    .05,
+    mle_coefs,
+    ll_mle_original_data,
+    eigen_vecs,
+    eigen_vals,
+    dispersion,
+    .05, # this is the alpha level to which imvar is attempting to scale to
+    2, # alpha_val
+    .65, # beta_val
+    30, # max_it
+    FALSE
+  )
+  scaling <- sqrt(1 / eigen_vals) * imvar_xi
+  for (i in 1:length(mle_coefs)) {
+    beta[[i]] <- seq(mle_coefs[i] - scaling[i], mle_coefs[i] + scaling[i], 31)
+  }
+  betas <- as.matrix(expand.grid(beta))
+  shifted_points <- sweep(points_matrix, 2, center, FUN = "-")
+
+  # Step B: Rotate the points using the eigenvectors
+  # Multiplying by V (instead of V transposed) handles the proper rotation
+  # for N x d matrices in R.
+  rotated_points <- shifted_points %*% eigen_vecs
+
+  # Step C: Divide by the eigenvalues (squared semi-axes)
+  # We square the rotated points first, then divide.
+  scaled_sq_points <- sweep(rotated_points^2, 2, eigen_vals, FUN = "/")
+
+  # Step D: Sum across the dimensions (columns) and check if <= 1
+  inside_index <- rowSums(scaled_sq_points) <= 1
+
+  # 4. Extract the points that fall inside
+  points_inside <- betas[inside_index, ]
+  return(points_inside)
+}
+
 #' Generates a grid of parameter values (aligned in eigen-vector space)
 #'
 #' Each direction has a default of 20 steps
