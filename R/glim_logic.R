@@ -116,49 +116,58 @@ generate_grid <- function(
   eigen_vals,
   dispersion,
   ll_mle_original_data,
-  # column_names,
+  column_names,
   n_steps = 31,
-  max_sd = 2.5
+  max_sd = 1
 ) {
-  print("Generating a grid of beta values")
   initial_xi <- rep(1, length(mle_coefs))
+
+  alpha_target <- 0.01
+
   imvar_xi <- imvar(
     X,
     y,
     initial_xi,
     family,
-    .05,
+    alpha_target,
     mle_coefs,
     ll_mle_original_data,
     eigen_vecs,
     eigen_vals,
     dispersion,
-    .05, # this is the alpha level to which imvar is attempting to scale to
-    2, # alpha_val
-    .65, # beta_val
-    30, # max_it
-    FALSE
+    .02,
+    2,
+    .65,
+    FALSE,
+    31
   )
-  scaling <- sqrt(1 / eigen_vals) * imvar_xi
+  # TODO actually learn what is going on here
+  q_val <- qchisq(1 - alpha_target, df = length(mle_coefs))
+  print(q_val)
+  base_scale <- sqrt(dispersion * q_val * abs(1 / eigen_vals))
+  print(base_scale)
+
+  semi_axes <- base_scale * sqrt(imvar_xi)
+  print(dim(semi_axes))
+
+  print(dim(eigen_vecs))
+  print(dim(diag(as.vector(semi_axes))))
+  T_mat <- eigen_vecs %*% diag(as.vector(semi_axes))
+
+  H <- sqrt(rowSums(T_mat^2))
+
+  # 4. Generate the Axis-Aligned Grid using the bounding box widths
+  beta <- list()
   for (i in 1:length(mle_coefs)) {
-    beta[[i]] <- seq(mle_coefs[i] - scaling[i], mle_coefs[i] + scaling[i], 31)
+    beta[[i]] <- seq(mle_coefs[i] - H[i], mle_coefs[i] + H[i], length.out = n_steps)
   }
   betas <- as.matrix(expand.grid(beta))
-  shifted_points <- sweep(points_matrix, 2, center, FUN = "-")
-
-  # Step B: Rotate the points using the eigenvectors
-  # Multiplying by V (instead of V transposed) handles the proper rotation
-  # for N x d matrices in R.
+  colnames(betas) <- column_names
+  shifted_points <- sweep(betas, 2, mle_coefs, FUN = "-")
   rotated_points <- shifted_points %*% eigen_vecs
-
-  # Step C: Divide by the eigenvalues (squared semi-axes)
-  # We square the rotated points first, then divide.
-  scaled_sq_points <- sweep(rotated_points^2, 2, eigen_vals, FUN = "/")
-
-  # Step D: Sum across the dimensions (columns) and check if <= 1
+  scaled_sq_points <- sweep(rotated_points^2, 2, semi_axes^2, FUN = "/")
   inside_index <- rowSums(scaled_sq_points) <= 1
 
-  # 4. Extract the points that fall inside
   points_inside <- betas[inside_index, ]
   return(points_inside)
 }
@@ -201,15 +210,19 @@ generate_eigen_grid <- function(
     30, # max_it
     FALSE
   )
-  scaling <- sqrt(1 / eigen_vals) * imvar_xi
-  max_sd <- 2.5
+  scaling <- sqrt(eigen_vals) * imvar_xi
+  print(scaling)
   slices <- lapply(1:length(mle_coefs), function(i) {
-    seq(-max_sd, max_sd, length.out = n_steps)
+    seq(-1, 1, length.out = n_steps)
   })
   eigenspace_grid <- as.matrix(expand.grid(slices))
+  print(head(eigenspace_grid))
   scaled_eigenspace <- t(t(eigenspace_grid) * as.vector(scaling))
+  print(head(scaled_eigenspace))
   param_deltas <- scaled_eigenspace %*% t(eigen_vecs)
+  print(head(param_deltas))
   betas <- t(t(param_deltas) + as.vector(mle_coefs))
+  print(head(betas))
   colnames(betas) <- column_names
 
   return(betas)
@@ -243,7 +256,7 @@ glim_inner_prob_approx_samples <- function(
   max_it
 ) {
   B <- 100
-  AA <- seq(0.001, 0.999, length = B)
+  AA <- seq(0.001, 0.999, length.out = B)
 
   pl <- function(z) {
     betas_matrix <- if (is.matrix(z)) z else matrix(z, nrow = 1)
@@ -438,11 +451,19 @@ glim <- function(
     # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
     has_intercept <- any(colSums(X == 1) == nrow(X))
     if (!has_intercept) {
-      X <- cbind("(Intercept)" = 1, X)
+      X <- cbind(rep(1, length(y)), X)
     }
   }
-
-  column_names <- colnames(X)
+  column_names <- c()
+  if (is.null(colnames(X))) {
+    if (ncol(X) > 1) {
+      for (col in 1:ncol(X)) {
+        column_names[col] <- paste0("b", col - 1)
+      }
+    } else {
+      column_names <- "b1" # not consistent, I know, but if the user wants to only fit y ~ xb with no intercept, they are asking for it
+    }
+  }
 
   ## Binomial setup
   if (family == "binomial" || family == "logistic") {
@@ -456,9 +477,13 @@ glim <- function(
       successes <- y[, 1]
       failures <- y[, 2]
 
-      idx_success <- rep(1:nrow(X), times = successes)
-      idx_fail <- rep(1:nrow(X), times = failures)
-
+      if (ncol(X) == 1) {
+        idx_success <- rep(1:length(X), times = successes)
+        idx_fail <- rep(1:length(X), times = failures)
+      } else {
+        idx_success <- rep(1:nrow(X), times = successes)
+        idx_fail <- rep(1:nrow(X), times = failures)
+      }
       # I did not know this, but X[c(2, 2), ] will repeat the second index twice
       # drop = FALSE means that it stays as a matrix, rather than going to a vector
       X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
@@ -553,11 +578,9 @@ glim <- function(
     stop("Input Error: 'dispersion' must be a strictly positive numeric value.")
   }
 
-  column_names <- colnames(X)
-
   if (approx == FALSE & appendix == FALSE) {
     if (is.null(betas)) {
-      betas <- generate_eigen_grid(
+      betas <- generate_grid(
         X,
         y,
         family,
@@ -570,6 +593,7 @@ glim <- function(
         n_steps = 20,
         max_sd = 3
       )
+      colnames(betas) <- column_names
     }
     return(list(
       possibilities = glim_raw(
