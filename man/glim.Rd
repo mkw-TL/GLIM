@@ -5,8 +5,8 @@
 \title{Generalized Linear Inferential Models (GLIM) Main Function}
 \usage{
 glim(
-  X,
-  y,
+  formula,
+  data,
   family = "gaussian",
   m = 1000,
   approx = FALSE,
@@ -18,10 +18,6 @@ glim(
 )
 }
 \arguments{
-\item{X}{Matrix of predictors. Note that any dataframe should be first run through model.matrix()}
-
-\item{y}{Vector of response variables. (Can be a nx2 matrix of successes and failures for binomial data)}
-
 \item{family}{String denoting the exponential family. Choices are \code{"gaussian"}, \code{"binomial"}, \code{"gamma"}, \code{"poisson"}, \code{"inverse.gaussian"}.}
 
 \item{m}{Number of samples/evaluations to perform (default \code{1000}).}
@@ -31,6 +27,10 @@ glim(
 \item{parallel}{Logical indicating whether to process in parallel.}
 
 \item{intercept}{Logical indicating whether to add an intercept term}
+
+\item{X}{Matrix of predictors. Note that any dataframe should be first run through model.matrix()}
+
+\item{y}{Vector of response variables. (Can be a nx2 matrix of successes and failures for binomial data)}
 
 \item{betas}{A matrix (or column vector) of different beta values to evaluate the possibility over.}
 }

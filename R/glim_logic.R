@@ -46,26 +46,6 @@ scale_design_matrix <- function(X) {
 #' @return A matrix of evaluated possibility outputs.
 #' @noRd
 glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, parallel, approx) {
-  if (is.data.frame(X)) {
-    X <- as.matrix(X)
-  }
-  if (nrow(X) != length(y)) {
-    stop(
-      "Input Error: The number of rows in the design matrix X must equal the length of the response vector y."
-    )
-  }
-  if (any(is.na(X)) || any(is.na(y))) {
-    warning(
-      "Input Warning: Missing values (NA) detected in X or y. This will likely cause crashes."
-    )
-  }
-
-  if (ncol(X) > nrow(X)) {
-    warning(
-      "Input Warning: The number of predictors (p) is greater than the number of observations (n)."
-    )
-  }
-
   output <- matrix()
 
   if (parallel) {
@@ -117,7 +97,7 @@ generate_grid <- function(
   dispersion,
   ll_mle_original_data,
   column_names,
-  n_steps = 31,
+  n_grid_evals = 51,
   max_sd = 1
 ) {
   initial_xi <- rep(1, length(mle_coefs))
@@ -139,7 +119,7 @@ generate_grid <- function(
     2,
     .65,
     FALSE,
-    31
+    1000 # This is our m value
   )
   # TODO actually learn what is going on here
   q_val <- qchisq(1 - alpha_target, df = length(mle_coefs))
@@ -159,7 +139,7 @@ generate_grid <- function(
   # 4. Generate the Axis-Aligned Grid using the bounding box widths
   beta <- list()
   for (i in 1:length(mle_coefs)) {
-    beta[[i]] <- seq(mle_coefs[i] - H[i], mle_coefs[i] + H[i], length.out = n_steps)
+    beta[[i]] <- seq(mle_coefs[i] - H[i], mle_coefs[i] + H[i], length.out = n_grid_evals)
   }
   betas <- as.matrix(expand.grid(beta))
   colnames(betas) <- column_names
@@ -188,7 +168,7 @@ generate_eigen_grid <- function(
   dispersion,
   ll_mle_original_data,
   column_names,
-  n_steps = 31,
+  n_grid_evals = n_grid_evals,
   max_sd = 2.5
 ) {
   print("Generating a grid of beta values")
@@ -213,7 +193,7 @@ generate_eigen_grid <- function(
   scaling <- sqrt(eigen_vals) * imvar_xi
   print(scaling)
   slices <- lapply(1:length(mle_coefs), function(i) {
-    seq(-1, 1, length.out = n_steps)
+    seq(-1, 1, length.out = n_grid_evals)
   })
   eigenspace_grid <- as.matrix(expand.grid(slices))
   print(head(eigenspace_grid))
@@ -340,8 +320,8 @@ glim_inner_prob_approx_samples <- function(
 #' @return If using an elliptical approximation, returns samples of parameter values. Else, returns a list containing the matrix of betas upon which it was evaluated, and a vector of the corresponding possibilities.
 #' @export
 glim <- function(
-  X,
-  y,
+  formula,
+  data,
   family = "gaussian",
   m = 1000,
   approx = FALSE,
@@ -351,6 +331,21 @@ glim <- function(
   tol = 1e-2,
   ...
 ) {
+  mf <- match.call(expand.dots = FALSE) # Captures the whole input
+  match <- match(
+    # filters out any non-used arguments
+    c("formula", "data"),
+    names(mf),
+    0L
+  )
+  mf <- mf[c(1L, match)] # from match.call, take elements 1 (function name), 2 (match with formula), 3 (match with data)
+  mf$drop.unused.levels <- TRUE
+  mf[[1L]] <- quote(stats::model.frame)
+  mf <- eval(mf, parent.frame())
+  mt <- attr(mf, "terms") # figure out the variables to expand out in the model.matrix. Contains further attributes of factors, etc
+  offset <- model.offset(mf) # would need to put into glim()
+  X <- model.matrix(mt, mf, NULL) # model.matrix() creates the dummy columns. NULL is the contrasts (which could be set as default setting within a useR's R session, but I don't want to incorporate this)
+  y <- model.response(mf, "numeric")
   args <- list(...)
   if (approx == TRUE) {
     if ("a_val" %in% names(args)) {
@@ -395,6 +390,13 @@ glim <- function(
       }
     }
   }
+  if ("n_grid_evals" %in% names(args)) {
+    if (is.integer(args$n_grid_evals)) {
+      n_grid_evals <- args$n_grid_evals
+    }
+  } else {
+    n_grid_evals <- 41
+  }
   if (!is.null(names(args))) {
     if (!(all(names(args) %in% c("a_val", "b_val", "max_it", "betas")))) {
       stop("Incorrect names of additional arguments passed")
@@ -404,6 +406,32 @@ glim <- function(
   if (!is.matrix(X)) {
     stop(
       "X must be a matrix. To convert a dataframe into a matrix, either run matrix(), or model.matrix() depending on whether you have categories"
+    )
+  }
+
+  if (is.vector(y)) {
+    if (nrow(X) != length(y)) {
+      stop(
+        "Input Error: The number of rows in the design matrix X must equal the length of the response vector y."
+      )
+    }
+  } else {
+    if (nrow(X) != nrow(y)) {
+      stop(
+        "Input Error: The number of rows in the design matrix X must equal the length of the response vector y."
+      )
+    }
+  }
+
+  if (any(is.na(X)) || any(is.na(y))) {
+    warning(
+      "Input Warning: Missing values (NA) detected in X or y. This will likely cause crashes."
+    )
+  }
+
+  if (ncol(X) > nrow(X)) {
+    warning(
+      "Input Warning: The number of predictors (p) is greater than the number of observations (n)."
     )
   }
 
@@ -447,23 +475,33 @@ glim <- function(
   if (is.data.frame(X)) {
     X <- as.matrix(X)
   }
-  if (intercept == TRUE) {
-    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
-    has_intercept <- any(colSums(X == 1) == nrow(X))
-    if (!has_intercept) {
-      X <- cbind(rep(1, length(y)), X)
-    }
-  }
   column_names <- c()
   if (is.null(colnames(X))) {
     if (ncol(X) > 1) {
       for (col in 1:ncol(X)) {
-        column_names[col] <- paste0("b", col - 1)
+        column_names[col] <- paste0("b", col)
       }
     } else {
-      column_names <- "b1" # not consistent, I know, but if the user wants to only fit y ~ xb with no intercept, they are asking for it
+      column_names <- "b1"
+    }
+  } else {
+    column_names <- colnames(X)
+  }
+  print(column_names)
+  if (intercept == TRUE) {
+    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
+    has_intercept <- any(colSums(X == 1) == nrow(X))
+    if (!has_intercept) {
+      if (is.vector(y)) {
+        X <- cbind(rep(1, length(y)), X)
+        column_names <- c("intercept", column_names)
+      } else {
+        X <- cbind(rep(1, nrow(y)), X)
+        column_names <- c("intercept", column_names)
+      }
     }
   }
+  print(column_names)
 
   ## Binomial setup
   if (family == "binomial" || family == "logistic") {
@@ -512,6 +550,7 @@ glim <- function(
     if (is.null(betas)) {
       J <- crossprod(X, X * as.vector((p_i * (1 - p_i))))
     }
+    p2p_function <- prob2poss_logis
 
     ## Gamma setup
   } else if (family == "gamma") {
@@ -522,6 +561,7 @@ glim <- function(
     if (is.null(betas)) {
       J <- crossprod(X, X)
     }
+    p2p_function <- prob2poss_gamma
 
     ## Poisson setup
   } else if (family == "poisson") {
@@ -533,6 +573,7 @@ glim <- function(
     if (is.null(betas)) {
       J <- crossprod(X, X * as.vector(lambda_i))
     }
+    p2p_function <- prob2poss_poisson
 
     ## Inverse Gaussian setup
   } else if (family == "inverse.gaussian") {
@@ -547,6 +588,7 @@ glim <- function(
     if (is.null(betas)) {
       J <- crossprod(X, X * (mu_i^3) / 4)
     }
+    p2p_function <- prob2poss_invgauss
 
     ## Gaussian Setup
   } else if (family == "normal" || family == "gaussian") {
@@ -556,6 +598,7 @@ glim <- function(
     if (is.null(betas)) {
       J <- crossprod(X, X)
     }
+    p2p_function <- prob2poss_gaussian
   } else {
     stop("Family not supported")
   }
@@ -580,6 +623,7 @@ glim <- function(
 
   if (approx == FALSE & appendix == FALSE) {
     if (is.null(betas)) {
+      print("generating_grid_of_betas")
       betas <- generate_grid(
         X,
         y,
@@ -590,12 +634,12 @@ glim <- function(
         dispersion,
         ll_mle_original_data,
         column_names,
-        n_steps = 20,
+        n_grid_evals = n_grid_evals,
         max_sd = 3
       )
       colnames(betas) <- column_names
     }
-    return(list(
+    obj_to_return <- list(
       possibilities = glim_raw(
         X,
         y,
@@ -607,12 +651,15 @@ glim <- function(
         parallel = parallel,
         approx = approx
       ),
-      betas = betas
-    ))
+      betas = betas,
+      family = family
+    )
+    class(obj_to_return) <- "glim_object"
+    return(obj_to_return)
   }
 
   if (approx == TRUE & appendix == FALSE) {
-    return(glim_inner_prob_approx_samples(
+    samples <- glim_inner_prob_approx_samples(
       X = X,
       y = y,
       family = family,
@@ -625,13 +672,24 @@ glim <- function(
       a_val = a_val,
       b_val = b_val,
       max_it = max_it
-    ))
+    )
+    beta_seq_list <- list()
+    for (i in 1:nrow(samples)) {
+      beta_seq_list[[i]] <- seq(min(samples[i, ]), max(samples[i, ]), length.out = 51)
+    }
+    beta_p2p_grid <- as.matrix(expand.grid(beta_seq_list))
+    poss <- p2p_function(X, y, samples, t(beta_p2p_grid))
+    colnames(beta_p2p_grid) <- column_names
+    obj_to_return <- list(possibilities = poss, betas = beta_p2p_grid, family = family)
+    class(obj_to_return) <- "glim_object"
+    return(obj_to_return)
   }
 
   if (appendix == TRUE & approx == TRUE) {
     stop("Appendix and approximation methods cannot both be used")
   }
   if (appendix == TRUE & approx == FALSE) {
+    # TODO implement
     return(appendix(eJ, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b))
   }
 }
@@ -691,7 +749,6 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta, intercept = TRUE)
     # drop = FALSE means that it stays as a matrix, rather than going to a vector
     y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
     X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
-    X <- cbind(rep(1, length(y)), X)
   }
   eta <- X %*% the_compared_theta
   log_term <- pmax(eta, 0) + log1p(exp(-abs(eta)))
@@ -1045,15 +1102,29 @@ prob2poss_poisson <- function(X, y, samples, the_compared_theta, intercept = TRU
 
 #' Returns a confidence interval
 #'
-#' Note that a 95% confidence interval corresponds to alpha = .95
+#' Note that a 95% confidence interval corresponds to alpha = .05
 #'
 #' @param alpha Note that a 95% confidence interval corresponds to alpha = .05
 #' @param betas The grid of beta values which we are evaluating on
 #' @param possibilities The vector of possibilities
 #' @return A matrix of compatable beta values from the grid.
 #' @export
-get_CI <- function(alpha, betas, possibilities) {
+get_CI_manual <- function(alpha, betas, possibilities) {
   return(betas[possibilities > alpha, ])
+}
+
+#' Returns a confidence interval
+#'
+#' Note that a 95% confidence interval corresponds to alpha = .05
+#'
+#' @param glim_object Note that a 95% confidence interval corresponds to alpha = .05
+#' @return A matrix of compatable beta values from the grid.
+#' @export
+get_CI <- function(glim_object, alpha) {
+  if (class(glim_object) != "glim_object") {
+    stop("Object which was passed is not a direct result from glim()")
+  }
+  return(glim_object$betas[glim_object$possibilities > alpha, ])
 }
 
 
@@ -1063,4 +1134,67 @@ comput_gauss <- function(y, mu, sigma) {
 
 est_sig_sq <- function(y, mu, p) {
   return(est_dispersion(y, mu, p))
+}
+
+#' Plot
+#'
+#' Plotting for glim objects
+#'
+#' @param object from 'glim()'
+#' @return Marginal plots for betas
+#' @export
+plot.glim_object <- function(output) {
+  betas <- output$betas
+  poss <- output$possibilities
+  family <- output$family
+
+  num_predictors <- ncol(betas)
+  grid_cols <- ceiling(sqrt(num_predictors))
+  grid_rows <- ceiling(num_predictors / grid_cols)
+
+  old_par <- par(no.readonly = TRUE)
+  # Add 'oma' (outer margin area) to par(). c(bottom, left, top, right)
+  # We add 3 lines of space to the top
+  par(mfrow = c(grid_rows, grid_cols), mar = c(4, 4, 3, 1), oma = c(0, 0, 3, 0))
+
+  on.exit(par(old_par)) # if any crashes, don't have the user's state altered
+  #where the marginalization happens
+  for (col in 1:ncol(betas)) {
+    max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
+
+    # Filter out -Inf values from empty grid slices
+    beta_vals <- as.numeric(names(max_plaus))
+    valid <- is.finite(beta_vals) & is.finite(max_plaus)
+
+    if (any(valid)) {
+      plot.default(
+        beta_vals[valid],
+        max_plaus[valid],
+        type = 'l',
+        xlab = colnames(betas)[col],
+        ylab = "Profiled Plausibility",
+        ylim = c(0, 1)
+      )
+      axis(1, tck = 1, lty = 2, col = "grey")
+      axis(2, tck = 1, lty = 2, col = "grey")
+    } else {
+      # Draw an empty box if no data falls in this slice
+      plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
+    }
+  }
+  # Margin text. Ensuring family is correctly uppercased
+  mtext(
+    text = paste0(
+      toupper(substr(family, 1, 1)),
+      substr(family, 2, nchar(family)),
+      " Possibility contours (marginalized)"
+    ),
+    side = 3, # 3 means top
+    outer = TRUE, # Put it in the outer margin space
+    line = -.3, # Distance from the edge of the plots
+    cex = 1.3, # Font size multiplier (makes it larger)
+    font = 2 # 2 means Bold
+  )
+  # Reset back to default
+  par(mfrow = c(1, 1), oma = c(0, 0, 0, 0))
 }
