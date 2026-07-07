@@ -4,7 +4,7 @@
 \alias{get_CI}
 \title{Returns a confidence interval}
 \usage{
-get_CI(glim_object, alpha)
+get_CI(glim_object, alpha = 0.05)
 }
 \arguments{
 \item{glim_object}{Note that a 95\% confidence interval corresponds to alpha = .05}

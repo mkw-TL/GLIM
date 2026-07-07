@@ -97,8 +97,9 @@ generate_grid <- function(
   dispersion,
   ll_mle_original_data,
   column_names,
-  n_grid_evals = 51,
-  max_sd = 1
+  n_grid_evals = 25,
+  max_sd = 1,
+  m = 500
 ) {
   initial_xi <- rep(1, length(mle_coefs))
 
@@ -119,36 +120,41 @@ generate_grid <- function(
     2,
     .65,
     FALSE,
-    1000 # This is our m value
+    m # This is our m value
   )
-  # TODO actually learn what is going on here
-  q_val <- qchisq(1 - alpha_target, df = length(mle_coefs))
-  print(q_val)
+  # sqrt(dispersion * xi / eigen_val)
+  q_val <- qchisq(1 - alpha_target, df = length(mle_coefs) - 1) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
   base_scale <- sqrt(dispersion * q_val * abs(1 / eigen_vals))
-  print(base_scale)
-
   semi_axes <- base_scale * sqrt(imvar_xi)
-  print(dim(semi_axes))
+  transformed_mat <- eigen_vecs %*% diag(as.vector(semi_axes)) # Takes the principle axes (through diag) and scales them (by semi_axes), then rotate to eigen_vector span
 
-  print(dim(eigen_vecs))
-  print(dim(diag(as.vector(semi_axes))))
-  T_mat <- eigen_vecs %*% diag(as.vector(semi_axes))
+  # To make the beta coordinate the largest, we have our transformation matrix (times u, where u is a unit sphere).
+  # Then, for a particular coordinate, we have b1 = row_1 * u, where this is maximized if u is in the direction of row_1.
+  H <- sqrt(rowSums(transformed_mat^2))
 
-  H <- sqrt(rowSums(T_mat^2))
-
-  # 4. Generate the Axis-Aligned Grid using the bounding box widths
+  # Generate the Axis-Aligned Grid using the bounding box widths
   beta <- list()
+  n_left <- floor((n_grid_evals - 1) / 2)
+  n_right <- n_grid_evals - 1 - n_left # if n_grid_evals is even, right side gets one more data point
   for (i in 1:length(mle_coefs)) {
-    beta[[i]] <- seq(mle_coefs[i] - H[i], mle_coefs[i] + H[i], length.out = n_grid_evals)
+    beta[[i]] <- c(
+      # Allocate half the points to the left, half to the right
+      seq(mle_coefs[i] - H[i], mle_coefs[i], length.out = n_left + 1)[-(n_left + 1)], # Left side excluding MLE. Need to do length.out + 1 because we're going to get rid of one
+      mle_coefs[i], # Exact MLE
+      seq(mle_coefs[i], mle_coefs[i] + H[i], length.out = n_right + 1)[-1] # Right side excluding MLE
+    )
   }
+
   betas <- as.matrix(expand.grid(beta))
   colnames(betas) <- column_names
-  shifted_points <- sweep(betas, 2, mle_coefs, FUN = "-")
+  # Written by Gemini
+  shifted_points <- sweep(betas, 2, mle_coefs, FUN = "-") # 2 means that it applies along the columns. Betas - mle_coefs for each column
   rotated_points <- shifted_points %*% eigen_vecs
   scaled_sq_points <- sweep(rotated_points^2, 2, semi_axes^2, FUN = "/")
-  inside_index <- rowSums(scaled_sq_points) <= 1
-
-  points_inside <- betas[inside_index, ]
+  inside_indices <- rowSums(scaled_sq_points) <= 1
+  # Check if they are inside the unit sphere (i.e. inside the ellipse)
+  # From betas, select all the columns (proposed betas) that are inside
+  points_inside <- betas[inside_indices, ]
   return(points_inside)
 }
 
@@ -316,7 +322,6 @@ glim_inner_prob_approx_samples <- function(
 #' @param m Number of samples/evaluations to perform (default `1000`).
 #' @param approx Logical indicating whether to use the elliptical approximation (default `FALSE`).
 #' @param parallel Logical indicating whether to process in parallel.
-#' @param intercept Logical indicating whether to add an intercept term
 #' @return If using an elliptical approximation, returns samples of parameter values. Else, returns a list containing the matrix of betas upon which it was evaluated, and a vector of the corresponding possibilities.
 #' @export
 glim <- function(
@@ -327,7 +332,6 @@ glim <- function(
   approx = FALSE,
   appendix = FALSE,
   parallel = TRUE,
-  intercept = TRUE,
   tol = 1e-2,
   ...
 ) {
@@ -347,6 +351,7 @@ glim <- function(
   X <- model.matrix(mt, mf, NULL) # model.matrix() creates the dummy columns. NULL is the contrasts (which could be set as default setting within a useR's R session, but I don't want to incorporate this)
   y <- model.response(mf, "numeric")
   args <- list(...)
+  print("here")
   if (approx == TRUE) {
     if ("a_val" %in% names(args)) {
       if (is.numeric(args$a_val) & length(args$a_val) == 1 & args$a_val > 0) {
@@ -391,14 +396,20 @@ glim <- function(
     }
   }
   if ("n_grid_evals" %in% names(args)) {
-    if (is.integer(args$n_grid_evals)) {
-      n_grid_evals <- args$n_grid_evals
+    if (
+      is.integer(as.integer(args$n_grid_evals)) &
+        length(as.integer(args$n_grid_evals)) == 1 &
+        as.integer(args$n_grid_evals > 1)
+    ) {
+      n_grid_evals <- as.integer(args$n_grid_evals)
+    } else {
+      stop("Input Error: n_grid_evals is not a positive integer")
     }
   } else {
-    n_grid_evals <- 41
+    n_grid_evals <- 25 # Is this a good number?
   }
   if (!is.null(names(args))) {
-    if (!(all(names(args) %in% c("a_val", "b_val", "max_it", "betas")))) {
+    if (!(all(names(args) %in% c("a_val", "b_val", "max_it", "betas", "n_grid_evals")))) {
       stop("Incorrect names of additional arguments passed")
     }
   }
@@ -487,21 +498,7 @@ glim <- function(
   } else {
     column_names <- colnames(X)
   }
-  print(column_names)
-  if (intercept == TRUE) {
-    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
-    has_intercept <- any(colSums(X == 1) == nrow(X))
-    if (!has_intercept) {
-      if (is.vector(y)) {
-        X <- cbind(rep(1, length(y)), X)
-        column_names <- c("intercept", column_names)
-      } else {
-        X <- cbind(rep(1, nrow(y)), X)
-        column_names <- c("intercept", column_names)
-      }
-    }
-  }
-  print(column_names)
+  # Got rid of intercept logic, since covered.
 
   ## Binomial setup
   if (family == "binomial" || family == "logistic") {
@@ -635,7 +632,8 @@ glim <- function(
         ll_mle_original_data,
         column_names,
         n_grid_evals = n_grid_evals,
-        max_sd = 3
+        max_sd = 3,
+        m = m
       )
       colnames(betas) <- column_names
     }
@@ -700,23 +698,11 @@ glim <- function(
 #' @param y Response vector.
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
-#' @param intercept Whether or not an intercept should be added to the design matrix
 #' @return A vector of mapped possibility values.
 #' @export
-prob2poss_logis <- function(X, y, samples, the_compared_theta, intercept = TRUE) {
+prob2poss_logis <- function(X, y, samples, the_compared_theta) {
   if (is.data.frame(X)) {
     X <- as.matrix(X)
-  }
-  if (intercept == TRUE) {
-    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
-    has_intercept <- any(colSums(X == 1) == nrow(X))
-    if (!has_intercept) {
-      if (is.vector(y)) {
-        X <- cbind(rep(1, length(y)), X)
-      } else {
-        X <- cbind(rep(1, nrow(y)), X)
-      }
-    }
   }
   if (is.vector(y) && all(y == 0 | y == 1)) {
     if (length(y) != nrow(X)) {
@@ -769,19 +755,11 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta, intercept = TRUE)
 #' @param y Response vector.
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
-#' @param intercept Whether or not an intercept should be added to the design matrix
 #' @return A vector of mapped possibility values.
 #' @export
-prob2poss_gamma <- function(X, y, samples, the_compared_theta, intercept = TRUE) {
+prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
   if (is.data.frame(X)) {
     X <- as.matrix(X)
-  }
-  if (intercept == TRUE) {
-    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
-    has_intercept <- any(colSums(X == 1) == nrow(X))
-    if (!has_intercept) {
-      X <- cbind(rep(1, length(y)), X)
-    }
   }
   eta <- X %*% samples
   initial_coefs <- coef(lm(log(y) ~ X - 1))
@@ -857,19 +835,11 @@ compute_invgauss_ll_r <- function(y, mu, gamma_val) {
 #' @param y Response vector.
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
-#' @param intercept Whether or not an intercept should be added to the design matrix
 #' @return A vector of mapped possibility values.
 #' @export
-prob2poss_gaussian <- function(X, y, samples, the_compared_theta, intercept = TRUE) {
+prob2poss_gaussian <- function(X, y, samples, the_compared_theta) {
   if (is.data.frame(X)) {
     X <- as.matrix(X)
-  }
-  if (intercept == TRUE) {
-    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
-    has_intercept <- any(colSums(X == 1) == nrow(X))
-    if (!has_intercept) {
-      X <- cbind(rep(1, length(y)), X)
-    }
   }
 
   eta <- X %*% samples
@@ -893,19 +863,11 @@ prob2poss_gaussian <- function(X, y, samples, the_compared_theta, intercept = TR
 #' @param y Response vector.
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
-#' @param intercept Whether or not an intercept should be added to the design matrix
 #' @return A vector of mapped possibility values.
 #' @export
-prob2poss_invgauss <- function(X, y, samples, the_compared_theta, intercept = TRUE) {
+prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
   if (is.data.frame(X)) {
     X <- as.matrix(X)
-  }
-  if (intercept == TRUE) {
-    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
-    has_intercept <- any(colSums(X == 1) == nrow(X))
-    if (!has_intercept) {
-      X <- cbind(rep(1, length(y)), X)
-    }
   }
   eta <- X %*% samples
 
@@ -1078,19 +1040,11 @@ appendix <- function(eJ, num_samps, X, y, mle_coefs, family, dispersion, m, tol,
 #' @param y Response vector.
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
-#' @param intercept Whether or not an intercept should be added to the design matrix
 #' @return A vector of mapped possibility values.
 #' @export
-prob2poss_poisson <- function(X, y, samples, the_compared_theta, intercept = TRUE) {
+prob2poss_poisson <- function(X, y, samples, the_compared_theta) {
   if (is.data.frame(X)) {
     X <- as.matrix(X)
-  }
-  if (intercept == TRUE) {
-    # Generates a matrix of TRUEs and FALSEs. Then takes colSums to see if any column consists of just 1s. Fails for the c(2, 2, 2, ..) case, but why on earth would you do that???
-    has_intercept <- any(colSums(X == 1) == nrow(X))
-    if (!has_intercept) {
-      X <- cbind(rep(1, length(y)), X)
-    }
   }
   eta <- X %*% samples
   mle_coefs <- coef(glm(y ~ X - 1, family = poisson("log")))
@@ -1120,7 +1074,7 @@ get_CI_manual <- function(alpha, betas, possibilities) {
 #' @param glim_object Note that a 95% confidence interval corresponds to alpha = .05
 #' @return A matrix of compatable beta values from the grid.
 #' @export
-get_CI <- function(glim_object, alpha) {
+get_CI <- function(glim_object, alpha = .05) {
   if (class(glim_object) != "glim_object") {
     stop("Object which was passed is not a direct result from glim()")
   }
