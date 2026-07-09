@@ -16,6 +16,10 @@ struct LogisticResult {
   arma::vec beta;
   bool separated;
 };
+struct LogisticResult1D {
+  double beta;
+  bool separated;
+};
 
 // Highly optimized, allocation-free inner solver
 LogisticResult fit_logistic_inner(const arma::mat &X, const arma::vec &y,
@@ -76,12 +80,79 @@ LogisticResult fit_logistic_inner(const arma::mat &X, const arma::vec &y,
 
   return {proposed_beta, separated};
 }
+// Highly optimized, allocation-free inner solver
+LogisticResult1D fit_logistic_inner_1d(const arma::vec &X, const arma::vec &y,
+                                       double initial_beta) {
+  int N = X.n_rows;
+  double proposed_beta = initial_beta;
+  bool separated = false;
+
+  // Pre-allocate vector memory
+  arma::vec eta(N), p(N), w(N);
+
+  for (int i = 0; i < 15; i++) {
+    eta = X * proposed_beta; // Vector-scalar multiplication
+    separated = false;
+
+    // Combined loop for probabilities, separation check, and weights
+    for (int k = 0; k < N; ++k) {
+      double p_k = 1.0 / (1.0 + std::exp(-eta[k]));
+      p[k] = p_k;
+
+      if (p_k < 1e-8 || p_k > (1.0 - 1e-8)) {
+        separated = true;
+      }
+
+      double w_k = p_k * (1.0 - p_k);
+      w[k] = (w_k < 1e-6) ? 1e-6 : w_k;
+    }
+
+    if (separated)
+      break;
+
+    // In 1D, XTWX and grad are pure scalars.
+    // We compute them in a single, cache-friendly pass.
+    double XTWX = 0.0;
+    double grad = 0.0;
+
+    for (int k = 0; k < N; ++k) {
+      double x_k = X[k];
+      XTWX += x_k * x_k * w[k];    // Equivalent to X.t() * W * X
+      grad += x_k * (y[k] - p[k]); // Equivalent to X.t() * (y - p)
+    }
+
+    // Safety check for zero-variance/empty steps
+    if (std::abs(XTWX) < 1e-9) {
+      break;
+    }
+
+    // Newton-Raphson update: step = grad / Hessian
+    double step = grad / XTWX;
+    proposed_beta += step;
+
+    // Convergence check using absolute scalar value
+    if (std::abs(step) < 1e-6)
+      break;
+  }
+
+  return {proposed_beta, separated};
+}
 
 // Rcpp wrapper for the solver
+// TODO does not account for the fact that the user can be a devious little
+// creature and try fitting Y = Xb except X is not a matrix but a vector and b
+// is a scalar
 // [[Rcpp::export]]
 arma::vec fit_logistic_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &initial_beta, bool approx) {
   LogisticResult res = fit_logistic_inner(X, y, initial_beta);
+  return res.beta;
+}
+
+// [[Rcpp::export]]
+double fit_logistic_inner_1d(const arma::vec &X, const arma::vec &y,
+                             const double initial_beta, bool approx) {
+  LogisticResult1D res = fit_logistic_inner_1d(X, y, initial_beta);
   return res.beta;
 }
 
@@ -140,13 +211,10 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   // auto t_sim_end = std::chrono::high_resolution_clock::now();
 
   int count_less = 0;
-  double total_solver_time = 0.0;
-  double total_likelihood_time = 0.0;
 
 // Inner loop: fit models entirely in C++
 #pragma omp parallel for schedule(static)                                      \
-    reduction(+ : count_less, total_solver_time,                               \
-                  total_likelihood_time) if (approx == true)
+    reduction(+ : count_less) if (approx == true)
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
@@ -192,4 +260,29 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   // Rcpp::Rcout << "Sum LL Time:     " << total_likelihood_time
   //             << "s (Combined across threads)\n";
   return (double)1.0 * count_less / m;
+}
+
+// [[Rcpp::export]]
+double logistic_ll(const arma::mat &X, const arma::vec &y,
+                   const arma::vec &beta_vals) {
+  LogisticResult res = fit_logistic_inner(X, y, beta_vals);
+  double mle_sim =
+      0.0; // Sooooo right now if I get seperation, I return a value of zero.
+           // TODO. This is 100% going to lead to issues
+  if (!res.separated) {
+    mle_sim = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
+  }
+  return mle_sim;
+}
+// [[Rcpp::export]]
+double logistic_ll_1d(const arma::vec &X, const arma::mat &y,
+                      const double beta_vals) {
+  LogisticResult1D res = fit_logistic_inner_1d(X, y, beta_vals);
+  double mle_sim =
+      0.0; // Sooooo right now if I get seperation, I return a value of zero.
+           // TODO. This is 100% going to lead to issues
+  if (!res.separated) {
+    mle_sim = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
+  }
+  return mle_sim;
 }

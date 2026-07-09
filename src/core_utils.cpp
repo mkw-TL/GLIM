@@ -44,6 +44,7 @@ arma::mat generate_unit_matrix(int n, int d) {
   // Initialize matrix: d rows (dimensions) by n columns (samples)
   arma::mat m(d, n);
 
+  // Note that this is the transpose
   // Populate the matrix with standard normals using our thread-safe engine
   for (int j = 0; j < n; ++j) {
     for (int i = 0; i < d; i++) {
@@ -92,7 +93,8 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
                           const arma::vec &mle_coefs, const arma::mat &betas,
                           std::string family, // Pass string from R
                           int num_threads = 1, int m = 100,
-                          bool parallel = true, bool approx = false) {
+                          bool parallel = true, bool approx = false,
+                          bool appendix = false) {
 
   // Convert the string to an Enum once right here
   GlmFamily fam = string_to_family(family);
@@ -134,8 +136,8 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   // roughly the same amount of work schedule(dynamic) has a bit more overhead
   // which we don't need here. Don't want the overhead of allocating different
   // threads if it is fast enough to execute on a single
-#pragma omp parallel for schedule(guided) if (approx == false &&               \
-                                                  parallel == true)
+#pragma omp parallel for schedule(                                             \
+        guided) if (approx == false && parallel == true && appendix == false)
   for (int i = 0; i < n_evals; i++) {
     arma::vec beta_vals = betas.row(i).t();
     double pl;
@@ -175,7 +177,7 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
     thread_id = omp_get_thread_num();
 #endif
 
-    if (thread_id == 0 && approx == false) {
+    if (thread_id == 0 && approx == false && appendix == false) {
       // Calculate what the *actual current loop progress* is right now
       int current_percentage =
           (int)((double)100.0 * current_progress / n_evals);
@@ -202,7 +204,7 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
       }
     }
   }
-  if (approx == false) {
+  if (approx == false && appendix == false) {
     int bar_width = 40;
     Rcpp::Rcout << "\rCalculating Plausibilities: [";
     for (int b = 0; b < bar_width; ++b) {
@@ -302,13 +304,13 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
 // }
 
 // [[Rcpp::export]]
-arma::vec appendix_code(arma::mat eig_vecs, arma::mat eig_vals, int num_samps,
-                        arma::mat X, arma::vec y, arma::vec mle_coefs,
-                        std::string family, double dispersion, int m,
-                        double tol, int max_it, int a, int b) {
+arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
+                        arma::vec mle_coefs, std::string family,
+                        double dispersion, int m, double tol, int max_it,
+                        int a_val, int b_val) {
   arma::mat sampled_betas(mle_coefs.n_elem, num_samps);
   int num_omp_threads = 1;
-  int d = eig_vals.n_elem;
+  int d = X.n_cols;
 
   // We are definitely not parallelizing across the beta grid, so no if
   // statement needed
@@ -337,10 +339,13 @@ arma::vec appendix_code(arma::mat eig_vecs, arma::mat eig_vals, int num_samps,
       // we don't get imaginary)
       bool parallel = false;
       bool approx = false;
-      double val1 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs + dir_xi).t(),
-                                    family, 1, m, parallel, approx)(0, 0);
-      double val2 = fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs - dir_xi).t(),
-                                    family, 1, m, parallel, approx)(0, 0);
+      bool appendix = true;
+      double val1 =
+          fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs + dir_xi).t(), family, 1,
+                          m, parallel, approx, appendix)(0, 0);
+      double val2 =
+          fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs - dir_xi).t(), family, 1,
+                          m, parallel, approx, appendix)(0, 0);
       double g_xi = std::max(val1, val2) - unif_alphas;
 
       if ((std::abs(g_xi) <= tol) || (it >= max_it)) {
@@ -351,7 +356,7 @@ arma::vec appendix_code(arma::mat eig_vecs, arma::mat eig_vals, int num_samps,
         }
         break;
       } else {
-        starting_xi = starting_xi + w(a, b, it) * g_xi;
+        starting_xi = starting_xi + w(a_val, b_val, it) * g_xi;
         it = it + 1;
       }
     }

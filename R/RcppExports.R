@@ -5,16 +5,16 @@ generate_unit_matrix <- function(n, d) {
     .Call(`_GLIM_generate_unit_matrix`, n, d)
 }
 
-fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, num_threads = 1L, m = 100L, parallel = TRUE, approx = FALSE) {
-    .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family, num_threads, m, parallel, approx)
+fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, num_threads = 1L, m = 100L, parallel = TRUE, approx = FALSE, appendix = FALSE) {
+    .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family, num_threads, m, parallel, approx, appendix)
 }
 
 imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, parallel = FALSE, m = 100L) {
     .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, parallel, m)
 }
 
-appendix_code <- function(eig_vecs, eig_vals, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
-    .Call(`_GLIM_appendix_code`, eig_vecs, eig_vals, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b)
+appendix_code <- function(num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a_val, b_val) {
+    .Call(`_GLIM_appendix_code`, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a_val, b_val)
 }
 
 fit_gamma_log_cpp <- function(X, XtX, y, initial_beta, approx) {
@@ -85,8 +85,20 @@ fit_logistic_cpp <- function(X, y, initial_beta, approx) {
     .Call(`_GLIM_fit_logistic_cpp`, X, y, initial_beta, approx)
 }
 
+fit_logistic_inner_1d <- function(X, y, initial_beta, approx) {
+    .Call(`_GLIM_fit_logistic_inner_1d`, X, y, initial_beta, approx)
+}
+
 glm_logis_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
     .Call(`_GLIM_glm_logis_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
+}
+
+logistic_ll <- function(X, y, beta_vals) {
+    .Call(`_GLIM_logistic_ll`, X, y, beta_vals)
+}
+
+logistic_ll_1d <- function(X, y, beta_vals) {
+    .Call(`_GLIM_logistic_ll_1d`, X, y, beta_vals)
 }
 
 compute_poisson_ll_mat <- function(eta, y) {

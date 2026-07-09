@@ -63,6 +63,7 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
     num_omp_threads <- 1
   }
 
+  # TESTING OUT EVALUATION OF GLM FIT DIRECTLY ON MLE_COEFS
   output <- fit_glm_omp_cpp(
     X = X,
     y = y,
@@ -197,18 +198,13 @@ generate_eigen_grid <- function(
     FALSE
   )
   scaling <- sqrt(eigen_vals) * imvar_xi
-  print(scaling)
   slices <- lapply(1:length(mle_coefs), function(i) {
     seq(-1, 1, length.out = n_grid_evals)
   })
   eigenspace_grid <- as.matrix(expand.grid(slices))
-  print(head(eigenspace_grid))
   scaled_eigenspace <- t(t(eigenspace_grid) * as.vector(scaling))
-  print(head(scaled_eigenspace))
   param_deltas <- scaled_eigenspace %*% t(eigen_vecs)
-  print(head(param_deltas))
   betas <- t(t(param_deltas) + as.vector(mle_coefs))
-  print(head(betas))
   colnames(betas) <- column_names
 
   return(betas)
@@ -351,37 +347,24 @@ glim <- function(
   X <- model.matrix(mt, mf, NULL) # model.matrix() creates the dummy columns. NULL is the contrasts (which could be set as default setting within a useR's R session, but I don't want to incorporate this)
   y <- model.response(mf, "numeric")
   args <- list(...)
-  print("here")
-  if (approx == TRUE) {
-    if ("a_val" %in% names(args)) {
-      if (is.numeric(args$a_val) & length(args$a_val) == 1 & args$a_val > 0) {
-        a_val <- args$a_val
-      } else {
-        stop("Input Error: a_val must be a positive number")
-      }
+  if ("a_val" %in% names(args)) {
+    if (is.numeric(args$a_val) & length(args$a_val) == 1 & args$a_val > 0) {
+      a_val <- args$a_val
     } else {
-      a_val <- 2
+      stop("Input Error: a_val must be a positive number")
     }
-    if ("b_val" %in% names(args)) {
-      if (is.numeric(args$b_val) & length(args$b_val) == 1 & args$b_val > 0) {
-        b_val <- args$b_val
-      } else {
-        stop("Input Error: b_val must be a positive number")
-      }
+  } else {
+    a_val <- 2
+  }
+  if ("b_val" %in% names(args)) {
+    if (is.numeric(args$b_val) & length(args$b_val) == 1 & args$b_val > 0) {
       b_val <- args$b_val
     } else {
-      b_val <- .65
+      stop("Input Error: b_val must be a positive number")
     }
-    if ("max_it" %in% names(args)) {
-      if (is.integer(args$max_it) & length(args$max_it) == 1 & args$max_it > 0) {
-        max_it <- args$max_it
-      } else {
-        stop("Input Error: max_it must be a positive integer")
-      }
-      max_it <- args$max_it
-    } else {
-      max_it <- 25
-    }
+    b_val <- args$b_val
+  } else {
+    b_val <- .65
   }
   betas <- NULL
   if (approx == FALSE) {
@@ -408,8 +391,44 @@ glim <- function(
   } else {
     n_grid_evals <- 25 # Is this a good number?
   }
+  if ("tol" %in% names(args)) {
+    if (
+      is.numeric(as.numeric(args$tol)) &
+        length(as.numeric(args$tol)) == 1 &
+        as.numeric(args$tol > 1)
+    ) {
+      tol <- as.numeric(args$tol)
+    } else {
+      stop("Input Error: tol is not currently valid")
+    }
+  } else {
+    tol <- .01
+  }
+
+  if ("max_it" %in% names(args)) {
+    if (is.integer(args$max_it) & length(args$max_it) == 1 & args$max_it > 0) {
+      max_it <- args$max_it
+    } else {
+      stop("Input Error: max_it must be a positive integer")
+    }
+  } else {
+    max_it <- 25
+  }
+  if ("num_samps" %in% names(args)) {
+    if (is.integer(as.integer(args$num_samps)) & length(args$num_samps) == 1 & args$num_samps > 0) {
+      num_samps <- args$num_samps
+    } else {
+      stop("Input Error: num_samps must be a positive integer")
+    }
+  } else {
+    num_samps <- 2000
+  }
   if (!is.null(names(args))) {
-    if (!(all(names(args) %in% c("a_val", "b_val", "max_it", "betas", "n_grid_evals")))) {
+    if (
+      !(all(
+        names(args) %in% c("a_val", "b_val", "max_it", "betas", "n_grid_evals", "tol", "num_samps")
+      ))
+    ) {
       stop("Incorrect names of additional arguments passed")
     }
   }
@@ -539,7 +558,13 @@ glim <- function(
       X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
     }
     # We are using (-1) so that R knows the X matrix we are using; we don't want to append any extra intercepts
-    ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = "binomial")))
+    # Well heck. Need to use my own cpp mle here (as different behavior in seperations will lead to possibilties not = 1)
+    if (is.matrix(X)) {
+      ll_mle_original_data <- logistic_ll(X, y, rep(0, ncol(X)))
+    } else {
+      ll_mle_original_data <- logistic_ll_1d(X, y, 0) # initial beta value of 0
+    }
+    fit_logistic_cpp(X, y, rep(0, ncol(X)), FALSE)
     res <- glm(y ~ X - 1, family = "binomial")
     mle_coefs <- res$coefficients
     p_i <- res$fitted.values
@@ -650,7 +675,9 @@ glim <- function(
         approx = approx
       ),
       betas = betas,
-      family = family
+      family = family,
+      X = X,
+      y = y
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -678,7 +705,13 @@ glim <- function(
     beta_p2p_grid <- as.matrix(expand.grid(beta_seq_list))
     poss <- p2p_function(X, y, samples, t(beta_p2p_grid))
     colnames(beta_p2p_grid) <- column_names
-    obj_to_return <- list(possibilities = poss, betas = beta_p2p_grid, family = family)
+    obj_to_return <- list(
+      possibilities = poss,
+      betas = beta_p2p_grid,
+      family = family,
+      X = X,
+      y = y
+    )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
   }
@@ -688,7 +721,35 @@ glim <- function(
   }
   if (appendix == TRUE & approx == FALSE) {
     # TODO implement
-    return(appendix(eJ, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b))
+    samples <- (appendix(
+      num_samps,
+      X,
+      y,
+      mle_coefs,
+      family,
+      dispersion,
+      m,
+      tol,
+      max_it,
+      a_val,
+      b_val
+    ))
+    beta_seq_list <- list()
+    for (i in 1:nrow(samples)) {
+      beta_seq_list[[i]] <- seq(min(samples[i, ]), max(samples[i, ]), length.out = 51)
+    }
+    beta_p2p_grid <- as.matrix(expand.grid(beta_seq_list))
+    poss <- p2p_function(X, y, samples, t(beta_p2p_grid))
+    colnames(beta_p2p_grid) <- column_names
+    obj_to_return <- list(
+      possibilities = poss,
+      betas = beta_p2p_grid,
+      family = family,
+      X = X,
+      y = y
+    )
+    class(obj_to_return) <- "glim_object"
+    return(obj_to_return)
   }
 }
 
@@ -1009,16 +1070,12 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
 #' @param m Parameter `m` defining scaling or sampling limits.
 #' @param tol Tolerance level for convergence criteria.
 #' @param max_it Maximum number of iterations the stochastic algorithm runs for for each grid value.
-#' @param a Hyperparameter `a` (should be between X and Y TODO)
-#' @param b Hyperparameter `b` (should be between X and Y TODO)
+#' @param a_val Hyperparameter `a` (should be between X and Y TODO)
+#' @param b_val Hyperparameter `b` (should be between X and Y TODO)
 #' @return A matrix of output samples evaluated by the C++ backend.
 #' @noRd
-appendix <- function(eJ, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a, b) {
-  eig_vecs <- eJ$vectors
-  eig_vals <- eJ$values
+appendix <- function(num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a_val, b_val) {
   output_samples <- appendix_code(
-    eig_vecs,
-    eig_vals,
     num_samps,
     X,
     y,
@@ -1028,8 +1085,8 @@ appendix <- function(eJ, num_samps, X, y, mle_coefs, family, dispersion, m, tol,
     m,
     tol,
     max_it,
-    a,
-    b
+    a_val,
+    b_val
   )
   return(output_samples)
 }
