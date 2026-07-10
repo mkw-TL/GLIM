@@ -564,10 +564,13 @@ glim <- function(
     } else {
       ll_mle_original_data <- logistic_ll_1d(X, y, 0) # initial beta value of 0
     }
-    fit_logistic_cpp(X, y, rep(0, ncol(X)), FALSE)
-    res <- glm(y ~ X - 1, family = "binomial")
-    mle_coefs <- res$coefficients
-    p_i <- res$fitted.values
+    fit <- glm(y ~ X - 1, family = binomial)
+    eps <- 10 * .Machine$double.eps
+    if (any(fit$fitted.values > (1 - eps)) || any(fit$fitted.values < eps)) {
+      stop("Data is completely seperable. MLE does not exist")
+    }
+    mle_coefs <- fit_logistic_cpp(X, y, rep(0, ncol(X)), FALSE)
+    p_i <- 1 / (1 + exp(-X %*% mle_coefs))
     dispersion <- 1
     if (is.null(betas)) {
       J <- crossprod(X, X * as.vector((p_i * (1 - p_i))))

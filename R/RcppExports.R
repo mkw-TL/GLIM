@@ -81,14 +81,6 @@ glm_invgauss_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
     .Call(`_GLIM_glm_invgauss_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
 }
 
-fit_logistic_cpp <- function(X, y, initial_beta, approx) {
-    .Call(`_GLIM_fit_logistic_cpp`, X, y, initial_beta, approx)
-}
-
-fit_logistic_inner_1d <- function(X, y, initial_beta, approx) {
-    .Call(`_GLIM_fit_logistic_inner_1d`, X, y, initial_beta, approx)
-}
-
 glm_logis_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
     .Call(`_GLIM_glm_logis_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
 }

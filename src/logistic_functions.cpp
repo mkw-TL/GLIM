@@ -11,19 +11,9 @@ using namespace arma;
 // Does not need to estimate the dispersion parameter since a function of the
 // mean
 
-// Define struct
-struct LogisticResult {
-  arma::vec beta;
-  bool separated;
-};
-struct LogisticResult1D {
-  double beta;
-  bool separated;
-};
-
 // Highly optimized, allocation-free inner solver
-LogisticResult fit_logistic_inner(const arma::mat &X, const arma::vec &y,
-                                  const arma::vec &initial_beta) {
+LogisticResult fit_logistic(const arma::mat &X, const arma::vec &y,
+                            const arma::vec &initial_beta) {
   int N = X.n_rows;
   int P = X.n_cols;
   arma::vec proposed_beta = initial_beta;
@@ -81,8 +71,8 @@ LogisticResult fit_logistic_inner(const arma::mat &X, const arma::vec &y,
   return {proposed_beta, separated};
 }
 // Highly optimized, allocation-free inner solver
-LogisticResult1D fit_logistic_inner_1d(const arma::vec &X, const arma::vec &y,
-                                       double initial_beta) {
+LogisticResult1D fit_logistic_1d(const arma::vec &X, const arma::vec &y,
+                                 double initial_beta) {
   int N = X.n_rows;
   double proposed_beta = initial_beta;
   bool separated = false;
@@ -138,24 +128,6 @@ LogisticResult1D fit_logistic_inner_1d(const arma::vec &X, const arma::vec &y,
   return {proposed_beta, separated};
 }
 
-// Rcpp wrapper for the solver
-// TODO does not account for the fact that the user can be a devious little
-// creature and try fitting Y = Xb except X is not a matrix but a vector and b
-// is a scalar
-// [[Rcpp::export]]
-arma::vec fit_logistic_cpp(const arma::mat &X, const arma::vec &y,
-                           const arma::vec &initial_beta, bool approx) {
-  LogisticResult res = fit_logistic_inner(X, y, initial_beta);
-  return res.beta;
-}
-
-// [[Rcpp::export]]
-double fit_logistic_inner_1d(const arma::vec &X, const arma::vec &y,
-                             const double initial_beta, bool approx) {
-  LogisticResult1D res = fit_logistic_inner_1d(X, y, initial_beta);
-  return res.beta;
-}
-
 // Written by gemini. Uses the trick to seperate into cases
 inline double sum_softplus(const arma::vec &eta) {
   double sum_val = 0.0;
@@ -167,10 +139,10 @@ inline double sum_softplus(const arma::vec &eta) {
 }
 
 // The main simulation function
-// [[Rcpp::export]]
-double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
-                        const arma::vec &mle_coefs, const arma::vec &beta_vals,
-                        int m, bool approx) {
+LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
+                                  const arma::vec &mle_coefs,
+                                  const arma::vec &beta_vals, int m,
+                                  bool approx) {
   // auto t_start = std::chrono::high_resolution_clock::now();
 
   int n = X.n_rows;
@@ -211,65 +183,40 @@ double glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   // auto t_sim_end = std::chrono::high_resolution_clock::now();
 
   int count_less = 0;
+  double prop_sep = 0;
 
 // Inner loop: fit models entirely in C++
 #pragma omp parallel for schedule(static)                                      \
-    reduction(+ : count_less) if (approx == true)
+    reduction(+ : count_less, prop_sep) if (approx == true)
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
     // auto s_start = std::chrono::high_resolution_clock::now();
 
     // Call the inner thread-safe solver
-    LogisticResult sim_res = fit_logistic_inner(X, y_sim, beta_vals);
-    // auto s_end = std::chrono::high_resolution_clock::now();
-    // total_solver_time += std::chrono::duration<double>(s_end -
-    // s_start).count(); auto l_start =
-    // std::chrono::high_resolution_clock::now();
+    LogisticResult sim_res = fit_logistic(X, y_sim, beta_vals);
+    if (sim_res.seperated == true) {
+      prop_sep++;
+    }
 
     arma::vec eta_sim_hat = X * sim_res.beta;
 
-    // Force MLE to 0.0 if the simulated dataset resulted in complete separation
-    double mle_sim = 0.0;
-    if (!sim_res.separated) {
-      mle_sim = arma::dot(y_sim, eta_sim_hat) - sum_softplus(eta_sim_hat);
-    }
-
-    // auto l_end = std::chrono::high_resolution_clock::now();
-    // total_likelihood_time +=
-    //     std::chrono::duration<double>(l_end - l_start).count();
-
-    double f_X_j = llX(j) - mle_sim;
-
-    if (f_X_j <= f_x) {
-      count_less++;
-    }
+    double mle_sim = arma::dot(y_sim, eta_sim_hat) - sum_softplus(eta_sim_hat);
   }
-  // auto t_end = std::chrono::high_resolution_clock::now();
 
-  // Print results to the R console
-  // Rcpp::Rcout << "\n--- LOGISTIC PROFILE ---" << "\n";
-  // Rcpp::Rcout << "Total Time:      "
-  //             << std::chrono::duration<double>(t_end - t_start).count()
-  //             << "s\n";
-  // Rcpp::Rcout << "Data Gen Time:   "
-  //             << std::chrono::duration<double>(t_sim_end - t_start).count()
-  //             << "s\n";
-  // Rcpp::Rcout << "Sum Solver Time: " << total_solver_time
-  //             << "s (Combined across threads)\n";
-  // Rcpp::Rcout << "Sum LL Time:     " << total_likelihood_time
-  //             << "s (Combined across threads)\n";
-  return (double)1.0 * count_less / m;
+  prop_sep = prop_sep / m;
+  double poss = 1.0 * count_less / m;
+  return {poss, orig_separated, prop_sep};
 }
 
 // [[Rcpp::export]]
 double logistic_ll(const arma::mat &X, const arma::vec &y,
                    const arma::vec &beta_vals) {
-  LogisticResult res = fit_logistic_inner(X, y, beta_vals);
+  LogisticResult res = fit_logistic(X, y, beta_vals);
   double mle_sim =
       0.0; // Sooooo right now if I get seperation, I return a value of zero.
            // TODO. This is 100% going to lead to issues
-  if (!res.separated) {
+  if (!res.seperated) {
     mle_sim = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
   }
   return mle_sim;
@@ -277,12 +224,10 @@ double logistic_ll(const arma::mat &X, const arma::vec &y,
 // [[Rcpp::export]]
 double logistic_ll_1d(const arma::vec &X, const arma::mat &y,
                       const double beta_vals) {
-  LogisticResult1D res = fit_logistic_inner_1d(X, y, beta_vals);
+  LogisticResult1D res = fit_logistic_1d(X, y, beta_vals);
   double mle_sim =
       0.0; // Sooooo right now if I get seperation, I return a value of zero.
            // TODO. This is 100% going to lead to issues
-  if (!res.separated) {
-    mle_sim = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
-  }
+  mle_sim = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
   return mle_sim;
 }

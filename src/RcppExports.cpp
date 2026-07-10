@@ -309,36 +309,8 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// fit_logistic_cpp
-arma::vec fit_logistic_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& initial_beta, bool approx);
-RcppExport SEXP _GLIM_fit_logistic_cpp(SEXP XSEXP, SEXP ySEXP, SEXP initial_betaSEXP, SEXP approxSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type initial_beta(initial_betaSEXP);
-    Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_logistic_cpp(X, y, initial_beta, approx));
-    return rcpp_result_gen;
-END_RCPP
-}
-// fit_logistic_inner_1d
-double fit_logistic_inner_1d(const arma::vec& X, const arma::vec& y, const double initial_beta, bool approx);
-RcppExport SEXP _GLIM_fit_logistic_inner_1d(SEXP XSEXP, SEXP ySEXP, SEXP initial_betaSEXP, SEXP approxSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::vec& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
-    Rcpp::traits::input_parameter< const double >::type initial_beta(initial_betaSEXP);
-    Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_logistic_inner_1d(X, y, initial_beta, approx));
-    return rcpp_result_gen;
-END_RCPP
-}
 // glm_logis_pl_cpp
-double glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::vec& beta_vals, int m, bool approx);
+LogisticPlResult glm_logis_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::vec& beta_vals, int m, bool approx);
 RcppExport SEXP _GLIM_glm_logis_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP beta_valsSEXP, SEXP mSEXP, SEXP approxSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
@@ -442,8 +414,6 @@ static const R_CallMethodDef CallEntries[] = {
     {"_GLIM_compute_invgauss_ll", (DL_FUNC) &_GLIM_compute_invgauss_ll, 3},
     {"_GLIM_compute_invgauss_ll_mat", (DL_FUNC) &_GLIM_compute_invgauss_ll_mat, 3},
     {"_GLIM_glm_invgauss_pl_cpp", (DL_FUNC) &_GLIM_glm_invgauss_pl_cpp, 6},
-    {"_GLIM_fit_logistic_cpp", (DL_FUNC) &_GLIM_fit_logistic_cpp, 4},
-    {"_GLIM_fit_logistic_inner_1d", (DL_FUNC) &_GLIM_fit_logistic_inner_1d, 4},
     {"_GLIM_glm_logis_pl_cpp", (DL_FUNC) &_GLIM_glm_logis_pl_cpp, 6},
     {"_GLIM_logistic_ll", (DL_FUNC) &_GLIM_logistic_ll, 3},
     {"_GLIM_logistic_ll_1d", (DL_FUNC) &_GLIM_logistic_ll_1d, 3},

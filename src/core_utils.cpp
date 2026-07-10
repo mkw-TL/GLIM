@@ -58,36 +58,6 @@ arma::mat generate_unit_matrix(int n, int d) {
   return arma::normalise(m, 2, 0);
 }
 
-// // [[Rcpp::export]]
-// arma::mat scale_design_matrix_cpp(arma::mat X) {
-//   int n_rows = X.n_rows;
-//   int n_cols = X.n_cols;
-
-//   // Vectors to store scaling parameters (initialized to 1 for SD)
-//   arma::vec sds = arma::ones<arma::vec>(n_cols);
-
-//   for (int j = 0; j < n_cols; ++j) {
-//     arma::vec col_data = X.col(j);
-
-//     // Find unique elements in the current column
-//     arma::vec unique_vals = arma::unique(col_data);
-
-//     // If there are more than 2 unique values, it's a continuous feature
-//     if (unique_vals.n_elem > 2) {
-//       double s =
-//           arma::stddev(col_data); // Uses N-1 normalization, matching R's
-//           sd()
-
-//       // In-place centering and scaling of the column
-//       X.col(j) = col_data / s;
-//     }
-//   }
-//   return X;
-// }
-
-// Need to bring the main function (which calls all other functions) after any
-// functions that it calls
-
 // [[Rcpp::export]]
 arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
                           const arma::vec &mle_coefs, const arma::mat &betas,
@@ -107,6 +77,7 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   int n_cols = betas.n_cols;
   arma::vec plausabilities(n_evals);
   arma::mat XtX = X.t() * X;
+  double seperation_issues = 0;
 
   if (y.n_elem != X.n_rows || mle_coefs.n_elem != X.n_cols ||
       betas.n_cols != X.n_cols) {
@@ -143,25 +114,38 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
     double pl;
     // Ending colon is a part of the case statement.
     switch (fam) {
-    case GlmFamily::Gamma:
+    case GlmFamily::Gamma: {
       pl = glm_gamma_pl_cpp(X, XtX, y, mle_coefs, beta_vals, m, approx);
       break;
+    }
 
-    case GlmFamily::Binomial:
-      pl = glm_logis_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
+    case GlmFamily::Binomial: {
+      LogisticPlResult result =
+          glm_logis_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
+      if (result.sim_separated > 0) {
+        // Note that sim_seperated is a percentage of how many sims (for that
+        // beta value) went poorly. Don't have a conceptual idea on how to pass
+        // this back out.
+        seperation_issues = 1;
+      }
       break;
+    }
 
-    case GlmFamily::Poisson:
+    case GlmFamily::Poisson: {
+
       pl = glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
       break;
+    }
 
-    case GlmFamily::InverseGaussian:
+    case GlmFamily::InverseGaussian: {
       pl = glm_invgauss_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
       break;
+    }
 
-    case GlmFamily::Gaussian:
+    case GlmFamily::Gaussian: {
       pl = glm_gaussian_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
       break;
+    }
 
     default:
       pl = -1;
@@ -212,6 +196,11 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
     }
     Rcpp::Rcout << "] 100%\n"
                 << std::flush; // Print 100% and break to a new line
+  }
+
+  if (seperation_issues == 1) {
+    Rcpp::Rcout << "While the original data set did not experience complete "
+                   "seperation, some simulations may have.\n";
   }
 
   return plausabilities;
@@ -273,35 +262,6 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
 
   return xi;
 }
-
-// arma::mat get_xi(const arma::mat X, const arma::vec y, const arma::vec &AA,
-//                  const arma::vec &mle_coefs, const std::string family_input,
-//                  const arma::mat &eJ_vectors, const arma::mat &eJ_values,
-//                  double dispersion, double mle_val, int a, int b, int max_it,
-//                  double tol) {
-//   std::string family = family_input;
-
-//   arma::vec prev_xi(mle_coefs.size());
-//   prev_xi.ones();
-//   arma::mat xi_mat(
-//       mle_coefs.size(),
-//       AA.size()); // Want to allocate size here. Mindful of off by one errors
-//   bool parallel = false;
-// #pragma omp for schedule(static)
-//   for (int i = 0; i < AA.size(); i++) {
-//     double a_val = AA(i);
-//     // xi is our scaling
-//     arma::vec current_xi =
-//         imvar(X, y, prev_xi, family, a_val, mle_coefs, mle_val, eJ_vectors,
-//               eJ_values, dispersion, tol, a, b, max_it, parallel);
-
-//     xi_mat.col(i) = current_xi;
-//     prev_xi = current_xi; // initialize our guess of the next xi to whatever
-//     was
-//                           // just previously seen.
-//   }
-//   return xi_mat;
-// }
 
 // [[Rcpp::export]]
 arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
