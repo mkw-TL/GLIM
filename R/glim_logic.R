@@ -569,7 +569,7 @@ glim <- function(
     if (any(fit$fitted.values > (1 - eps)) || any(fit$fitted.values < eps)) {
       stop("Data is completely seperable. MLE does not exist")
     }
-    mle_coefs <- fit_logistic_cpp(X, y, rep(0, ncol(X)), FALSE)
+    mle_coefs <- coef(glm(y ~ X - 1, binomial))
     p_i <- 1 / (1 + exp(-X %*% mle_coefs))
     dispersion <- 1
     if (is.null(betas)) {
@@ -677,6 +677,7 @@ glim <- function(
         parallel = parallel,
         approx = approx
       ),
+      samples = NULL,
       betas = betas,
       family = family,
       X = X,
@@ -703,12 +704,13 @@ glim <- function(
     )
     beta_seq_list <- list()
     for (i in 1:nrow(samples)) {
-      beta_seq_list[[i]] <- seq(min(samples[i, ]), max(samples[i, ]), length.out = 51)
+      beta_seq_list[[i]] <- seq(min(samples[i, ]), max(samples[i, ]), length.out = n_grid_evals)
     }
     beta_p2p_grid <- as.matrix(expand.grid(beta_seq_list))
     poss <- p2p_function(X, y, samples, t(beta_p2p_grid))
     colnames(beta_p2p_grid) <- column_names
     obj_to_return <- list(
+      samples = samples,
       possibilities = poss,
       betas = beta_p2p_grid,
       family = family,
@@ -723,30 +725,35 @@ glim <- function(
     stop("Appendix and approximation methods cannot both be used")
   }
   if (appendix == TRUE & approx == FALSE) {
-    # TODO implement
-    samples <- (appendix(
+    samples <- appendix(
       num_samps,
       X,
+      col_names = column_names,
       y,
+      eJ,
       mle_coefs,
+      ll_mle_original_data,
       family,
       dispersion,
       m,
       tol,
       max_it,
       a_val,
-      b_val
-    ))
+      b_val,
+      n_grid_evals = n_grid_evals,
+      max_sd = 3
+    )
     beta_seq_list <- list()
     for (i in 1:nrow(samples)) {
-      beta_seq_list[[i]] <- seq(min(samples[i, ]), max(samples[i, ]), length.out = 51)
+      beta_seq_list[[i]] <- seq(min(samples[i, ]), max(samples[i, ]), length.out = n_grid_evals)
     }
-    beta_p2p_grid <- as.matrix(expand.grid(beta_seq_list))
-    poss <- p2p_function(X, y, samples, t(beta_p2p_grid))
-    colnames(beta_p2p_grid) <- column_names
+    beta_appendix_grid <- as.matrix(expand.grid(beta_seq_list))
+    poss <- p2p_function(X, y, samples, t(beta_appendix_grid))
+    colnames(beta_appendix_grid) <- column_names
     obj_to_return <- list(
+      samples = samples,
       possibilities = poss,
-      betas = beta_p2p_grid,
+      betas = beta_appendix_grid,
       family = family,
       X = X,
       y = y
@@ -1063,26 +1070,49 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
 #'
 #' Helper function acting as a bridge to underlying C++ routines for sample generation.
 #'
-#' @param eJ Eigen decomposition object.
 #' @param num_samps Number of samples to generate.
+#' @param eJ Eigen decomposition object.
 #' @param X Predictor matrix.
+#' @param col_names Needed for imvar
 #' @param y Response vector.
 #' @param mle_coefs Maximum likelihood estimates for coefficients.
 #' @param family String denoting the exponential family.
 #' @param dispersion The dispersion parameter.
+#' @param ll_mle_original_data Needed for imvar
 #' @param m Parameter `m` defining scaling or sampling limits.
 #' @param tol Tolerance level for convergence criteria.
 #' @param max_it Maximum number of iterations the stochastic algorithm runs for for each grid value.
 #' @param a_val Hyperparameter `a` (should be between X and Y TODO)
 #' @param b_val Hyperparameter `b` (should be between X and Y TODO)
+#' @param n_grid_evals Resolution of grid
+#' @param max_sd TODO
 #' @return A matrix of output samples evaluated by the C++ backend.
 #' @noRd
-appendix <- function(num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a_val, b_val) {
+appendix <- function(
+  num_samps,
+  X,
+  col_names,
+  y,
+  eJ,
+  mle_coefs,
+  ll_mle_original_data,
+  family,
+  dispersion,
+  m,
+  tol,
+  max_it,
+  a_val,
+  b_val,
+  n_grid_evals,
+  max_sd
+) {
   output_samples <- appendix_code(
     num_samps,
     X,
     y,
     mle_coefs,
+    eJ$vectors,
+    eJ$values,
     family,
     dispersion,
     m,
@@ -1090,6 +1120,20 @@ appendix <- function(num_samps, X, y, mle_coefs, family, dispersion, m, tol, max
     max_it,
     a_val,
     b_val
+  )
+  grid <- generate_grid(
+    X = X,
+    y = y,
+    family = family,
+    mle_coefs = mle_coefs,
+    eigen_vecs = eJ$vectors,
+    eigen_vals = eJ$values,
+    dispersion = dispersion,
+    ll_mle_original_data = ll_mle_original_data,
+    column_names = col_names,
+    n_grid_evals = n_grid_evals,
+    max_sd = max_sd,
+    m = m
   )
   return(output_samples)
 }
@@ -1211,4 +1255,30 @@ plot.glim_object <- function(output) {
   )
   # Reset back to default
   par(mfrow = c(1, 1), oma = c(0, 0, 0, 0))
+}
+
+
+#' Print
+#'
+#' Printing for glim objects
+#'
+#' @param object from 'glim()'
+#' @return IDK yet TODO
+#' @export
+print.glim_object <- function(output) {
+  betas <- output$betas
+  poss <- output$possibilities
+  family <- output$family
+  print("Please see plot() for marginal possiblity contours")
+
+  on.exit(par(old_par)) # if any crashes, don't have the user's state altered
+  #where the marginalization happens
+  for (col in 1:ncol(betas)) {
+    max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
+
+    # Filter out -Inf values from empty grid slices
+    beta_vals <- as.numeric(names(max_plaus))
+    valid <- is.finite(beta_vals) & is.finite(max_plaus)
+  }
+  # TODO print out the alpha cutoffs
 }

@@ -142,7 +142,7 @@ inline double sum_softplus(const arma::vec &eta) {
 LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
                                   const arma::vec &mle_coefs,
                                   const arma::vec &beta_vals, int m,
-                                  bool approx) {
+                                  bool approx, bool appendix) {
   // auto t_start = std::chrono::high_resolution_clock::now();
 
   int n = X.n_rows;
@@ -186,8 +186,8 @@ LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   double prop_sep = 0;
 
 // Inner loop: fit models entirely in C++
-#pragma omp parallel for schedule(static)                                      \
-    reduction(+ : count_less, prop_sep) if (approx == true)
+#pragma omp parallel for schedule(static) reduction(                           \
+        + : count_less, prop_sep) if (approx == true & appendix == false)
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
@@ -202,6 +202,17 @@ LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
     arma::vec eta_sim_hat = X * sim_res.beta;
 
     double mle_sim = arma::dot(y_sim, eta_sim_hat) - sum_softplus(eta_sim_hat);
+
+    // Calculate the simulated test statistic
+    // llX[j] is the log-likelihood of the simulated data under the proposed
+    // betas
+    double f_x_sim = llX[j] - mle_sim;
+
+    // Increment count_less if the simulated statistic is more extreme than the
+    // observed
+    if (f_x_sim <= f_x) {
+      count_less++;
+    }
   }
 
   prop_sep = prop_sep / m;

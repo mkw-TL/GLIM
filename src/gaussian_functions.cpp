@@ -50,7 +50,8 @@ double est_dispersion(const arma::vec &y, const arma::vec &mu, int p) {
 // [[Rcpp::export]]
 double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs,
-                           const arma::vec &beta_vals, int m, bool approx) {
+                           const arma::vec &beta_vals, int m, bool approx,
+                           bool appendix) {
   int n = X.n_rows;
 
   arma::vec mu = X * beta_vals; // Identity link

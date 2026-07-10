@@ -12,7 +12,6 @@ glim(
   approx = FALSE,
   appendix = FALSE,
   parallel = TRUE,
-  intercept = TRUE,
   tol = 0.01,
   ...
 )
@@ -25,8 +24,6 @@ glim(
 \item{approx}{Logical indicating whether to use the elliptical approximation (default \code{FALSE}).}
 
 \item{parallel}{Logical indicating whether to process in parallel.}
-
-\item{intercept}{Logical indicating whether to add an intercept term}
 
 \item{X}{Matrix of predictors. Note that any dataframe should be first run through model.matrix()}
 

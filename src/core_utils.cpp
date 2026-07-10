@@ -115,35 +115,36 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
     // Ending colon is a part of the case statement.
     switch (fam) {
     case GlmFamily::Gamma: {
-      pl = glm_gamma_pl_cpp(X, XtX, y, mle_coefs, beta_vals, m, approx);
+      pl = glm_gamma_pl_cpp(X, XtX, y, mle_coefs, beta_vals, m, approx, false);
       break;
     }
 
     case GlmFamily::Binomial: {
       LogisticPlResult result =
-          glm_logis_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
+          glm_logis_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, false);
       if (result.sim_separated > 0) {
         // Note that sim_seperated is a percentage of how many sims (for that
         // beta value) went poorly. Don't have a conceptual idea on how to pass
         // this back out.
         seperation_issues = 1;
       }
+      pl = result.poss;
       break;
     }
 
     case GlmFamily::Poisson: {
 
-      pl = glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
+      pl = glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, false);
       break;
     }
 
     case GlmFamily::InverseGaussian: {
-      pl = glm_invgauss_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
+      pl = glm_invgauss_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, false);
       break;
     }
 
     case GlmFamily::Gaussian: {
-      pl = glm_gaussian_pl_cpp(X, y, mle_coefs, beta_vals, m, approx);
+      pl = glm_gaussian_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, false);
       break;
     }
 
@@ -197,16 +198,12 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
     Rcpp::Rcout << "] 100%\n"
                 << std::flush; // Print 100% and break to a new line
   }
-
-  if (seperation_issues == 1) {
-    Rcpp::Rcout << "While the original data set did not experience complete "
-                   "seperation, some simulations may have.\n";
-  }
-
   return plausabilities;
 }
 
-double w(double a, double b, int s) { return a / std::pow(1.0 + s, b); }
+double w(int a_val, int b_val, int s) {
+  return (double)a_val / std::pow(1.0 + s, b_val);
+}
 
 // [[Rcpp::export]]
 arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
@@ -265,59 +262,90 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
 
 // [[Rcpp::export]]
 arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
-                        arma::vec mle_coefs, std::string family,
+                        arma::vec mle_coefs, arma::mat eig_vecs,
+                        arma::vec eig_vals, std::string family,
                         double dispersion, int m, double tol, int max_it,
                         int a_val, int b_val) {
-  arma::mat sampled_betas(mle_coefs.n_elem, num_samps);
-  int num_omp_threads = 1;
   int d = X.n_cols;
+  arma::mat sampled_betas(mle_coefs.n_elem, num_samps);
 
-  // We are definitely not parallelizing across the beta grid, so no if
-  // statement needed
-  static thread_local std::random_device rd;
-  static thread_local std::mt19937 gen(rd());
+  // 1. Parse the family and precompute heavy math ONCE (safely on the main
+  // thread)
+  GlmFamily fam = string_to_family(family);
+  if (fam == GlmFamily::Unknown) {
+    Rcpp::stop("Family not supported in C++ backend.");
+  }
+  arma::mat XtX = X.t() * X; // Precompute here, not inside the loop!
+
+  // The Parallel Loop
 #pragma omp parallel for schedule(static)
   for (int j = 0; j < num_samps; j++) {
+    // Thread-safe RNG instantiation inside the loop
+    std::random_device rd;
+    std::mt19937 gen(rd() +
+                     j); // Seed with j to ensure uniqueness across threads
     std::uniform_real_distribution<double> runif(0.0, 1.0);
-    double unif_alphas = runif(gen);
-    arma::vec dir = generate_unit_matrix(1, d);
 
-    // Could have something where it looks for xi in related alpha, or
-    // related directions. That being said, if parallelization is happening
-    // here, then can't really do that
-    double starting_xi = 1;
-    // Time for our stochastic approximation algorithm. Relies on Robbins and
-    // Monroe
+    double unif_alphas = runif(gen);
+
+    arma::vec u = generate_unit_matrix(1, d);
+    arma::vec scaled_u = u / arma::sqrt(eig_vals);
+
+    // Rotate by eigenvectors to match the tilt of the data
+    arma::vec elliptical_dir = eig_vecs * scaled_u;
+
+    arma::vec dir = arma::normalise(elliptical_dir);
+
+    double starting_xi = 1.0;
     int it = 1;
+    bool approx = false;
+
     while (true) {
-      arma::vec dir_xi =
-          (dir * exp(starting_xi /
-                     2)); // Xi scales singular values (scalar for each
-                          // directions). Again, we are going to evaluate
-                          // this direction * scaling to see how far off.
-      // exp parameterization lets us avoid negative xi (so when we do sqrt(xi)
-      // we don't get imaginary)
-      bool parallel = false;
-      bool approx = false;
-      bool appendix = true;
-      double val1 =
-          fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs + dir_xi).t(), family, 1,
-                          m, parallel, approx, appendix)(0, 0);
-      double val2 =
-          fit_glm_omp_cpp(X, y, mle_coefs, (mle_coefs - dir_xi).t(), family, 1,
-                          m, parallel, approx, appendix)(0, 0);
-      double g_xi = std::max(val1, val2) - unif_alphas;
+      arma::vec dir_xi = dir * std::exp(starting_xi / 2.0);
+      arma::vec beta_proposal =
+          mle_coefs + dir_xi; // Don't need to go negative since the unit sphere
+                              // covers this negative direction
+
+      double val1 = 0.0;
+
+      switch (fam) {
+      case GlmFamily::Binomial: {
+        val1 = glm_logis_pl_cpp(X, y, mle_coefs, beta_proposal, m, approx, true)
+                   .poss;
+        break;
+      }
+      case GlmFamily::Gamma: {
+        val1 = glm_gamma_pl_cpp(X, XtX, y, mle_coefs, beta_proposal, m, approx,
+                                true);
+        break;
+      }
+      case GlmFamily::Poisson: {
+        val1 =
+            glm_poisson_pl_cpp(X, y, mle_coefs, beta_proposal, m, approx, true);
+        break;
+      }
+      case GlmFamily::InverseGaussian: {
+        val1 = glm_invgauss_pl_cpp(X, y, mle_coefs, beta_proposal, m, approx,
+                                   true);
+        break;
+      }
+      case GlmFamily::Gaussian: {
+        val1 = glm_gaussian_pl_cpp(X, y, mle_coefs, beta_proposal, m, approx,
+                                   true);
+        break;
+      }
+      default:
+        break;
+      }
+
+      double g_xi = val1 - unif_alphas;
 
       if ((std::abs(g_xi) <= tol) || (it >= max_it)) {
-        if (abs(val1 - unif_alphas) > abs(val2 - unif_alphas)) {
-          sampled_betas.col(j) = mle_coefs - dir_xi;
-        } else {
-          sampled_betas.col(j) = mle_coefs + dir_xi;
-        }
+        sampled_betas.col(j) = beta_proposal;
         break;
       } else {
         starting_xi = starting_xi + w(a_val, b_val, it) * g_xi;
-        it = it + 1;
+        it++;
       }
     }
   }

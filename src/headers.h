@@ -25,23 +25,26 @@ struct LogisticResult1D {
 // A forward declaration so that other cpp files know that this exists.
 double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
                           const arma::vec &mle_coefs,
-                          const arma::vec &beta_vals, int m, bool approx);
+                          const arma::vec &beta_vals, int m, bool approx,
+                          bool appendix);
 
 double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
                         const arma::vec &mle_coefs, const arma::vec &beta_vals,
-                        int m, bool approx);
+                        int m, bool approx, bool appendix);
 
 LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
                                   const arma::vec &mle_coefs,
                                   const arma::vec &beta_vals, int m,
-                                  bool approx);
+                                  bool approx, bool appendix);
 
 double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs,
-                           const arma::vec &beta_vals, int m, bool approx);
+                           const arma::vec &beta_vals, int m, bool approx,
+                           bool appendix);
 
 double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs,
-                           const arma::vec &beta_vals, int m, bool approx);
+                           const arma::vec &beta_vals, int m, bool approx,
+                           bool appendix);
 
 #endif

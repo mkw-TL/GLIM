@@ -120,7 +120,8 @@ arma::vec fit_poisson_log_cpp(const arma::mat &X, const arma::vec &y,
 // [[Rcpp::export]]
 double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
                           const arma::vec &mle_coefs,
-                          const arma::vec &beta_vals, int m, bool approx) {
+                          const arma::vec &beta_vals, int m, bool approx,
+                          bool appendix) {
   // auto t_start = std::chrono::high_resolution_clock::now();
   int n = X.n_rows;
 
@@ -143,7 +144,7 @@ double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
 
   // Data generation. Parallel directive says that each thread should run this
   // code
-#pragma omp parallel if (approx)
+#pragma omp parallel if (approx == true & appendix == false)
   {
     std::random_device rd;
     std::mt19937 gen(rd());

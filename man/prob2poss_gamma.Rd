@@ -4,7 +4,7 @@
 \alias{prob2poss_gamma}
 \title{Probability to Possibility Mapping for Gamma Regression}
 \usage{
-prob2poss_gamma(X, y, samples, the_compared_theta, intercept = TRUE)
+prob2poss_gamma(X, y, samples, the_compared_theta)
 }
 \arguments{
 \item{X}{Predictor matrix.}
@@ -14,8 +14,6 @@ prob2poss_gamma(X, y, samples, the_compared_theta, intercept = TRUE)
 \item{samples}{Matrix of simulated sample coefficients.}
 
 \item{the_compared_theta}{The theta values to compare against.}
-
-\item{intercept}{Whether or not an intercept should be added to the design matrix}
 }
 \value{
 A vector of mapped possibility values.

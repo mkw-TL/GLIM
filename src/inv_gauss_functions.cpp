@@ -117,7 +117,8 @@ arma::vec compute_invgauss_ll_mat(const arma::vec &y, const arma::mat &mu,
 // [[Rcpp::export]]
 double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs,
-                           const arma::vec &beta_vals, int m, bool approx) {
+                           const arma::vec &beta_vals, int m, bool approx,
+                           bool appendix) {
   int n = X.n_rows;
 
   arma::vec eta = X * beta_vals;

@@ -13,8 +13,8 @@ imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, di
     .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, parallel, m)
 }
 
-appendix_code <- function(num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a_val, b_val) {
-    .Call(`_GLIM_appendix_code`, num_samps, X, y, mle_coefs, family, dispersion, m, tol, max_it, a_val, b_val)
+appendix_code <- function(num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val) {
+    .Call(`_GLIM_appendix_code`, num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val)
 }
 
 fit_gamma_log_cpp <- function(X, XtX, y, initial_beta, approx) {
@@ -37,8 +37,8 @@ mle_estimate_dispersion_gamma <- function(y, mu_hat, p) {
     .Call(`_GLIM_mle_estimate_dispersion_gamma`, y, mu_hat, p)
 }
 
-glm_gamma_pl_cpp <- function(X, XtX, y, mle_coefs, beta_vals, m, approx) {
-    .Call(`_GLIM_glm_gamma_pl_cpp`, X, XtX, y, mle_coefs, beta_vals, m, approx)
+glm_gamma_pl_cpp <- function(X, XtX, y, mle_coefs, beta_vals, m, approx, appendix) {
+    .Call(`_GLIM_glm_gamma_pl_cpp`, X, XtX, y, mle_coefs, beta_vals, m, approx, appendix)
 }
 
 fit_gaussian_cpp <- function(X, y) {
@@ -57,8 +57,8 @@ est_dispersion <- function(y, mu, p) {
     .Call(`_GLIM_est_dispersion`, y, mu, p)
 }
 
-glm_gaussian_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
-    .Call(`_GLIM_glm_gaussian_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
+glm_gaussian_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx, appendix) {
+    .Call(`_GLIM_glm_gaussian_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx, appendix)
 }
 
 mle_estimate_dispersion_inv_gauss <- function(y, ybar) {
@@ -77,12 +77,8 @@ compute_invgauss_ll_mat <- function(y, mu, gamma_val) {
     .Call(`_GLIM_compute_invgauss_ll_mat`, y, mu, gamma_val)
 }
 
-glm_invgauss_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
-    .Call(`_GLIM_glm_invgauss_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
-}
-
-glm_logis_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
-    .Call(`_GLIM_glm_logis_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
+glm_invgauss_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx, appendix) {
+    .Call(`_GLIM_glm_invgauss_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx, appendix)
 }
 
 logistic_ll <- function(X, y, beta_vals) {
@@ -101,7 +97,7 @@ fit_poisson_log_cpp <- function(X, y, initial_beta) {
     .Call(`_GLIM_fit_poisson_log_cpp`, X, y, initial_beta)
 }
 
-glm_poisson_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx) {
-    .Call(`_GLIM_glm_poisson_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx)
+glm_poisson_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx, appendix) {
+    .Call(`_GLIM_glm_poisson_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx, appendix)
 }
 

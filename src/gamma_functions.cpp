@@ -211,7 +211,7 @@ arma::mat scale_continuous_features(arma::mat &X) {
 // [[Rcpp::export]]
 double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
                         const arma::vec &mle_coefs, const arma::vec &beta_vals,
-                        int m, bool approx) {
+                        int m, bool approx, bool appendix) {
   int n = X.n_rows;
   arma::mat scaled_X = scale_continuous_features(X);
 
