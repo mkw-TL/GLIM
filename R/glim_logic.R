@@ -99,7 +99,6 @@ generate_grid <- function(
   ll_mle_original_data,
   column_names,
   n_grid_evals = 25,
-  max_sd = 1,
   m = 500
 ) {
   initial_xi <- rep(1, length(mle_coefs))
@@ -175,8 +174,7 @@ generate_eigen_grid <- function(
   dispersion,
   ll_mle_original_data,
   column_names,
-  n_grid_evals = n_grid_evals,
-  max_sd = 2.5
+  n_grid_evals = n_grid_evals
 ) {
   print("Generating a grid of beta values")
   initial_xi <- rep(1, length(mle_coefs))
@@ -660,7 +658,6 @@ glim <- function(
         ll_mle_original_data,
         column_names,
         n_grid_evals = n_grid_evals,
-        max_sd = 3,
         m = m
       )
       colnames(betas) <- column_names
@@ -681,7 +678,8 @@ glim <- function(
       betas = betas,
       family = family,
       X = X,
-      y = y
+      y = y,
+      mle = mle_coefs
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -715,7 +713,8 @@ glim <- function(
       betas = beta_p2p_grid,
       family = family,
       X = X,
-      y = y
+      y = y,
+      mle = mle_coefs
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -740,8 +739,7 @@ glim <- function(
       max_it,
       a_val,
       b_val,
-      n_grid_evals = n_grid_evals,
-      max_sd = 3
+      n_grid_evals = n_grid_evals
     )
     beta_seq_list <- list()
     for (i in 1:nrow(samples)) {
@@ -756,7 +754,8 @@ glim <- function(
       betas = beta_appendix_grid,
       family = family,
       X = X,
-      y = y
+      y = y,
+      mle = mle_coefs
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -1085,7 +1084,6 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
 #' @param a_val Hyperparameter `a` (should be between X and Y TODO)
 #' @param b_val Hyperparameter `b` (should be between X and Y TODO)
 #' @param n_grid_evals Resolution of grid
-#' @param max_sd TODO
 #' @return A matrix of output samples evaluated by the C++ backend.
 #' @noRd
 appendix <- function(
@@ -1103,8 +1101,7 @@ appendix <- function(
   max_it,
   a_val,
   b_val,
-  n_grid_evals,
-  max_sd
+  n_grid_evals
 ) {
   output_samples <- appendix_code(
     num_samps,
@@ -1132,7 +1129,6 @@ appendix <- function(
     ll_mle_original_data = ll_mle_original_data,
     column_names = col_names,
     n_grid_evals = n_grid_evals,
-    max_sd = max_sd,
     m = m
   )
   return(output_samples)
@@ -1265,20 +1261,29 @@ plot.glim_object <- function(output) {
 #' @param object from 'glim()'
 #' @return IDK yet TODO
 #' @export
-print.glim_object <- function(output) {
+print.glim_object <- function(output, alpha = .05) {
   betas <- output$betas
   poss <- output$possibilities
   family <- output$family
-  print("Please see plot() for marginal possiblity contours")
 
-  on.exit(par(old_par)) # if any crashes, don't have the user's state altered
-  #where the marginalization happens
+  cat("Please see plot() for marginal possibility contours.\n\n")
+  cat(sprintf("%.2f percent (marginal) confidence and credible region:\n", 1 - alpha))
+  cat("------------------------------------------------------\n")
+
   for (col in 1:ncol(betas)) {
     max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
 
-    # Filter out -Inf values from empty grid slices
     beta_vals <- as.numeric(names(max_plaus))
     valid <- is.finite(beta_vals) & is.finite(max_plaus)
+    alpha_cut <- valid & (max_plaus > alpha)
+    valid_betas <- beta_vals[alpha_cut]
+
+    # left-alignment for 15 spaces (%-15s) and decimal control (%.4f)
+    cat(sprintf(
+      "  %-15s : [%.4f, %.4f]\n",
+      colnames(betas)[col],
+      min(valid_betas),
+      max(valid_betas)
+    ))
   }
-  # TODO print out the alpha cutoffs
 }

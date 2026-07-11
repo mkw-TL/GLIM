@@ -97,7 +97,3 @@ fit_poisson_log_cpp <- function(X, y, initial_beta) {
     .Call(`_GLIM_fit_poisson_log_cpp`, X, y, initial_beta)
 }
 
-glm_poisson_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx, appendix) {
-    .Call(`_GLIM_glm_poisson_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx, appendix)
-}
-

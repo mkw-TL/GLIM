@@ -7,12 +7,6 @@
 using namespace Rcpp;
 using namespace arma;
 
-// Define struct to track solver results cleanly
-struct PoissonResult {
-  arma::vec beta;
-  bool success;
-};
-
 // Since not doing step-halving, don't need this
 // inline double calculate_deviance_poisson(const arma::vec &y,
 //                                          const arma::vec &mu) {
@@ -35,49 +29,40 @@ struct PoissonResult {
 //   return 2.0 * dev;
 // }
 
-// Poisson solver
 PoissonResult fit_poisson_inner(const arma::mat &X, const arma::vec &y,
                                 const arma::vec &initial_beta) {
   int N = X.n_rows;
   int P = X.n_cols;
   arma::vec proposed_beta = initial_beta;
 
-  // Pre-allocated tracking vectors
   arma::vec eta(N), mu(N), grad(P), step(P);
   arma::mat XTWX(P, P);
   arma::mat XW(N, P);
 
   bool solver_success = true;
+  bool converged = false;
 
-  // Fixed 10 iterations max. Well-conditioned systems converge in 4-6 steps.
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i < 12; i++) {
     eta = X * proposed_beta;
 
-    // Tight clamping prevents the matrix from becoming singular
     for (int k = 0; k < N; ++k) {
       double e = eta[k];
       if (e < -10.0)
-        e = -10.0; // Floor prevents weight from dropping below 0.000045
+        e = -10.0;
       if (e > 10.0)
-        e = 10.0; // Ceiling prevents exponential explosion (can't represent
-                  // values more than 22k)
+        e = 10.0;
       mu[k] = std::exp(e);
     }
 
-    // matrix multiplication bypass
     XW = X;
-    XW.each_col() %=
-        mu; // Our w is a diagonal matrix with mu(i) on the diagonals. Since the
-            // matrix is diagonal, can just do this
+    XW.each_col() %= mu;
 
     XTWX = X.t() * XW;
     grad = X.t() * (y - mu);
 
-    // Want to go through the fast solver most of the time (with looser
-    // clamping, the XTWX matrix tended to be a lot closer to singular)
     solver_success = arma::solve(step, XTWX, grad, arma::solve_opts::fast);
     if (!solver_success) {
-      solver_success = arma::solve(step, XTWX, grad); // Rare safety fallback
+      solver_success = arma::solve(step, XTWX, grad);
     }
 
     if (!solver_success || !step.is_finite()) {
@@ -86,12 +71,27 @@ PoissonResult fit_poisson_inner(const arma::mat &X, const arma::vec &y,
 
     proposed_beta += step;
 
-    if (arma::norm(step) < 1e-5) {
+    if (arma::norm(step) < 1e-3) {
+      converged = true;
       break;
     }
   }
 
-  return {proposed_beta, solver_success};
+  // Post-estimation check for complete separation
+  bool separated = false;
+  if (!converged && solver_success) {
+    // If the loop timed out but the matrix arithmetic didn't fail, check if
+    // any row with a zero-outcome is pinned at or past the lower clamp
+    // boundary.
+    for (int k = 0; k < N; ++k) {
+      if (y[k] == 0 && eta[k] <= -10.0) {
+        separated = true;
+        break;
+      }
+    }
+  }
+
+  return {proposed_beta, solver_success, separated};
 }
 
 double compute_poisson_ll(const arma::vec &eta, const arma::vec &y) {
@@ -117,11 +117,10 @@ arma::vec fit_poisson_log_cpp(const arma::mat &X, const arma::vec &y,
 }
 
 // Main Parallelized Simulation Function for Poisson
-// [[Rcpp::export]]
-double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
-                          const arma::vec &mle_coefs,
-                          const arma::vec &beta_vals, int m, bool approx,
-                          bool appendix) {
+PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
+                                   const arma::vec &mle_coefs,
+                                   const arma::vec &beta_vals, int m,
+                                   bool approx, bool appendix) {
   // auto t_start = std::chrono::high_resolution_clock::now();
   int n = X.n_rows;
 
@@ -129,8 +128,10 @@ double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
   eta = arma::clamp(eta, -10.0, 10.0);
   arma::vec mu = arma::exp(eta);
 
+  bool orig_seperated = false;
+
   if (!mu.is_finite() || mu.max() > 1e5) {
-    return 0.0;
+    orig_seperated = true;
   }
 
   arma::vec eta_hat = X * mle_coefs;
@@ -165,14 +166,15 @@ double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
   // auto t_sim_end = std::chrono::high_resolution_clock::now();
 
   int count_less = 0;
-// double total_solver_time = 0.0;
-// double total_likelihood_time = 0.0;
+  // double total_solver_time = 0.0;
+  // double total_likelihood_time = 0.0;
 
-// #pragma omp parallel reduction(+ : count_less, total_solver_time, \
-//                                    total_likelihood_time) if (approx)
+  // #pragma omp parallel reduction(+ : count_less, total_solver_time, \
+  //                                    total_likelihood_time) if (approx)
 
-// The (NEW!) parallelization has started!
-#pragma omp parallel reduction(+ : count_less) if (approx)
+  // The (NEW!) parallelization has started!
+  double prop_seperated = 0;
+#pragma omp parallel reduction(+ : count_less, prop_seperated) if (approx)
   {
     // Thread-local
     arma::vec y_sim_local(n);
@@ -187,6 +189,9 @@ double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
 
       // auto s_start = std::chrono::high_resolution_clock::now();
       PoissonResult sim_res = fit_poisson_inner(X, y_sim_local, beta_vals);
+      if (sim_res.seperated) {
+        prop_seperated++;
+      }
       // auto s_end = std::chrono::high_resolution_clock::now();
       // total_solver_time +=
       //     std::chrono::duration<double>(s_end - s_start).count();
@@ -222,6 +227,7 @@ double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
       }
     }
   }
+  prop_seperated = prop_seperated / m;
 
   // auto t_end = std::chrono::high_resolution_clock::now();
 
@@ -238,5 +244,5 @@ double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
   // Rcpp::Rcout << "Sum LL Time:     " << total_likelihood_time
   //             << "s (Combined across threads)\n";
 
-  return (double)count_less / m;
+  return {(double)count_less / m, orig_seperated, prop_seperated};
 }

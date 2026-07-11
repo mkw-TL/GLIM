@@ -365,23 +365,6 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// glm_poisson_pl_cpp
-double glm_poisson_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::vec& beta_vals, int m, bool approx, bool appendix);
-RcppExport SEXP _GLIM_glm_poisson_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP beta_valsSEXP, SEXP mSEXP, SEXP approxSEXP, SEXP appendixSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type mle_coefs(mle_coefsSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
-    Rcpp::traits::input_parameter< int >::type m(mSEXP);
-    Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
-    Rcpp::traits::input_parameter< bool >::type appendix(appendixSEXP);
-    rcpp_result_gen = Rcpp::wrap(glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, appendix));
-    return rcpp_result_gen;
-END_RCPP
-}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_GLIM_generate_unit_matrix", (DL_FUNC) &_GLIM_generate_unit_matrix, 2},
@@ -408,7 +391,6 @@ static const R_CallMethodDef CallEntries[] = {
     {"_GLIM_logistic_ll_1d", (DL_FUNC) &_GLIM_logistic_ll_1d, 3},
     {"_GLIM_compute_poisson_ll_mat", (DL_FUNC) &_GLIM_compute_poisson_ll_mat, 2},
     {"_GLIM_fit_poisson_log_cpp", (DL_FUNC) &_GLIM_fit_poisson_log_cpp, 3},
-    {"_GLIM_glm_poisson_pl_cpp", (DL_FUNC) &_GLIM_glm_poisson_pl_cpp, 7},
     {NULL, NULL, 0}
 };
 

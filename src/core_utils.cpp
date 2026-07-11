@@ -1,6 +1,7 @@
 // Translated to c++ by Gemini
 // Thoroughly vetted
 
+#include "armadillo"
 #include "headers.h"
 // [[Rcpp::depends(RcppArmadillo)]]
 // [[Rcpp::plugins(openmp)]]
@@ -102,6 +103,22 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   int next_percentage_milestone = 0;
   int percentage_step = 2; // Update every 2%
 
+  if (fam == GlmFamily::Binomial) {
+    LogisticPlResult result =
+        glm_logis_pl_cpp(X, y, mle_coefs, mle_coefs, 2, false, false);
+    if (result.orig_seperated) {
+      Rcpp::stop("Initial data is seperated. Exiting calculation");
+
+      arma::mat pos{
+          1, 1,
+          arma::fill::value(
+              arma::datum::nan)}; // Need to have curly braces, as this function
+                                  // lives in a .h file, and C++ doesn't want to
+                                  // use () for instantiation
+      return (pos);
+    }
+  }
+
   // X = scale_design_matrix_cpp(X);
   // The Parallel Loop. Schedule(static) means that each thread is assigned
   // roughly the same amount of work schedule(dynamic) has a bit more overhead
@@ -126,15 +143,22 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
         // Note that sim_seperated is a percentage of how many sims (for that
         // beta value) went poorly. Don't have a conceptual idea on how to pass
         // this back out.
-        seperation_issues = 1;
+        seperation_issues++;
       }
       pl = result.poss;
       break;
     }
 
     case GlmFamily::Poisson: {
-
-      pl = glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, false);
+      PoissonPlResult result =
+          glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, false);
+      if (result.prop_seperated > 0) {
+        // Note that sim_seperated is a percentage of how many sims (for that
+        // beta value) went poorly. Don't have a conceptual idea on how to pass
+        // this back out.
+        seperation_issues++;
+      }
+      pl = result.poss;
       break;
     }
 
@@ -212,7 +236,6 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
                 const arma::vec &J_values, double dispersion, double tol = 1e-2,
                 double a_val = 2.0, double b_val = 0.65, int max_it = 25,
                 bool parallel = false, int m = 100) {
-
   int D = mle.size();
 
   // Setup Chi-Squared distribution to replicate R's qchisq()
@@ -277,6 +300,37 @@ arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
   }
   arma::mat XtX = X.t() * X; // Precompute here, not inside the loop!
 
+  if (fam == GlmFamily::Binomial) {
+    LogisticPlResult result =
+        glm_logis_pl_cpp(X, y, mle_coefs, mle_coefs, m = 2, false, false);
+    if (result.orig_seperated) {
+      Rcpp::stop("Initial data is seperated. Exiting calculation");
+
+      arma::mat betas{
+          1, 1,
+          arma::fill::value(
+              arma::datum::nan)}; // Need to have curly braces, as this function
+                                  // lives in a .h file, and C++ doesn't want to
+                                  // use () for instantiation
+      return (betas);
+    }
+  }
+  if (fam == GlmFamily::Poisson) {
+    PoissonPlResult result =
+        glm_poisson_pl_cpp(X, y, mle_coefs, mle_coefs, m = 2, false, false);
+    if (result.orig_seperated) {
+      Rcpp::stop("Initial data is seperated. Exiting calculation");
+
+      arma::mat betas{
+          1, 1,
+          arma::fill::value(
+              arma::datum::nan)}; // Need to have curly braces, as this function
+                                  // lives in a .h file, and C++ doesn't want to
+                                  // use () for instantiation
+      return (betas);
+    }
+  }
+
   // The Parallel Loop
 #pragma omp parallel for schedule(static)
   for (int j = 0; j < num_samps; j++) {
@@ -320,8 +374,9 @@ arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
         break;
       }
       case GlmFamily::Poisson: {
-        val1 =
-            glm_poisson_pl_cpp(X, y, mle_coefs, beta_proposal, m, approx, true);
+        PoissonPlResult result = glm_poisson_pl_cpp(
+            X, y, mle_coefs, beta_proposal, m, approx, false);
+        val1 = result.poss;
         break;
       }
       case GlmFamily::InverseGaussian: {

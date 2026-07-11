@@ -21,12 +21,26 @@ struct LogisticResult1D {
   double beta;
   bool orig_seperated;
 };
+struct PoissonResult {
+  arma::vec beta;
+  bool success;
+  bool seperated;
+};
+struct PoissonPlResult {
+  double poss;
+  bool orig_seperated;
+  double prop_seperated;
+};
+struct PoissonPlResult1D {
+  double beta;
+  bool orig_seperated;
+};
 
 // A forward declaration so that other cpp files know that this exists.
-double glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
-                          const arma::vec &mle_coefs,
-                          const arma::vec &beta_vals, int m, bool approx,
-                          bool appendix);
+PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
+                                   const arma::vec &mle_coefs,
+                                   const arma::vec &beta_vals, int m,
+                                   bool approx, bool appendix);
 
 double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
                         const arma::vec &mle_coefs, const arma::vec &beta_vals,

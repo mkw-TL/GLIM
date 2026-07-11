@@ -1,4 +1,6 @@
 #include "headers.h"
+#include <cmath>
+#include <limits>
 // #include <chrono>
 // [[Rcpp::depends(RcppArmadillo)]]
 // [[Rcpp::plugins(openmp)]]
@@ -157,13 +159,14 @@ LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   bool orig_separated =
       arma::any(p_hat < 1e-8) || arma::any(p_hat > (1.0 - 1e-8));
 
-  // If original data is separated, max log-likelihood is 0
-  double mle_val =
-      orig_separated ? 0.0 : (arma::dot(y, eta_hat) - sum_softplus(eta_hat));
+  double mle_val = (arma::dot(y, eta_hat) - sum_softplus(eta_hat));
 
   // Precompute constant scalar for f.x
   double sum_log_term = sum_softplus(eta);
   double f_x = arma::dot(y, eta) - sum_log_term - mle_val;
+  if (orig_separated) {
+    f_x = std::numeric_limits<double>::infinity();
+  }
 
   // Computing new random binomial data:
   thread_local std::random_device rd;
@@ -224,9 +227,9 @@ LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
 double logistic_ll(const arma::mat &X, const arma::vec &y,
                    const arma::vec &beta_vals) {
   LogisticResult res = fit_logistic(X, y, beta_vals);
-  double mle_sim =
-      0.0; // Sooooo right now if I get seperation, I return a value of zero.
-           // TODO. This is 100% going to lead to issues
+  double mle_sim = -10000000000; // Sooooo right now if I get seperation, I
+                                 // return a value of zero.
+                                 // TODO. This is 100% going to lead to issues
   if (!res.seperated) {
     mle_sim = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
   }
