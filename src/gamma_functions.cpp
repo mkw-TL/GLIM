@@ -81,9 +81,11 @@ arma::vec fit_gamma_log_cpp(const arma::mat &X, const arma::mat &XtX,
 // [[Rcpp::export]]
 double compute_gamma_ll(const arma::vec &y, const arma::vec &eta,
                         double shape) {
+  arma::vec eta_clamped = arma::clamp(eta, -50.0, 50.0);
   double term1 = y.n_elem * (shape * std::log(shape) - std::lgamma(shape));
   double term2 = (shape - 1.0) * arma::sum(arma::log(y));
-  double term3 = -shape * (arma::dot(y, arma::exp(-eta)) + arma::sum(eta));
+  double term3 =
+      -shape * (arma::dot(y, arma::exp(-eta_clamped)) + arma::sum(eta_clamped));
   return term1 + term2 + term3;
 }
 
@@ -165,46 +167,6 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
   return (1 / nu);
 }
 
-arma::mat scale_continuous_features(arma::mat &X) {
-  for (int j = 0; j < X.n_cols; j++) {
-    arma::vec col = X.col(j);
-
-    double col_min = col.min();
-    double col_max = col.max();
-
-    // 1. Skip Intercepts / Constant Columns
-    // If max and min are virtually identical, the variance is 0.
-    if (std::abs(col_max - col_min) < 1e-9) {
-      continue;
-    }
-
-    // 2. Skip Binary Categorical Columns (0 / 1 Dummy Variables)
-    bool is_binary = true;
-    for (int i = 0; i < col.n_elem; i++) {
-      double val = col(i);
-      // Check if the value deviates from exactly 0.0 or 1.0
-      if (std::abs(val - 0.0) > 1e-9 && std::abs(val - 1.0) > 1e-9) {
-        is_binary = false;
-        break; // Found a non-binary value, this is a continuous feature
-      }
-    }
-
-    if (is_binary) {
-      continue;
-    }
-
-    // 3. Scale Continuous Columns (Z-score: (x - mean) / stddev)
-    double mean = arma::mean(col);
-    double std_dev = arma::stddev(col);
-
-    // Extra safety check against division by zero
-    if (std_dev > 1e-9) {
-      X.col(j) = (col - mean) / std_dev;
-    }
-  }
-  return X;
-}
-
 // 2. The main simulation function
 // Note that beta_vals is not the entire matrix of all possible betas, but just
 // for a single vector.
@@ -213,10 +175,9 @@ double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
                         const arma::vec &mle_coefs, const arma::vec &beta_vals,
                         int m, bool approx, bool appendix) {
   int n = X.n_rows;
-  arma::mat scaled_X = scale_continuous_features(X);
 
   // Compute true expected values based on proposed betas
-  arma::vec eta = scaled_X * beta_vals;
+  arma::vec eta = X * beta_vals;
   eta.elem(arma::find(eta > 50)).fill(50);
   eta.elem(arma::find(eta < -50)).fill(-50); // avoids D_mean explosions
   arma::vec mu = arma::exp(eta);
@@ -234,7 +195,7 @@ double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
   // Note that the dispersion parameter is not estimated via mle in R's glm.
   // Note, however, that we are simply accepcting a dispersion parameter as
   // given in an argument
-  arma::vec eta_hat = scaled_X * mle_coefs;
+  arma::vec eta_hat = X * mle_coefs;
   eta_hat.elem(arma::find(eta_hat > 50)).fill(50);
   eta_hat.elem(arma::find(eta_hat < -50)).fill(-50);
   double mle_ll = compute_gamma_ll(y, eta_hat, shape);

@@ -333,7 +333,8 @@ arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
 
   // The Parallel Loop
 #pragma omp parallel for schedule(static)
-  for (int j = 0; j < num_samps; j++) {
+  for (int j = 0; j < num_samps - 1;
+       j++) { // -1 so that we can add the MLE at the end
     // Thread-safe RNG instantiation inside the loop
     std::random_device rd;
     std::mt19937 gen(rd() +
@@ -404,5 +405,6 @@ arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
       }
     }
   }
+  sampled_betas.col(num_samps - 1) = mle_coefs; // Remember off by one indexing
   return sampled_betas;
 }
