@@ -103,7 +103,7 @@ generate_grid <- function(
 ) {
   initial_xi <- rep(1, length(mle_coefs))
 
-  alpha_target <- 0.01
+  alpha_target <- 0.001
 
   imvar_xi <- imvar(
     X,
@@ -116,11 +116,12 @@ generate_grid <- function(
     eigen_vecs,
     eigen_vals,
     dispersion,
-    .02,
-    2,
-    .65,
-    FALSE,
-    m # This is our m value
+    tol = .005, # the tolerance value
+    a_val = 2,
+    b_val = .65,
+    max_it = 25,
+    parallel = FALSE,
+    m = m # This is our m value
   )
   # sqrt(dispersion * xi / eigen_val)
   q_val <- qchisq(1 - alpha_target, df = length(mle_coefs) - 1) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
@@ -320,7 +321,7 @@ glim_inner_prob_approx_samples <- function(
 #' @export
 glim <- function(
   formula,
-  data,
+  data = NULL,
   family = "gaussian",
   m = 1000,
   approx = FALSE,
@@ -339,11 +340,20 @@ glim <- function(
   mf <- mf[c(1L, match)] # from match.call, take elements 1 (function name), 2 (match with formula), 3 (match with data)
   mf$drop.unused.levels <- TRUE
   mf[[1L]] <- quote(stats::model.frame)
-  mf <- eval(mf, parent.frame())
+  env <- environment(formula)
+  if (is.null(env)) {
+    env <- parent.frame()
+  }
+  mf <- eval(mf, env)
   mt <- attr(mf, "terms") # figure out the variables to expand out in the model.matrix. Contains further attributes of factors, etc
   offset <- model.offset(mf) # would need to put into glim()
   X <- model.matrix(mt, mf, NULL) # model.matrix() creates the dummy columns. NULL is the contrasts (which could be set as default setting within a useR's R session, but I don't want to incorporate this)
-  y <- model.response(mf, "numeric")
+  # If more than one column is all 1s, drop the automatic R intercept
+  # Gets rid of auto-prepended intercept if there already exists one. X == 1 is a boolean vector, so colsums is a good way of doing this
+  if (sum(colSums(X == 1) == nrow(X)) > 1 && "(Intercept)" %in% colnames(X)) {
+    X <- X[, colnames(X) != "(Intercept)", drop = FALSE]
+  }
+  y <- model.response(mf, "any")
   args <- list(...)
   if ("a_val" %in% names(args)) {
     if (is.numeric(args$a_val) & length(args$a_val) == 1 & args$a_val > 0) {
@@ -516,9 +526,11 @@ glim <- function(
     column_names <- colnames(X)
   }
   # Got rid of intercept logic, since covered.
-
   ## Binomial setup
   if (family == "binomial" || family == "logistic") {
+    if (is.data.frame(X)) {
+      X <- as.matrix(X)
+    }
     if (is.vector(y) && all(y == 0 | y == 1)) {
       if (length(y) != nrow(X)) {
         print("y and X lengths differ")
@@ -530,8 +542,8 @@ glim <- function(
       failures <- y[, 2]
 
       if (ncol(X) == 1) {
-        idx_success <- rep(1:length(X), times = successes)
-        idx_fail <- rep(1:length(X), times = failures)
+        idx_success <- rep(1:nrow(X), times = successes)
+        idx_fail <- rep(1:nrow(X), times = failures)
       } else {
         idx_success <- rep(1:nrow(X), times = successes)
         idx_fail <- rep(1:nrow(X), times = failures)
@@ -556,12 +568,6 @@ glim <- function(
       X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
     }
     # We are using (-1) so that R knows the X matrix we are using; we don't want to append any extra intercepts
-    # Well heck. Need to use my own cpp mle here (as different behavior in seperations will lead to possibilties not = 1)
-    if (is.matrix(X)) {
-      ll_mle_original_data <- logistic_ll(X, y, rep(0, ncol(X)))
-    } else {
-      ll_mle_original_data <- logistic_ll_1d(X, y, 0) # initial beta value of 0
-    }
     fit <- glm(y ~ X - 1, family = binomial)
     eps <- 10 * .Machine$double.eps
     if (any(fit$fitted.values > (1 - eps)) || any(fit$fitted.values < eps)) {
@@ -575,9 +581,16 @@ glim <- function(
     }
     p2p_function <- prob2poss_logis
 
+    if (is.matrix(X)) {
+      ll_mle_original_data <- logistic_ll(X, y, mle_coefs)
+    } else {
+      ll_mle_original_data <- logistic_ll_1d(X, y, mle_coefs) # initial beta value of 0
+    }
+
     ## Gamma setup
   } else if (family == "gamma") {
     mle_coefs <- glm(y ~ X - 1, family = Gamma(link = "log"))$coefficients
+    print(mle_coefs)
     eta <- X %*% mle_coefs
     dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
     ll_mle_original_data <- compute_gamma_ll_r(y, eta, 1 / dispersion)
@@ -625,7 +638,6 @@ glim <- function(
   } else {
     stop("Family not supported")
   }
-
   if (!is.null(J)) {
     J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries
     eJ <- eigen(J)
@@ -639,7 +651,6 @@ glim <- function(
       )
     }
   }
-
   if (!missing(dispersion) && (!is.numeric(dispersion) || dispersion <= 0)) {
     stop("Input Error: 'dispersion' must be a strictly positive numeric value.")
   }
@@ -705,6 +716,7 @@ glim <- function(
       beta_seq_list[[i]] <- seq(min(samples[i, ]), max(samples[i, ]), length.out = n_grid_evals)
     }
     beta_p2p_grid <- as.matrix(expand.grid(beta_seq_list))
+    beta_p2p_grid <- rbind(beta_p2p_grid, t(mle_coefs))
     poss <- p2p_function(X, y, samples, t(beta_p2p_grid))
     colnames(beta_p2p_grid) <- column_names
     obj_to_return <- list(
@@ -917,7 +929,6 @@ prob2poss_gaussian <- function(X, y, samples, the_compared_theta) {
   # Assuming identity link for Gaussian by default
   mle_coefs <- fit_gaussian_cpp(X, y)
   est_sd <- sqrt(est_dispersion(y, X %*% mle_coefs, length(mle_coefs)))
-
   ll_val_samps <- as.vector(compute_gaussian_ll_r(y, eta, sigma = est_sd))
   ll_val <- as.vector(compute_gaussian_ll_r(y, X %*% the_compared_theta, sigma = est_sd))
 
@@ -1181,11 +1192,6 @@ get_CI <- function(glim_object, alpha = .05) {
   return(glim_object$betas[glim_object$possibilities > alpha, ])
 }
 
-
-comput_gauss <- function(y, mu, sigma) {
-  return(compute_gaussian_ll(y, mu, sigma))
-}
-
 est_sig_sq <- function(y, mu, p) {
   return(est_dispersion(y, mu, p))
 }
@@ -1229,8 +1235,7 @@ plot.glim_object <- function(output) {
         ylab = "Profiled Plausibility",
         ylim = c(0, 1)
       )
-      axis(1, tck = 1, lty = 2, col = "grey")
-      axis(2, tck = 1, lty = 2, col = "grey")
+      grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
     } else {
       # Draw an empty box if no data falls in this slice
       plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
@@ -1249,8 +1254,6 @@ plot.glim_object <- function(output) {
     cex = 1.3, # Font size multiplier (makes it larger)
     font = 2 # 2 means Bold
   )
-  # Reset back to default
-  par(mfrow = c(1, 1), oma = c(0, 0, 0, 0))
 }
 
 

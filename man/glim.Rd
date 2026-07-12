@@ -6,7 +6,7 @@
 \usage{
 glim(
   formula,
-  data,
+  data = NULL,
   family = "gaussian",
   m = 1000,
   approx = FALSE,

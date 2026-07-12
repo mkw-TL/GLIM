@@ -190,7 +190,7 @@ LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
 
 // Inner loop: fit models entirely in C++
 #pragma omp parallel for schedule(static) reduction(                           \
-        + : count_less, prop_sep) if (approx == true & appendix == false)
+        + : count_less, prop_sep) if (approx == true && appendix == false)
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 

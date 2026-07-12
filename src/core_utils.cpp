@@ -302,7 +302,7 @@ arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
 
   if (fam == GlmFamily::Binomial) {
     LogisticPlResult result =
-        glm_logis_pl_cpp(X, y, mle_coefs, mle_coefs, m = 2, false, false);
+        glm_logis_pl_cpp(X, y, mle_coefs, mle_coefs, 2, false, false);
     if (result.orig_seperated) {
       Rcpp::stop("Initial data is seperated. Exiting calculation");
 
