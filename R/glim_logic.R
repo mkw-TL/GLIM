@@ -6,7 +6,6 @@
 #' @importFrom utils head
 NULL
 
-
 # Original code written by Joe Harrison (jrharr25@ncsu.edu), translated to cpp by Gemini
 # pkgbuild::compile_dll() validates the package directory differently. Rcpp might implement it's directory check differently
 # After making changes, restart R, get in the package directory
@@ -15,20 +14,56 @@ NULL
 
 #' Scale the design matrix
 #'
-#' Scales the design matrix for numerical stability when fitting
+#' Scales the design matrix for numerical stability when fitting. Columns
+#' with two or fewer unique values (intercepts, dummy/indicator variables)
+#' are left untouched; all other ("continuous") columns are divided by
+#' their root-mean-square so that no single predictor dominates purely
+#' because of its measurement scale.
 #'
-#' @param X design matrix
+#' @param X A numeric design matrix (a data frame will be coerced to a
+#'   matrix automatically).
 #' @return Scaled design matrix (excludes intercepts and dummy variables)
+#' @examples
+#' X <- cbind(intercept = 1, age = c(20, 45, 70, 33), male = c(1, 0, 1, 0))
+#' scale_design_matrix(X)
+#'
+#' # A matrix with no continuous columns is returned unchanged
+#' scale_design_matrix(cbind(intercept = 1, male = c(1, 0, 1, 0)))
 #' @export
 scale_design_matrix <- function(X) {
-  # Find columns with more than 2 unique values
+  if (is.data.frame(X)) {
+    X <- as.matrix(X)
+  }
+  if (!is.matrix(X) || !is.numeric(X)) {
+    stop(
+      "Input Error: 'X' must be a numeric matrix (or a data frame coercible to one).",
+      call. = FALSE
+    )
+  }
+  if (ncol(X) == 0 || nrow(X) == 0) {
+    stop("Input Error: 'X' must have at least one row and one column.", call. = FALSE)
+  }
+  if (any(!is.finite(X))) {
+    stop("Input Error: 'X' contains NA/NaN/Inf values, which cannot be scaled.", call. = FALSE)
+  }
+
+  # Find columns with more than 2 unique values ("continuous" predictors)
   continuous_cols <- apply(X, 2, function(col) length(unique(col)) > 2)
 
-  # Scale only those columns (center and scale)
-  X[, continuous_cols] <- scale(X[, continuous_cols], center = FALSE)
+  # Nothing to scale (e.g. only an intercept and/or dummy columns): return as-is
+  if (!any(continuous_cols)) {
+    return(X)
+  }
+
+  # drop = FALSE guards against a single continuous column silently
+  # collapsing to a plain vector, which would break the assignment below
+  cols_to_scale <- X[, continuous_cols, drop = FALSE]
+
+  X[, continuous_cols] <- scale(cols_to_scale, center = FALSE)
 
   return(X)
 }
+
 
 #' Fits GLIM (Raw Implementation)
 #'
@@ -46,8 +81,6 @@ scale_design_matrix <- function(X) {
 #' @return A matrix of evaluated possibility outputs.
 #' @noRd
 glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, parallel, approx) {
-  output <- matrix()
-
   if (parallel) {
     num_omp_threads <- max(1, parallel::detectCores() - 1)
 
@@ -63,7 +96,6 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
     num_omp_threads <- 1
   }
 
-  # TESTING OUT EVALUATION OF GLM FIT DIRECTLY ON MLE_COEFS
   output <- fit_glm_omp_cpp(
     X = X,
     y = y,
@@ -117,8 +149,8 @@ generate_grid <- function(
     eigen_vals,
     dispersion,
     tol = .005, # the tolerance value
-    a_val = 2,
-    b_val = .65,
+    a_val = 5, # found through a grid search
+    b_val = 1, # found through a grid search
     max_it = 25,
     parallel = FALSE,
     m = m # This is our m value
@@ -154,60 +186,159 @@ generate_grid <- function(
   scaled_sq_points <- sweep(rotated_points^2, 2, semi_axes^2, FUN = "/")
   inside_indices <- rowSums(scaled_sq_points) <= 1
   # Check if they are inside the unit sphere (i.e. inside the ellipse)
+  if (!any(inside_indices)) {
+    stop(
+      "GLIM error: no grid points fell inside the confidence ellipse. ",
+      "Try increasing 'n_grid_evals' or check that the model fit ",
+      "(mle_coefs / eigen decomposition) is not degenerate.",
+      call. = FALSE
+    )
+  }
+  # Check if they are inside the unit sphere (i.e. inside the ellipse)
   # From betas, select all the columns (proposed betas) that are inside
   points_inside <- betas[inside_indices, ]
   return(points_inside)
 }
 
-#' Generates a grid of parameter values (aligned in eigen-vector space)
+# #' Generates a grid of parameter values (aligned in eigen-vector space)
+# #'
+# #' Each direction has a default of 20 steps
+# #'
+# #' @param mle_coefs The mle coef
+# #' @noRd
+# generate_eigen_grid <- function(
+#   X,
+#   y,
+#   family,
+#   mle_coefs,
+#   eigen_vecs,
+#   eigen_vals,
+#   dispersion,
+#   ll_mle_original_data,
+#   column_names,
+#   n_grid_evals = n_grid_evals
+# ) {
+#   print("Generating a grid of beta values")
+#   initial_xi <- rep(1, length(mle_coefs))
+#   imvar_xi <- imvar(
+#     X,
+#     y,
+#     initial_xi,
+#     family,
+#     .1,
+#     mle_coefs,
+#     ll_mle_original_data,
+#     eigen_vecs,
+#     eigen_vals,
+#     dispersion,
+#     .05, # this is the alpha level to which imvar is attempting to scale to
+#     2, # alpha_val
+#     .65, # beta_val
+#     30, # max_it
+#     FALSE
+#   )
+#   scaling <- sqrt(eigen_vals) * imvar_xi
+#   slices <- lapply(1:length(mle_coefs), function(i) {
+#     seq(-1, 1, length.out = n_grid_evals)
+#   })
+#   eigenspace_grid <- as.matrix(expand.grid(slices))
+#   scaled_eigenspace <- t(t(eigenspace_grid) * as.vector(scaling))
+#   param_deltas <- scaled_eigenspace %*% t(eigen_vecs)
+#   betas <- t(t(param_deltas) + as.vector(mle_coefs))
+#   colnames(betas) <- column_names
+
+#   return(betas)
+# }
+
+#' Generate Elliptical Approximation Samples (Inner Probability)
 #'
-#' Each direction has a default of 20 steps
+#' Internal function called to generate samples when the elliptical approximation is used.
 #'
-#' @param mle_coefs The mle coef
+#' @param X Input predictor matrix.
+#' @param y Response vector.
+#' @param family A string indicating the error distribution. Default is `"gaussian"`.
+#' @param mle_coefs Maximum likelihood estimates of the coefficients.
+#' @param mle_val The log-likelihood value at the maximum likelihood estimates.
+#' @param m Number of samples to generate.
+#' @param parallel Logical indicating whether to use parallel processing.
+#' @return A matrix of generated samples based on the elliptical approximation.
 #' @noRd
-generate_eigen_grid <- function(
+glim_inner_prob_approx_samples_orig <- function(
   X,
   y,
-  family,
+  family = "gaussian",
   mle_coefs,
-  eigen_vecs,
-  eigen_vals,
+  mle_val,
+  m,
+  parallel,
+  eJ,
   dispersion,
-  ll_mle_original_data,
-  column_names,
-  n_grid_evals = n_grid_evals
+  a_val,
+  b_val,
+  max_it
 ) {
-  print("Generating a grid of beta values")
-  initial_xi <- rep(1, length(mle_coefs))
-  imvar_xi <- imvar(
-    X,
-    y,
-    initial_xi,
-    family,
-    .1,
-    mle_coefs,
-    ll_mle_original_data,
-    eigen_vecs,
-    eigen_vals,
-    dispersion,
-    .05, # this is the alpha level to which imvar is attempting to scale to
-    2, # alpha_val
-    .65, # beta_val
-    30, # max_it
-    FALSE
-  )
-  scaling <- sqrt(eigen_vals) * imvar_xi
-  slices <- lapply(1:length(mle_coefs), function(i) {
-    seq(-1, 1, length.out = n_grid_evals)
-  })
-  eigenspace_grid <- as.matrix(expand.grid(slices))
-  scaled_eigenspace <- t(t(eigenspace_grid) * as.vector(scaling))
-  param_deltas <- scaled_eigenspace %*% t(eigen_vecs)
-  betas <- t(t(param_deltas) + as.vector(mle_coefs))
-  colnames(betas) <- column_names
+  B <- 100
+  AA <- seq(0.001, 0.999, length.out = B)
 
-  return(betas)
+  i <- 0
+  xi <- list()
+  prev_xi <- rep(1, length(mle_coefs))
+  pb <- progress::progress_bar$new(
+    total = length(AA),
+    format = "[:bar] :percent eta :eta",
+    show_after = 0,
+    force = TRUE
+  )
+  for (alpha in AA) {
+    pb$tick()
+    # TODO tryCatch
+    i <- i + 1
+    xi[[i]] <- imvar(
+      X,
+      y,
+      prev_xi,
+      family,
+      alpha,
+      mle = mle_coefs,
+      mle_val,
+      as.matrix(eJ$vectors),
+      as.vector(eJ$values),
+      dispersion,
+      tol = .01,
+      a_val = a_val,
+      b_val = b_val,
+      max_it = max_it,
+      parallel = FALSE
+    )
+    prev_xi <- xi[[i]]
+  }
+
+  message("We've gotten the xi's")
+  U <- runif(m)
+  lerped_xi <- -1
+  samples <- matrix(nrow = length(mle_coefs), ncol = m)
+  i <- 0
+  for (u in U) {
+    i <- i + 1
+    if (u < min(AA)) {
+      lerped_xi <- xi[[1]]
+    } else if (u > max(AA)) {
+      lerped_xi <- xi[[B]]
+    } else {
+      r <- sum(AA < u)
+      w <- (u - AA[r]) / (AA[r + 1] - AA[r])
+      lerped_xi <- (1 - w) * xi[[r]] + w * xi[[r + 1]]
+    }
+
+    rand_dir <- generate_unit_matrix(1, length(mle_coefs))
+    spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
+
+    samples[, i] <- mle_coefs +
+      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * sqrt(lerped_xi) * spatial_dir * dispersion)
+  }
+  return(samples)
 }
+
 
 #' Generate Elliptical Approximation Samples (Inner Probability)
 #'
@@ -236,13 +367,22 @@ glim_inner_prob_approx_samples <- function(
   b_val,
   max_it
 ) {
+  if (parallel) {
+    num_omp_threads <- max(1, parallel::detectCores() - 1)
+
+    # We change the number of blas threads down to 1 so that the parallelization doesn't
+    # request even more threads.
+    if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+      original_blas_threads <- RhpcBLASctl::blas_get_num_procs()
+      RhpcBLASctl::blas_set_num_threads(1)
+      # If we get a function crash, reset the threads back to what it originally was
+      on.exit(RhpcBLASctl::blas_set_num_threads(original_blas_threads), add = TRUE)
+    }
+  } else {
+    num_omp_threads <- 1
+  }
   B <- 100
   AA <- seq(0.001, 0.999, length.out = B)
-
-  pl <- function(z) {
-    betas_matrix <- if (is.matrix(z)) z else matrix(z, nrow = 1)
-    glim_raw(X, y, family, betas_matrix, mle_coefs, mle_val = mle_val, m, parallel, approx = TRUE)
-  }
 
   i <- 0
   xi <- list()
@@ -253,7 +393,6 @@ glim_inner_prob_approx_samples <- function(
     show_after = 0,
     force = TRUE
   )
-  parallel <- FALSE
   for (alpha in AA) {
     pb$tick()
     i <- i + 1
@@ -277,7 +416,26 @@ glim_inner_prob_approx_samples <- function(
     prev_xi <- xi[[i]]
   }
 
-  print("We've gotten the xi's")
+  # Call the new parallel C++ wrapper directly
+  # xi <- imvar_parallel_grid(
+  #   X = X,
+  #   y = y,
+  #   alpha_grid = AA,
+  #   family = family,
+  #   mle = mle_coefs,
+  #   mle_val = mle_val,
+  #   J_vectors = as.matrix(eJ$vectors),
+  #   J_values = as.vector(eJ$values),
+  #   dispersion = dispersion,
+  #   tol = .01,
+  #   a_val = a_val,
+  #   b_val = b_val,
+  #   max_it = max_it,
+  #   m = m,
+  #   n_threads = parallel::detectCores() - 1
+  # )
+
+  message("We've gotten the xi's")
   U <- runif(m)
   lerped_xi <- -1
   samples <- matrix(nrow = length(mle_coefs), ncol = m)
@@ -310,13 +468,15 @@ glim_inner_prob_approx_samples <- function(
 #'
 #' If using the elliptical approximation, can tweak the Robbins-Monroe algorithm by changing a_val, b_val, and max_it.
 #'
-#' @param X Matrix of predictors. Note that any dataframe should be first run through model.matrix()
-#' @param y Vector of response variables. (Can be a nx2 matrix of successes and failures for binomial data)
+#' @param formula Formula object to be interpreted
+#' @param data Dataframe (if using)
+#' @param appendix Bool indicating whether the appendix method is to be used.
+#' @param tol Double indicating the level of precision the approximation should get to
 #' @param family String denoting the exponential family. Choices are `"gaussian"`, `"binomial"`, `"gamma"`, `"poisson"`, `"inverse.gaussian"`.
-#' @param betas A matrix (or column vector) of different beta values to evaluate the possibility over.
 #' @param m Number of samples/evaluations to perform (default `1000`).
 #' @param approx Logical indicating whether to use the elliptical approximation (default `FALSE`).
 #' @param parallel Logical indicating whether to process in parallel.
+#' @param ... Other arguments include a_val, b_val, max_it, betas, n_grid_evals, tol, and num_samps.
 #' @return If using an elliptical approximation, returns samples of parameter values. Else, returns a list containing the matrix of betas upon which it was evaluated, and a vector of the corresponding possibilities.
 #' @export
 glim <- function(
@@ -348,12 +508,18 @@ glim <- function(
   mt <- attr(mf, "terms") # figure out the variables to expand out in the model.matrix. Contains further attributes of factors, etc
   offset <- model.offset(mf) # would need to put into glim()
   X <- model.matrix(mt, mf, NULL) # model.matrix() creates the dummy columns. NULL is the contrasts (which could be set as default setting within a useR's R session, but I don't want to incorporate this)
+  if (any(is.na(X))) {
+    stop("NA values detected in the X matrix.")
+  }
   # If more than one column is all 1s, drop the automatic R intercept
   # Gets rid of auto-prepended intercept if there already exists one. X == 1 is a boolean vector, so colsums is a good way of doing this
   if (sum(colSums(X == 1) == nrow(X)) > 1 && "(Intercept)" %in% colnames(X)) {
     X <- X[, colnames(X) != "(Intercept)", drop = FALSE]
   }
   y <- model.response(mf, "any")
+  if (any(is.na(y))) {
+    stop("NA values detected in the response.")
+  }
   args <- list(...)
   if ("a_val" %in% names(args)) {
     if (is.numeric(args$a_val) & length(args$a_val) == 1 & args$a_val > 0) {
@@ -388,7 +554,8 @@ glim <- function(
   }
   if ("n_grid_evals" %in% names(args)) {
     if (
-      is.integer(as.integer(args$n_grid_evals)) &
+      is.numeric(args$n_grid_evals) &
+        (args$n_grid_evals %% 1 == 0) &
         length(as.integer(args$n_grid_evals)) == 1 &
         as.integer(args$n_grid_evals > 1)
     ) {
@@ -414,7 +581,9 @@ glim <- function(
   }
 
   if ("max_it" %in% names(args)) {
-    if (is.integer(args$max_it) & length(args$max_it) == 1 & args$max_it > 0) {
+    if (
+      is.numeric(args$max_it) & args$max_it %% 1 == 0 & length(args$max_it) == 1 & args$max_it > 0
+    ) {
       max_it <- args$max_it
     } else {
       stop("Input Error: max_it must be a positive integer")
@@ -441,12 +610,6 @@ glim <- function(
     }
   }
 
-  if (!is.matrix(X)) {
-    stop(
-      "X must be a matrix. To convert a dataframe into a matrix, either run matrix(), or model.matrix() depending on whether you have categories"
-    )
-  }
-
   if (is.vector(y)) {
     if (nrow(X) != length(y)) {
       stop(
@@ -459,12 +622,6 @@ glim <- function(
         "Input Error: The number of rows in the design matrix X must equal the length of the response vector y."
       )
     }
-  }
-
-  if (any(is.na(X)) || any(is.na(y))) {
-    warning(
-      "Input Warning: Missing values (NA) detected in X or y. This will likely cause crashes."
-    )
   }
 
   if (ncol(X) > nrow(X)) {
@@ -533,8 +690,7 @@ glim <- function(
     }
     if (is.vector(y) && all(y == 0 | y == 1)) {
       if (length(y) != nrow(X)) {
-        print("y and X lengths differ")
-        stop()
+        stop("y and X lengths differ")
       }
     } else if (is.matrix(y) && ncol(y) == 2) {
       # Two-column integer matrix (Successes / Failures)
@@ -590,7 +746,6 @@ glim <- function(
     ## Gamma setup
   } else if (family == "gamma") {
     mle_coefs <- glm(y ~ X - 1, family = Gamma(link = "log"))$coefficients
-    print(mle_coefs)
     eta <- X %*% mle_coefs
     dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
     ll_mle_original_data <- compute_gamma_ll_r(y, eta, 1 / dispersion)
@@ -601,8 +756,9 @@ glim <- function(
 
     ## Poisson setup
   } else if (family == "poisson") {
-    ll_mle_original_data <- as.numeric(logLik(glm(y ~ X - 1, family = poisson(link = "log"))))
-    mle_coefs <- glm(y ~ X - 1, family = poisson(link = "log"))$coefficients
+    pois_fit <- glm(y ~ X - 1, family = poisson(link = "log")) #TODO trycatch
+    ll_mle_original_data <- as.numeric(logLik(pois_fit))
+    mle_coefs <- coef(pois_fit)
     eta <- X %*% mle_coefs
     lambda_i <- exp(eta)
     dispersion <- 1
@@ -613,11 +769,10 @@ glim <- function(
 
     ## Inverse Gaussian setup
   } else if (family == "inverse.gaussian") {
-    ll_mle_original_data <- as.numeric(logLik(glm(
-      y ~ X - 1,
-      family = inverse.gaussian(link = "1/mu^2")
-    )))
-    mle_coefs <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))$coefficients
+    inv_gaus_fit <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
+
+    ll_mle_original_data <- as.numeric(logLik(inv_gaus_fit))
+    mle_coefs <- coef(inv_gaus_fit)
     eta <- X %*% mle_coefs
     mu_i <- as.vector(sqrt(1 / eta))
     dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
@@ -652,12 +807,12 @@ glim <- function(
     }
   }
   if (!missing(dispersion) && (!is.numeric(dispersion) || dispersion <= 0)) {
-    stop("Input Error: 'dispersion' must be a strictly positive numeric value.")
+    stop("Internal error: 'dispersion' must be a strictly positive numeric value.")
   }
 
   if (approx == FALSE & appendix == FALSE) {
     if (is.null(betas)) {
-      print("generating_grid_of_betas")
+      message("generating_grid_of_betas")
       betas <- generate_grid(
         X,
         y,
@@ -788,8 +943,7 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
   }
   if (is.vector(y) && all(y == 0 | y == 1)) {
     if (length(y) != nrow(X)) {
-      print("y and X lengths differ")
-      stop()
+      stop("y and X lengths differ")
     }
   } else if (is.matrix(y) && ncol(y) == 2) {
     # Two-column integer matrix (Successes / Failures)
@@ -1186,7 +1340,7 @@ get_CI_manual <- function(alpha, betas, possibilities) {
 #' @return A matrix of compatable beta values from the grid.
 #' @export
 get_CI <- function(glim_object, alpha = .05) {
-  if (class(glim_object) != "glim_object") {
+  if (!is(glim_object, "glim_object")) {
     stop("Object which was passed is not a direct result from glim()")
   }
   return(glim_object$betas[glim_object$possibilities > alpha, ])
@@ -1262,6 +1416,7 @@ plot.glim_object <- function(output) {
 #' Printing for glim objects
 #'
 #' @param object from 'glim()'
+#' @param alpha The cut to find the superlevel set
 #' @return IDK yet TODO
 #' @export
 print.glim_object <- function(output, alpha = .05) {

@@ -13,6 +13,10 @@ imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, di
     .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, parallel, m)
 }
 
+imvar_parallel_grid <- function(X, y, alpha_grid, family, mle, mle_val, J_vectors, J_values, dispersion, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, m = 100L, n_threads = 4L) {
+    .Call(`_GLIM_imvar_parallel_grid`, X, y, alpha_grid, family, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, m, n_threads)
+}
+
 appendix_code <- function(num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val) {
     .Call(`_GLIM_appendix_code`, num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val)
 }

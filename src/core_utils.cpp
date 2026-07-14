@@ -254,14 +254,16 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
         std::sqrt(dispersion * q_val * std::abs(1.0 / J_values(d)));
 
     int it = 1;
+    arma::vec posts_xi_d(D);
+    arma::mat MPlus(D, 1);
+    arma::mat MMinus(D, 1);
     while (true) {
       // Rcpp::Rcout << "xi_d is " << xi_d << "\n";
       xi_d = std::max(-20.0, std::min(10.0, xi_d));
       // Xi scales singular values. exp parameterization avoids negative xi.
-      arma::vec posts_xi_d = posts_d * std::exp(xi_d / 2.0);
-      arma::mat MPlus(mle +
-                      posts_xi_d); // I guess this is a constructor that works..
-      arma::mat MMinus(mle - posts_xi_d);
+      posts_xi_d = posts_d * std::exp(xi_d / 2.0);
+      MPlus = mle + posts_xi_d;
+      MMinus = mle - posts_xi_d;
 
       double val1 = fit_glm_omp_cpp(X, y, mle, MPlus.t(), family, 1, m,
                                     parallel, TRUE)(0, 0);
@@ -281,6 +283,68 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
   }
 
   return xi;
+}
+
+// [[Rcpp::export]]
+Rcpp::List imvar_parallel_grid(arma::mat X, arma::vec y, arma::vec alpha_grid,
+                               const std::string family, const arma::vec &mle,
+                               const double mle_val, const arma::mat &J_vectors,
+                               const arma::vec &J_values, double dispersion,
+                               double tol = 1e-2, double a_val = 2.0,
+                               double b_val = 0.65, int max_it = 25,
+                               int m = 100, int n_threads = 4) {
+
+  int B = alpha_grid.size();
+  int D = mle.size();
+
+  // Thread-safe container to store results independently by index
+  std::vector<arma::vec> results(B);
+
+#ifdef _OPENMP
+  omp_set_num_threads(n_threads);
+#endif
+
+#pragma omp parallel
+  {
+    // Get total threads and current thread ID
+    int total_threads = 1;
+    int thread_id = 0;
+#ifdef _OPENMP
+    total_threads = omp_get_num_threads();
+    thread_id = omp_get_thread_num();
+#endif
+
+    // Manually calculate a contiguous chunk of the grid for this thread
+    int chunk_size = B / total_threads;
+    int remainder = B % total_threads;
+
+    int start_idx = thread_id * chunk_size + std::min(thread_id, remainder);
+    int end_idx = start_idx + chunk_size + (thread_id < remainder ? 1 : 0);
+
+    // 1. Each thread starts its sequential block with a "bad guess"
+    arma::vec prev_xi = arma::ones<arma::vec>(D) + 2 * alpha_grid[start_idx];
+
+    // 2. Run this thread's chunk sequentially to leverage warm-starting
+    for (int i = start_idx; i < end_idx; ++i) {
+      double alpha = alpha_grid[i];
+
+      // Pass the updated prev_xi into imvar
+      results[i] =
+          imvar(X, y, prev_xi, family, alpha, mle, mle_val, J_vectors, J_values,
+                dispersion, tol, a_val, b_val, max_it, false, m);
+
+      // Update prev_xi for the next alpha iteration in this thread's chunk
+      prev_xi = results[i];
+    }
+  }
+
+  // Safely convert back to Rcpp::List sequentially
+  Rcpp::List out_list(B);
+  for (int i = 0; i < B; i++) {
+    out_list[i] = results[i];
+  }
+
+  return out_list;
 }
 
 // [[Rcpp::export]]

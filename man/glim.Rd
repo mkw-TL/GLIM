@@ -17,19 +17,23 @@ glim(
 )
 }
 \arguments{
+\item{formula}{Formula object to be interpreted}
+
+\item{data}{Dataframe (if using)}
+
 \item{family}{String denoting the exponential family. Choices are \code{"gaussian"}, \code{"binomial"}, \code{"gamma"}, \code{"poisson"}, \code{"inverse.gaussian"}.}
 
 \item{m}{Number of samples/evaluations to perform (default \code{1000}).}
 
 \item{approx}{Logical indicating whether to use the elliptical approximation (default \code{FALSE}).}
 
+\item{appendix}{Bool indicating whether the appendix method is to be used.}
+
 \item{parallel}{Logical indicating whether to process in parallel.}
 
-\item{X}{Matrix of predictors. Note that any dataframe should be first run through model.matrix()}
+\item{tol}{Double indicating the level of precision the approximation should get to}
 
-\item{y}{Vector of response variables. (Can be a nx2 matrix of successes and failures for binomial data)}
-
-\item{betas}{A matrix (or column vector) of different beta values to evaluate the possibility over.}
+\item{...}{Other arguments include a_val, b_val, max_it, betas, n_grid_evals, tol, and num_samps.}
 }
 \value{
 If using an elliptical approximation, returns samples of parameter values. Else, returns a list containing the matrix of betas upon which it was evaluated, and a vector of the corresponding possibilities.

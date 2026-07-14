@@ -7,11 +7,23 @@
 scale_design_matrix(X)
 }
 \arguments{
-\item{X}{design matrix}
+\item{X}{A numeric design matrix (a data frame will be coerced to a
+matrix automatically).}
 }
 \value{
 Scaled design matrix (excludes intercepts and dummy variables)
 }
 \description{
-Scales the design matrix for numerical stability when fitting
+Scales the design matrix for numerical stability when fitting. Columns
+with two or fewer unique values (intercepts, dummy/indicator variables)
+are left untouched; all other ("continuous") columns are divided by
+their root-mean-square so that no single predictor dominates purely
+because of its measurement scale.
+}
+\examples{
+X <- cbind(intercept = 1, age = c(20, 45, 70, 33), male = c(1, 0, 1, 0))
+scale_design_matrix(X)
+
+# A matrix with no continuous columns is returned unchanged
+scale_design_matrix(cbind(intercept = 1, male = c(1, 0, 1, 0)))
 }

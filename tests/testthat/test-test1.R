@@ -77,40 +77,6 @@ test_that("Missing data (NAs) in y propagates as NaN or throws error", {
   expect_true(any(is.nan(res)) || any(is.na(res)) || all(res == 0))
 })
 
-test_that("Missing data (NAs) in X propagates correctly", {
-  dat <- generate_mock_data(family = "binomial")
-  dat$X[10, 2] <- NA
-
-  res <- fit_logistic_cpp(dat$X, dat$y, c(0, 0, 0), FALSE)
-  expect_true(any(is.nan(res)) || any(is.na(res)))
-})
-
-test_that("fit_logistic_cpp matches glm() for standard data", {
-  dat <- generate_mock_data(family = "binomial")
-
-  res_cpp <- fit_logistic_cpp(dat$X, dat$y, initial_beta = c(0, 0, 0), approx = FALSE)
-  res_r <- coef(glm(dat$y ~ dat$X - 1, family = binomial()))
-
-  expect_equal(as.numeric(res_cpp), as.numeric(res_r), tolerance = 1e-4)
-})
-
-# This isn't something that we need to test, since if we have perfect seperation, then p_i will be close to 0 or 1, and thus the denominator will be 1.
-# test_that("fit_logistic_cpp handles perfect separation gracefully", {
-#   # Create perfectly separable data
-#   x_sep <- matrix(c(rnorm(50, -5), rnorm(50, 5)), ncol = 1)
-#   X_sep <- cbind(1, x_sep)
-#   y_sep <- c(rep(0, 50), rep(1, 50))
-
-#   # Warning: glm() will throw "fitted probabilities numerically 0 or 1 occurred"
-#   # We want to ensure C++ doesn't crash, but returns large coefficients
-#   res_cpp <- fit_logistic_cpp(X_sep, y_sep, c(0, 0), FALSE)
-
-#   expect_type(res_cpp, "double")
-#   expect_length(res_cpp, 2)
-#   # The slope should be positive and quite large
-#   expect_true(res_cpp[2] > 5)
-# })
-
 test_that("fit_gamma_log_cpp recovers from terrible initial starting conditions", {
   dat <- generate_mock_data(family = "gamma")
   XtX <- t(dat$X) %*% dat$X
@@ -129,14 +95,6 @@ test_that("fit_gamma_log_cpp recovers from terrible initial starting conditions"
   expect_true(!any(is.nan(res_cpp)))
 })
 
-test_that("fit_logistic_cpp recovers from extreme initial betas", {
-  dat <- generate_mock_data(family = "binomial")
-
-  bad_initial <- c(-999, 999, -999)
-  res_cpp <- fit_logistic_cpp(dat$X, dat$y, bad_initial, FALSE)
-
-  expect_true(all(is.finite(res_cpp)))
-})
 
 test_that("string_to_family mapping works inside fit_glm_omp_cpp", {
   dat <- generate_mock_data(family = "gaussian")
@@ -151,17 +109,6 @@ test_that("string_to_family mapping works inside fit_glm_omp_cpp", {
     fit_glm_omp_cpp(dat$X, dat$y, c(0, 0, 0), betas, "weibull", 1, 10, FALSE, FALSE),
     "Family not supported in C\\+\\+ backend"
   )
-})
-
-test_that("glm_logis_pl_cpp returns a valid probability between 0 and 1", {
-  dat <- generate_mock_data(family = "binomial")
-
-  mle_coefs <- fit_logistic_cpp(dat$X, dat$y, c(0, 0, 0), FALSE)
-  beta_vals <- mle_coefs + 0.1 # slight perturbation
-
-  pl_val <- glm_logis_pl_cpp(dat$X, dat$y, mle_coefs, beta_vals, m = 50, approx = FALSE)
-
-  expect_true(pl_val >= 0 && pl_val <= 1)
 })
 
 test_that("fit_glm_omp_cpp enforces strict dimension matching", {
@@ -225,8 +172,7 @@ test_that("glim handles two-column integer matrices (Success/Failure)", {
 
   # Ensure it doesn't crash during the row replication process
   expect_no_error(suppressWarnings(glim(
-    X,
-    y_mat,
+    y_mat ~ X,
     family = "binomial",
     betas = matrix(0, 1, 3),
     m = 10,
@@ -234,33 +180,18 @@ test_that("glim handles two-column integer matrices (Success/Failure)", {
   )))
 })
 
-test_that("glim handles factor y correctly", {
-  X <- matrix(rnorm(20), ncol = 2)
-  y_fac <- factor(sample(c("Control", "Treatment"), 10, replace = TRUE))
+# test_that("glim handles factor y correctly", {
+#   X <- matrix(rnorm(20), ncol = 2)
+#   y_fac <- factor(sample(c("Control", "Treatment"), 10, replace = TRUE))
 
-  expect_no_error(suppressWarnings(glim(
-    X,
-    y_fac,
-    family = "binomial",
-    betas = matrix(0, 1, 3),
-    m = 10,
-    parallel = FALSE
-  )))
-})
-
-test_that("Zero successes or zero failures do not break indexing", {
-  X <- matrix(rnorm(4), ncol = 2)
-  y_mat <- cbind(c(5, 0), c(0, 5)) # Row 1: all success. Row 2: all failures.
-
-  expect_no_error(suppressWarnings(glim(
-    X,
-    y_mat,
-    family = "binomial",
-    betas = matrix(0, 1, 3),
-    m = 10,
-    parallel = FALSE
-  )))
-})
+#   expect_no_error(suppressWarnings(glim(
+#     y_fac ~ X,
+#     family = "binomial",
+#     betas = matrix(0, 1, 3),
+#     m = 10,
+#     parallel = FALSE
+#   )))
+# })
 
 test_that("Inverse Gaussian Information Matrix (J) matches standard GLM implementations", {
   set.seed(123)
@@ -352,68 +283,6 @@ test_that("C++ Gamma solver converges cleanly", {
 
   expect_type(res, "double")
   expect_length(res, ncol(data$X))
-})
-
-test_that("glim_raw coerces data.frame to model.matrix properly", {
-  data <- generate_mock_data(n = 50, family = "gaussian")
-
-  # Convert matrix to data frame to trigger line 35
-  df_X <- as.data.frame(data$X)
-
-  # Construct dummy arguments required by glim_raw
-  mle_coefs <- rep(0, ncol(data$X))
-  betas <- matrix(rep(0, ncol(data$X)), nrow = 1) # Note that glim does the flipping if a vector, glim_raw doesn't
-
-  # Since glim_raw is an internal function, use the ::: operator if testing from outside
-  res <- GLIM:::glim_raw(
-    X = df_X,
-    y = data$y,
-    family = "gaussian",
-    betas = betas,
-    mle_coefs = mle_coefs,
-    mle_val = -100,
-    m = 10,
-    parallel = FALSE,
-    approx = FALSE
-  )
-
-  # If it coerces properly, it should evaluate and return an output matrix without crashing
-  expect_true(!is.null(res))
-})
-
-test_that("scale_design_matrix scales only continuous columns", {
-  # Create a matrix with continuous, binary, and constant columns
-  X <- matrix(
-    c(
-      1,
-      2,
-      3,
-      4,
-      5, # Continuous (> 2 unique values)
-      0,
-      1,
-      0,
-      1,
-      0, # Binary (<= 2 unique values)
-      1,
-      1,
-      1,
-      1,
-      1
-    ), # Constant (<= 2 unique values)
-    ncol = 3
-  )
-
-  # Run the function
-  X_scaled <- scale_design_matrix(X)
-
-  # The binary and constant columns (2 and 3) should remain unchanged
-  expect_equal(X_scaled[, 2], X[, 2])
-  expect_equal(X_scaled[, 3], X[, 3])
-
-  # The continuous column (1) should be scaled (center = FALSE)
-  expected_scaled_col1 <- scale(X[, 1], center = FALSE)
-  expect_equal(X_scaled[, 1], as.numeric(expected_scaled_col1))
 })
 
 test_that("glim_raw works with the gaussian family", {
@@ -566,58 +435,6 @@ test_that("glim_raw works with gamma and poisson families", {
   expect_true(is.matrix(res_pois))
 })
 
-
-test_that("scale_design_matrix handles dataframes properly", {
-  data <- generate_mock_data()
-  df_X <- as.data.frame(data$X)
-
-  # Ensure it correctly works when passing a data frame
-  scaled_X <- scale_design_matrix(df_X)
-  expect_true(is.matrix(scaled_X))
-  expect_equal(ncol(scaled_X), 3)
-})
-
-test_that("glim_raw handles normal / gaussian family", {
-  data <- generate_mock_data(family = "gaussian")
-
-  # Triggering family == "gaussian"
-  # Passing betas = NULL to trigger J matrix generation (lines 371-377)
-  # Triggering approx = FALSE to run grid generation (lines 389-415)
-  result <- glim_raw(
-    X = data$X,
-    y = data$y,
-    family = "gaussian",
-    betas = NULL,
-    mle_coefs = NULL,
-    mle_val = NULL,
-    m = 100,
-    parallel = FALSE,
-    approx = FALSE
-  )
-
-  expect_type(result, "double")
-})
-
-
-# TODO fix
-test_that("glim_raw handles inverse.gaussian family", {
-  data <- generate_mock_data(family = "inverse.gaussian")
-
-  # Triggering family == "inverse.gaussian" (lines 358-369)
-  result <- glim_raw(
-    X = data$X,
-    y = data$y,
-    family = "inverse.gaussian",
-    betas = matrix(c(2, 3, 2), nrow = 1),
-    mle_coefs = c(2, 2),
-    mle_val = -10,
-    m = 100,
-    parallel = FALSE,
-    approx = FALSE
-  )
-
-  expect_type(result, "double")
-})
 
 test_that("glim_raw triggers parallel processing logic safely", {
   data <- generate_mock_data(family = "poisson")

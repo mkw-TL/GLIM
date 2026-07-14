@@ -7,6 +7,8 @@
 \method{print}{glim_object}(output, alpha = 0.05)
 }
 \arguments{
+\item{alpha}{The cut to find the superlevel set}
+
 \item{object}{from 'glim()'}
 }
 \value{

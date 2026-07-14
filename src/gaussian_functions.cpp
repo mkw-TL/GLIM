@@ -83,7 +83,7 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
 
     arma::vec sim_coefs = fit_gaussian_cpp(X, y_sim);
     arma::vec mu_hat_sim = X * sim_coefs;
-    double mle_sim = compute_gaussian_ll(y_sim, mu_hat, sigma);
+    double mle_sim = compute_gaussian_ll(y_sim, mu_hat_sim, sigma);
     double llX_j = compute_gaussian_ll(y_sim, mu, sigma);
 
     // Rcpp::Rcout << "llX_j: " << llX_j << "\n";
