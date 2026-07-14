@@ -1,10 +1,7 @@
 // Translated to c++ by Gemini
 // Thoroughly vetted
 
-#include "armadillo"
 #include "headers.h"
-// [[Rcpp::depends(RcppArmadillo)]]
-// [[Rcpp::plugins(openmp)]]
 
 using namespace Rcpp;
 using namespace arma;
@@ -75,7 +72,6 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   }
 
   int n_evals = betas.n_rows;
-  int n_cols = betas.n_cols;
   arma::vec plausabilities(n_evals);
   arma::mat XtX = X.t() * X;
   double seperation_issues = 0;
@@ -395,11 +391,17 @@ arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
     }
   }
 
+  Progress p(num_samps - 1, true);
+  std::atomic<bool> interrupted(false);
+
   // The Parallel Loop
 #pragma omp parallel for schedule(static)
   for (int j = 0; j < num_samps - 1;
        j++) { // -1 so that we can add the MLE at the end
     // Thread-safe RNG instantiation inside the loop
+    if (interrupted) {
+      continue;
+    }
     std::random_device rd;
     std::mt19937 gen(rd() +
                      j); // Seed with j to ensure uniqueness across threads
@@ -420,10 +422,18 @@ arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
     bool approx = false;
 
     while (true) {
+      if (omp_get_thread_num() == 0) {
+        if (p.check_abort() & (it % 5 == 0)) {
+          interrupted = true;
+        }
+      }
+      if (interrupted) {
+        break;
+      }
       arma::vec dir_xi = dir * std::exp(starting_xi / 2.0);
       arma::vec beta_proposal =
-          mle_coefs + dir_xi; // Don't need to go negative since the unit sphere
-                              // covers this negative direction
+          mle_coefs + dir_xi; // Don't need to go negative since the unit
+                              // sphere covers this negative direction
 
       double val1 = 0.0;
 
@@ -468,7 +478,15 @@ arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
         it++;
       }
     }
+    // Safely increment the progress bar from multiple threads
+    if (!interrupted) {
+      p.increment();
+    }
   }
+  if (interrupted) {
+    Rcpp::stop("Computation interrupted by user.");
+  }
+
   sampled_betas.col(num_samps - 1) = mle_coefs; // Remember off by one indexing
   return sampled_betas;
 }

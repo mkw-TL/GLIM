@@ -93,7 +93,7 @@ double compute_gamma_ll(const arma::vec &y, const arma::vec &eta,
 arma::vec compute_gamma_ll_mat(const arma::vec &y, const arma::mat &eta,
                                double shape) {
   arma::vec ll(eta.n_cols);
-  for (int i = 0; i < eta.n_cols; i++) {
+  for (arma::uword i = 0; i < eta.n_cols; i++) {
     ll(i) = compute_gamma_ll(y, eta.col(i), shape);
   }
   return ll;
@@ -217,12 +217,6 @@ double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
     }
   }
 
-  // This computes \ell(beta, phi, X). phi and beta use the provided values.
-  // Precompute constant pieces of log-likelihood across all M simulations
-  double constant_ll_term = n * (shape * std::log(shape) - std::lgamma(shape));
-  // Vectorized cross-product step for part of the log-likelihood evaluation
-  arma::rowvec term3_all = -shape * (arma::exp(-eta).t() * Y + arma::sum(eta));
-
   int count_less = 0;
 
   // If doing the imvar thing, then we want to parallelize the 100 glm evals per
@@ -240,10 +234,6 @@ double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
     double shape_sim_hat = 1 / mle_estimate_dispersion_gamma(
                                    y_sim, mu_sim_hat, beta_sim_hat.n_elem);
 
-    // May be an an error in this calculation. Keep it simple for now.
-    // // Calculate the simulated dependent term: (shape - 1) * sum(log(y_sim))
-    // double term2_j = (shape_sim_hat - 1.0) * arma::sum(arma::log(y_sim));
-    // double llX_j = constant_ll_term + term2_j + term3_all(j);
     double llX_j = compute_gamma_ll(y_sim, eta, shape_sim_hat);
 
     // Evaluate simulated MLE log-likelihood

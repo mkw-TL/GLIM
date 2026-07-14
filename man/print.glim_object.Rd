@@ -4,15 +4,15 @@
 \alias{print.glim_object}
 \title{Print}
 \usage{
-\method{print}{glim_object}(output, alpha = 0.05)
+\method{print}{glim_object}(x, ...)
 }
 \arguments{
-\item{alpha}{The cut to find the superlevel set}
+\item{x}{A 'glim_object' from 'glim()'}
 
-\item{object}{from 'glim()'}
+\item{...}{Supports differing alpha levels. EX: alpha = .05}
 }
 \value{
-IDK yet TODO
+Print output
 }
 \description{
 Printing for glim objects

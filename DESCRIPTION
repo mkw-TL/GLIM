@@ -8,12 +8,13 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 LinkingTo: 
-    Rcpp, RcppArmadillo, BH
+    Rcpp, RcppProgress, RcppArmadillo, BH
 Imports: 
-    Rcpp, progress, parallel
+    Rcpp, RcppProgress, progress, parallel
 SystemRequirements: C++20, LAPACK, BLAS
 Config/roxygen2/version: 8.0.0
 RoxygenNote: 8.0.0
 Suggests: 
     testthat (>= 3.0.0), RhpcBLASctl
 Config/testthat/edition: 3
+Config/build/compilation-database: true

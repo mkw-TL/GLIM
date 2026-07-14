@@ -4,10 +4,12 @@
 \alias{plot.glim_object}
 \title{Plot}
 \usage{
-\method{plot}{glim_object}(output)
+\method{plot}{glim_object}(x, ...)
 }
 \arguments{
-\item{object}{from 'glim()'}
+\item{x}{A 'glim_object' from 'glim()'}
+
+\item{...}{Currently unused}
 }
 \value{
 Marginal plots for betas

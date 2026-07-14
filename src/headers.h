@@ -7,6 +7,8 @@
 #include <boost/math/special_functions/polygamma.hpp>
 #include <cmath>
 #include <omp.h>
+#include <progress.hpp>
+#include <progress_bar.hpp>
 
 struct LogisticResult {
   arma::vec beta;

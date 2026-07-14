@@ -4,6 +4,7 @@
 #' @importFrom parallel detectCores
 #' @importFrom stats logLik glm Gamma poisson inverse.gaussian lm coef runif qchisq model.matrix rnorm
 #' @importFrom utils head
+#' @import RcppProgress
 NULL
 
 # Original code written by Joe Harrison (jrharr25@ncsu.edu), translated to cpp by Gemini
@@ -111,7 +112,6 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
   if (parallel & requireNamespace("RhpcBLASctl", quietly = TRUE)) {
     RhpcBLASctl::blas_set_num_threads(original_blas_threads)
   }
-
   return(output)
 }
 
@@ -129,7 +129,6 @@ generate_grid <- function(
   eigen_vals,
   dispersion,
   ll_mle_original_data,
-  column_names,
   n_grid_evals = 25,
   m = 500
 ) {
@@ -179,7 +178,7 @@ generate_grid <- function(
   }
 
   betas <- as.matrix(expand.grid(beta))
-  colnames(betas) <- column_names
+  colnames(betas) <- colnames(X)
   # Written by Gemini
   shifted_points <- sweep(betas, 2, mle_coefs, FUN = "-") # 2 means that it applies along the columns. Betas - mle_coefs for each column
   rotated_points <- shifted_points %*% eigen_vecs
@@ -566,18 +565,10 @@ glim <- function(
   } else {
     n_grid_evals <- 25 # Is this a good number?
   }
-  if ("tol" %in% names(args)) {
-    if (
-      is.numeric(as.numeric(args$tol)) &
-        length(as.numeric(args$tol)) == 1 &
-        as.numeric(args$tol > 1)
-    ) {
-      tol <- as.numeric(args$tol)
-    } else {
-      stop("Input Error: tol is not currently valid")
-    }
+  if (is.numeric(as.numeric(tol)) & length(as.numeric(tol)) == 1 & as.numeric(tol) > 0) {
+    tol <- tol
   } else {
-    tol <- .01
+    stop("Input Error: tol is not currently valid")
   }
 
   if ("max_it" %in% names(args)) {
@@ -669,18 +660,6 @@ glim <- function(
   J <- NULL
   if (is.data.frame(X)) {
     X <- as.matrix(X)
-  }
-  column_names <- c()
-  if (is.null(colnames(X))) {
-    if (ncol(X) > 1) {
-      for (col in 1:ncol(X)) {
-        column_names[col] <- paste0("b", col)
-      }
-    } else {
-      column_names <- "b1"
-    }
-  } else {
-    column_names <- colnames(X)
   }
   # Got rid of intercept logic, since covered.
   ## Binomial setup
@@ -822,11 +801,10 @@ glim <- function(
         eigen_vals = eJ$values,
         dispersion,
         ll_mle_original_data,
-        column_names,
         n_grid_evals = n_grid_evals,
         m = m
       )
-      colnames(betas) <- column_names
+      colnames(betas) <- colnames(X)
     }
     obj_to_return <- list(
       possibilities = glim_raw(
@@ -851,7 +829,7 @@ glim <- function(
     return(obj_to_return)
   }
 
-  if (approx == TRUE & appendix == FALSE) {
+  if ((approx == TRUE) & (appendix == FALSE)) {
     samples <- glim_inner_prob_approx_samples(
       X = X,
       y = y,
@@ -873,7 +851,7 @@ glim <- function(
     beta_p2p_grid <- as.matrix(expand.grid(beta_seq_list))
     beta_p2p_grid <- rbind(beta_p2p_grid, t(mle_coefs))
     poss <- p2p_function(X, y, samples, t(beta_p2p_grid))
-    colnames(beta_p2p_grid) <- column_names
+    colnames(beta_p2p_grid) <- colnames(X)
     obj_to_return <- list(
       samples = samples,
       possibilities = poss,
@@ -891,10 +869,11 @@ glim <- function(
     stop("Appendix and approximation methods cannot both be used")
   }
   if (appendix == TRUE & approx == FALSE) {
+    print(X)
+    print(eJ)
     samples <- appendix(
       num_samps,
       X,
-      col_names = column_names,
       y,
       eJ,
       mle_coefs,
@@ -914,7 +893,7 @@ glim <- function(
     }
     beta_appendix_grid <- as.matrix(expand.grid(beta_seq_list))
     poss <- p2p_function(X, y, samples, t(beta_appendix_grid))
-    colnames(beta_appendix_grid) <- column_names
+    colnames(beta_appendix_grid) <- colnames(X)
     obj_to_return <- list(
       samples = samples,
       possibilities = poss,
@@ -1237,7 +1216,6 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
 #' @param num_samps Number of samples to generate.
 #' @param eJ Eigen decomposition object.
 #' @param X Predictor matrix.
-#' @param col_names Needed for imvar
 #' @param y Response vector.
 #' @param mle_coefs Maximum likelihood estimates for coefficients.
 #' @param family String denoting the exponential family.
@@ -1254,7 +1232,6 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
 appendix <- function(
   num_samps,
   X,
-  col_names,
   y,
   eJ,
   mle_coefs,
@@ -1292,7 +1269,6 @@ appendix <- function(
     eigen_vals = eJ$values,
     dispersion = dispersion,
     ll_mle_original_data = ll_mle_original_data,
-    column_names = col_names,
     n_grid_evals = n_grid_evals,
     m = m
   )
@@ -1354,13 +1330,14 @@ est_sig_sq <- function(y, mu, p) {
 #'
 #' Plotting for glim objects
 #'
-#' @param object from 'glim()'
+#' @param x A 'glim_object' from 'glim()'
+#' @param ... Currently unused
 #' @return Marginal plots for betas
 #' @export
-plot.glim_object <- function(output) {
-  betas <- output$betas
-  poss <- output$possibilities
-  family <- output$family
+plot.glim_object <- function(x, ...) {
+  betas <- x$betas
+  poss <- x$possibilities
+  family <- x$family
 
   num_predictors <- ncol(betas)
   grid_cols <- ceiling(sqrt(num_predictors))
@@ -1410,19 +1387,23 @@ plot.glim_object <- function(output) {
   )
 }
 
-
 #' Print
 #'
 #' Printing for glim objects
 #'
-#' @param object from 'glim()'
-#' @param alpha The cut to find the superlevel set
-#' @return IDK yet TODO
+#' @param x A 'glim_object' from 'glim()'
+#' @param ... Supports differing alpha levels. EX: alpha = .05
+#' @return Print output
 #' @export
-print.glim_object <- function(output, alpha = .05) {
-  betas <- output$betas
-  poss <- output$possibilities
-  family <- output$family
+print.glim_object <- function(x, ...) {
+  args <- list(...)
+  alpha <- .05
+  if (length(args) == 1 & is.numeric(args$alpha)) {
+    alpha <- args$alpha
+  }
+  betas <- x$betas
+  poss <- x$possibilities
+  family <- x$family
 
   cat("Please see plot() for marginal possibility contours.\n\n")
   cat(sprintf("%.2f percent (marginal) confidence and credible region:\n", 1 - alpha))

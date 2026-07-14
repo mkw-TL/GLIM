@@ -365,6 +365,18 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// compute_poisson_ll
+double compute_poisson_ll(const arma::vec& eta, const arma::vec& y);
+RcppExport SEXP _GLIM_compute_poisson_ll(SEXP etaSEXP, SEXP ySEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type eta(etaSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    rcpp_result_gen = Rcpp::wrap(compute_poisson_ll(eta, y));
+    return rcpp_result_gen;
+END_RCPP
+}
 // compute_poisson_ll_mat
 arma::vec compute_poisson_ll_mat(const arma::mat& eta, const arma::vec y);
 RcppExport SEXP _GLIM_compute_poisson_ll_mat(SEXP etaSEXP, SEXP ySEXP) {
@@ -415,6 +427,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_GLIM_glm_invgauss_pl_cpp", (DL_FUNC) &_GLIM_glm_invgauss_pl_cpp, 7},
     {"_GLIM_logistic_ll", (DL_FUNC) &_GLIM_logistic_ll, 3},
     {"_GLIM_logistic_ll_1d", (DL_FUNC) &_GLIM_logistic_ll_1d, 3},
+    {"_GLIM_compute_poisson_ll", (DL_FUNC) &_GLIM_compute_poisson_ll, 2},
     {"_GLIM_compute_poisson_ll_mat", (DL_FUNC) &_GLIM_compute_poisson_ll_mat, 2},
     {"_GLIM_fit_poisson_log_cpp", (DL_FUNC) &_GLIM_fit_poisson_log_cpp, 3},
     {NULL, NULL, 0}

@@ -34,9 +34,8 @@ double compute_gaussian_ll(const arma::vec &y, const arma::vec &mu,
 arma::vec compute_gaussian_ll_mat(const arma::vec &y, const arma::mat &mu,
                                   double sigma) {
   arma::vec ll(mu.n_cols);
-  for (int i = 0; i < mu.n_cols; i++) {
-
-    ll(i) = compute_gaussian_ll(y, mu.col(i), sigma);
+  for (arma::uword i = 0; i < mu.n_cols; i++) {
+    ll(i) = compute_gaussian_ll(y, mu.col(i).eval(), sigma);
   }
   return ll;
 }

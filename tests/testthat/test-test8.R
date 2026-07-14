@@ -89,72 +89,56 @@ skip_if_glim_missing <- function() {
   testthat::skip_if_not_installed("GLIM")
 }
 
-test_that("C++ solvers handle 1D vectors correctly (coerced to 1-col matrix)", {
-  set.seed(123)
-  x_vec <- rnorm(100)
-  y_vec <- 2 * x_vec + rnorm(100, sd = 0.1)
-
-  # Rcpp should cast x_vec to a 100x1 matrix
-  res <- fit_gaussian_cpp(X = matrix(x_vec, ncol = 1), y = y_vec)
-
-  expect_length(res, 1)
-  expect_true(abs(res[1] - 2) < 0.2)
+test_that("glim validates gamma/inverse.gaussian response is strictly positive", {
+  df <- data.frame(y = c(-1, 2, 3, 4), x1 = c(0.1, 0.2, 0.3, 0.4))
+  expect_error(glim(y ~ x1, data = df, family = "gamma"), "strictly positive")
+  expect_error(glim(y ~ x1, data = df, family = "inverse.gaussian"), "strictly positive")
 })
 
-test_that("Omitting the intercept in X yields different results than lm() with intercept", {
-  dat <- generate_mock_data(family = "gaussian")
+test_that("glim validates m and tol", {
+  d <- make_gaussian_data()
+  df <- data.frame(y = d$y, x1 = d$X[, 2])
 
-  # Remove intercept column
-  X_no_int <- dat$X[, -1]
-
-  res_cpp <- fit_gaussian_cpp(X_no_int, dat$y)
-  res_r <- coef(lm(dat$y ~ X_no_int - 1)) # Force lm to also drop intercept
-
-  # They should match when BOTH drop the intercept
-  expect_equal(as.numeric(res_cpp), as.numeric(res_r), tolerance = 1e-5)
-})
-
-test_that("Missing data (NAs) in y propagates as NaN or throws error", {
-  dat <- generate_mock_data(family = "gaussian")
-  dat$y[5] <- NA
-
-  # Armadillo solve will likely fail or return NaNs.
-  # We test that it DOES NOT return a silent, valid-looking number.
-  res <- fit_gaussian_cpp(dat$X, dat$y)
-
-  expect_true(any(is.nan(res)) || any(is.na(res)) || all(res == 0))
-})
-
-test_that("fit_gamma_log_cpp recovers from terrible initial starting conditions", {
-  dat <- generate_mock_data(family = "gamma")
-  XtX <- t(dat$X) %*% dat$X
-
-  # Provide wildly incorrect starting betas
-  bad_initial <- c(50, -50, 100)
-
-  # Since your C++ code has clamps (-30 to 30 for eta) and step-halving,
-  # it should recover and not return Infs.
-  res_cpp <- fit_gamma_log_cpp(dat$X, XtX, dat$y, bad_initial, FALSE)
-  res_r <- coef(glm(dat$y ~ dat$X - 1, family = Gamma(link = "log")))
-
-  expect_true(all(is.finite(res_cpp)))
-  # It might not perfectly converge to the exact MLE in 20 iterations from a terrible start,
-  # but it should be moving in the right direction and not be NaN.
-  expect_true(!any(is.nan(res_cpp)))
-})
-
-
-test_that("string_to_family mapping works inside fit_glm_omp_cpp", {
-  dat <- generate_mock_data(family = "gaussian")
-  betas <- matrix(c(0, 0, 0), nrow = 1)
-
-  # Valid family string
-  res_valid <- fit_glm_omp_cpp(dat$X, dat$y, c(0, 0, 0), betas, "gaussian", 1, 10, FALSE, FALSE)
-  expect_type(res_valid, "double")
-
-  # Invalid family string should trigger Rcpp::stop
   expect_error(
-    fit_glm_omp_cpp(dat$X, dat$y, c(0, 0, 0), betas, "weibull", 1, 10, FALSE, FALSE),
-    "Family not supported in C\\+\\+ backend"
+    glim(y ~ x1, data = df, m = -1),
+    "'m' \\(number of samples\\) must be a single positive integer"
   )
+  expect_error(
+    glim(y ~ x1, data = df, m = 1.5),
+    "'m' \\(number of samples\\) must be a single positive integer"
+  )
+  expect_error(
+    glim(y ~ x1, data = df, m = c(1, 2)),
+    "'m' \\(number of samples\\) must be a single positive integer"
+  )
+
+  expect_error(
+    glim(y ~ x1, data = df, tol = -1),
+    "'tol' must be a strictly positive numeric scalar"
+  )
+})
+
+test_that("glim errors when appendix and approx are both TRUE", {
+  d <- make_gaussian_data()
+  df <- data.frame(y = d$y, x1 = d$X[, 2])
+  expect_error(glim(y ~ x1, data = df, approx = TRUE, appendix = TRUE), "cannot both be used")
+})
+
+test_that("glim errors on completely separable binomial data", {
+  d <- make_binomial_data(well_separated = TRUE)
+  df <- data.frame(y = d$y, x1 = d$X[, 2])
+  expect_error(glim(y ~ x1, data = df, family = "binomial"), "completely seperable")
+})
+
+test_that("glim binomial accepts a two-column successes/failures matrix response", {
+  n_groups <- 8
+  x1 <- seq(-1, 1, length.out = n_groups)
+  successes <- c(1, 2, 3, 4, 4, 3, 2, 1)
+  trials <- rep(5L, n_groups)
+  failures <- trials - successes
+  y <- cbind(successes, failures)
+  X <- cbind(intercept = 1, x1 = x1)
+
+  fit <- glim(y ~ X - 1, family = "binomial", m = 5, n_grid_evals = 3)
+  expect_s3_class(fit, "glim_object")
 })

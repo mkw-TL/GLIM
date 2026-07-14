@@ -133,7 +133,7 @@ LogisticResult1D fit_logistic_1d(const arma::vec &X, const arma::vec &y,
 // Written by gemini. Uses the trick to seperate into cases
 inline double sum_softplus(const arma::vec &eta) {
   double sum_val = 0.0;
-  for (int i = 0; i < eta.n_elem; ++i) {
+  for (arma::uword i = 0; i < eta.n_elem; ++i) {
     sum_val += (eta(i) > 0) ? (eta(i) + std::log1p(std::exp(-eta(i))))
                             : std::log1p(std::exp(eta(i)));
   }
@@ -227,9 +227,7 @@ LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
 double logistic_ll(const arma::mat &X, const arma::vec &y,
                    const arma::vec &beta_vals) {
   LogisticResult res = fit_logistic(X, y, beta_vals);
-  double mle_sim = -10000000000; // Sooooo right now if I get seperation, I
-                                 // return a value of zero.
-                                 // TODO. This is 100% going to lead to issues
+  double mle_sim = -10000000000;
   if (!res.seperated) {
     mle_sim = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
   }
@@ -239,9 +237,9 @@ double logistic_ll(const arma::mat &X, const arma::vec &y,
 double logistic_ll_1d(const arma::vec &X, const arma::mat &y,
                       const double beta_vals) {
   LogisticResult1D res = fit_logistic_1d(X, y, beta_vals);
-  double mle_sim =
-      0.0; // Sooooo right now if I get seperation, I return a value of zero.
-           // TODO. This is 100% going to lead to issues
-  mle_sim = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
+  double mle_sim = -10000000;
+  if (!res.orig_seperated) {
+    mle_sim = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
+  }
   return mle_sim;
 }

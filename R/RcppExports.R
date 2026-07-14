@@ -93,6 +93,10 @@ logistic_ll_1d <- function(X, y, beta_vals) {
     .Call(`_GLIM_logistic_ll_1d`, X, y, beta_vals)
 }
 
+compute_poisson_ll <- function(eta, y) {
+    .Call(`_GLIM_compute_poisson_ll`, eta, y)
+}
+
 compute_poisson_ll_mat <- function(eta, y) {
     .Call(`_GLIM_compute_poisson_ll_mat`, eta, y)
 }

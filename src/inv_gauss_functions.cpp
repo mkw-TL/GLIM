@@ -107,8 +107,8 @@ double compute_invgauss_ll(const arma::vec &y, const arma::vec &mu,
 arma::vec compute_invgauss_ll_mat(const arma::vec &y, const arma::mat &mu,
                                   double gamma_val) {
   arma::vec ll(mu.n_cols);
-  for (int i = 0; i < mu.n_cols; i++) {
-    ll(i) = compute_invgauss_ll(y, mu, gamma_val);
+  for (arma::uword i = 0; i < mu.n_cols; i++) {
+    ll(i) = compute_invgauss_ll(y, mu.col(i).eval(), gamma_val);
   }
   return ll;
 }

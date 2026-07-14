@@ -94,6 +94,7 @@ PoissonResult fit_poisson_inner(const arma::mat &X, const arma::vec &y,
   return {proposed_beta, solver_success, separated};
 }
 
+// [[Rcpp::export]]
 double compute_poisson_ll(const arma::vec &eta, const arma::vec &y) {
   return arma::dot(y, eta) - arma::accu(exp(eta)) -
          arma::accu(arma::lgamma(y + 1.0));
@@ -102,7 +103,7 @@ double compute_poisson_ll(const arma::vec &eta, const arma::vec &y) {
 // [[Rcpp::export]]
 arma::vec compute_poisson_ll_mat(const arma::mat &eta, const arma::vec y) {
   arma::vec ll(eta.n_cols);
-  for (int i = 0; i < eta.n_cols; i++) {
+  for (arma::uword i = 0; i < eta.n_cols; i++) {
     ll(i) = compute_poisson_ll(eta.col(i), y);
   }
   return ll;
@@ -163,14 +164,7 @@ PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
   }
   // The parallelization has ended!
 
-  // auto t_sim_end = std::chrono::high_resolution_clock::now();
-
   int count_less = 0;
-  // double total_solver_time = 0.0;
-  // double total_likelihood_time = 0.0;
-
-  // #pragma omp parallel reduction(+ : count_less, total_solver_time, \
-  //                                    total_likelihood_time) if (approx)
 
   // The (NEW!) parallelization has started!
   double prop_seperated = 0;
