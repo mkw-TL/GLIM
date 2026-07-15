@@ -311,8 +311,6 @@ glim_inner_prob_approx_samples_orig <- function(
     )
     prev_xi <- xi[[i]]
   }
-
-  message("We've gotten the xi's")
   U <- runif(m)
   lerped_xi <- -1
   samples <- matrix(nrow = length(mle_coefs), ncol = m)
@@ -806,6 +804,7 @@ glim <- function(
       )
       colnames(betas) <- colnames(X)
     }
+    message(cat("Our MLE is: ", mle_coefs))
     obj_to_return <- list(
       possibilities = glim_raw(
         X,
@@ -869,8 +868,6 @@ glim <- function(
     stop("Appendix and approximation methods cannot both be used")
   }
   if (appendix == TRUE & approx == FALSE) {
-    print(X)
-    print(eJ)
     samples <- appendix(
       num_samps,
       X,
@@ -1338,6 +1335,17 @@ plot.glim_object <- function(x, ...) {
   betas <- x$betas
   poss <- x$possibilities
   family <- x$family
+  args <- list(...)
+  alpha <- -1
+  if ("alpha" %in% names(args)) {
+    if (
+      (is.numeric(args$alpha)) & (length(args$alpha == 1)) & (args$alpha <= 1) & (args$alpha >= 0)
+    ) {
+      alpha <- args$alpha
+    } else {
+      stop("Alpha cutoff invalid")
+    }
+  }
 
   num_predictors <- ncol(betas)
   grid_cols <- ceiling(sqrt(num_predictors))
@@ -1349,7 +1357,8 @@ plot.glim_object <- function(x, ...) {
   par(mfrow = c(grid_rows, grid_cols), mar = c(4, 4, 3, 1), oma = c(0, 0, 3, 0))
 
   on.exit(par(old_par)) # if any crashes, don't have the user's state altered
-  #where the marginalization happens
+
+  # Where the marginalization happens
   for (col in 1:ncol(betas)) {
     max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
 
@@ -1366,6 +1375,9 @@ plot.glim_object <- function(x, ...) {
         ylab = "Profiled Plausibility",
         ylim = c(0, 1)
       )
+      if (alpha != -1) {
+        abline(h = alpha, col = "red", lty = 3)
+      }
       grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
     } else {
       # Draw an empty box if no data falls in this slice
@@ -1387,6 +1399,9 @@ plot.glim_object <- function(x, ...) {
   )
 }
 
+
+# Note: Initially written by me, Gemini helped with formatting of output
+
 #' Print
 #'
 #' Printing for glim objects
@@ -1404,10 +1419,16 @@ print.glim_object <- function(x, ...) {
   betas <- x$betas
   poss <- x$possibilities
   family <- x$family
+  mle_coefs <- as.numeric(x$mle)
 
-  cat("Please see plot() for marginal possibility contours.\n\n")
-  cat(sprintf("%.2f percent (marginal) confidence and credible region:\n", 1 - alpha))
-  cat("------------------------------------------------------\n")
+  cat(sprintf("%.0f%% (marginal) confidence and credible region:\n", (1 - alpha) * 100))
+  cat("------------------------------------------------------------------------\n")
+
+  # Initialize vectors to collect data for the table
+  row_names <- colnames(betas)
+  mle_vals <- numeric(ncol(betas))
+  lower_bound <- numeric(ncol(betas))
+  upper_bound <- numeric(ncol(betas))
 
   for (col in 1:ncol(betas)) {
     max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
@@ -1417,12 +1438,29 @@ print.glim_object <- function(x, ...) {
     alpha_cut <- valid & (max_plaus > alpha)
     valid_betas <- beta_vals[alpha_cut]
 
-    # left-alignment for 15 spaces (%-15s) and decimal control (%.4f)
-    cat(sprintf(
-      "  %-15s : [%.4f, %.4f]\n",
-      colnames(betas)[col],
-      min(valid_betas),
-      max(valid_betas)
-    ))
+    # Save results into our vectors
+    mle_vals[col] <- mle_coefs[col]
+    lower_bound[col] <- if (length(valid_betas) > 0) min(valid_betas) else NA
+    upper_bound[col] <- if (length(valid_betas) > 0) max(valid_betas) else NA
   }
+
+  # Build the structured data frame
+  summary_table <- data.frame(
+    Estimate = sprintf("%.4f", mle_vals),
+    Lower = sprintf("%.4f", lower_bound),
+    Upper = sprintf("%.4f", upper_bound),
+    row.names = row_names
+  )
+
+  # Rename columns to show the interval width dynamically
+  colnames(summary_table) <- c(
+    "MLE",
+    paste0("Lower ", (1 - alpha) * 100, "%"),
+    paste0("Upper ", (1 - alpha) * 100, "%")
+  )
+
+  # Print the formatted table cleanly
+  print(summary_table, quote = FALSE)
+  cat("------------------------------------------------------------------------\n")
+  invisible(x)
 }
