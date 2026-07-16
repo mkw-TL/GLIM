@@ -147,33 +147,21 @@ generate_grid <- function(
     eigen_vecs,
     eigen_vals,
     dispersion,
-    tol = .001, # the tolerance value
+    tol = .002, # the tolerance value
     a_val = .5, # found through a grid search
     b_val = 1, # found through a grid search
-    max_it = 30,
+    max_it = 25,
     parallel = FALSE,
     m = m # This is our m value
   )
   q_val <- qchisq(1 - alpha_target, df = length(mle_coefs)) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
   base_scale <- sqrt(dispersion * q_val * (1 / eigen_vals))
-  print("dispersion")
-  print(dispersion)
   semi_axes <- base_scale * sqrt(imvar_xi)
-  print("imvar_xi")
-  print(sqrt(imvar_xi))
-  print("semi_axes")
-  print(semi_axes)
-  print("eigen_vecs")
-  print(eigen_vecs)
   transformed_mat <- eigen_vecs %*% diag(as.vector(semi_axes)) # Takes the principle axes (through diag) and scales them (by semi_axes), then rotate to eigen_vector span
-  print("transformed_mat")
-  print(transformed_mat)
 
   # To make the beta coordinate the largest, we have our transformation matrix (times u, where u is a unit sphere).
   # Then, for a particular coordinate, we have b1 = row_1 * u, where this is maximized if u is in the direction of row_1.
   H <- sqrt(rowSums(transformed_mat^2))
-  print("H")
-  print(H)
 
   # Generate the Axis-Aligned Grid using the bounding box widths
   beta <- list()
@@ -209,151 +197,6 @@ generate_grid <- function(
   points_inside <- betas[inside_indices, ]
   return(points_inside)
 }
-
-# #' Generates a grid of parameter values (aligned in eigen-vector space)
-# #'
-# #' Each direction has a default of 20 steps
-# #'
-# #' @param mle_coefs The mle coef
-# #' @noRd
-# generate_eigen_grid <- function(
-#   X,
-#   y,
-#   family,
-#   mle_coefs,
-#   eigen_vecs,
-#   eigen_vals,
-#   dispersion,
-#   ll_mle_original_data,
-#   column_names,
-#   n_grid_evals = n_grid_evals
-# ) {
-#   print("Generating a grid of beta values")
-#   initial_xi <- rep(1, length(mle_coefs))
-#   imvar_xi <- imvar(
-#     X,
-#     y,
-#     initial_xi,
-#     family,
-#     .1,
-#     mle_coefs,
-#     ll_mle_original_data,
-#     eigen_vecs,
-#     eigen_vals,
-#     dispersion,
-#     .05, # this is the alpha level to which imvar is attempting to scale to
-#     2, # alpha_val
-#     .65, # beta_val
-#     30, # max_it
-#     FALSE
-#   )
-#   scaling <- sqrt(eigen_vals) * imvar_xi
-#   slices <- lapply(1:length(mle_coefs), function(i) {
-#     seq(-1, 1, length.out = n_grid_evals)
-#   })
-#   eigenspace_grid <- as.matrix(expand.grid(slices))
-#   scaled_eigenspace <- t(t(eigenspace_grid) * as.vector(scaling))
-#   param_deltas <- scaled_eigenspace %*% t(eigen_vecs)
-#   betas <- t(t(param_deltas) + as.vector(mle_coefs))
-#   colnames(betas) <- column_names
-
-#   return(betas)
-# }
-
-#' Generate Elliptical Approximation Samples (Inner Probability)
-#'
-#' Internal function called to generate samples when the elliptical approximation is used.
-#'
-#' @param X Input predictor matrix.
-#' @param y Response vector.
-#' @param family A string indicating the error distribution. Default is `"gaussian"`.
-#' @param mle_coefs Maximum likelihood estimates of the coefficients.
-#' @param mle_val The log-likelihood value at the maximum likelihood estimates.
-#' @param m Number of samples to generate.
-#' @param parallel Logical indicating whether to use parallel processing.
-#' @return A matrix of generated samples based on the elliptical approximation.
-#' @noRd
-glim_inner_prob_approx_samples_orig <- function(
-  X,
-  y,
-  family = "gaussian",
-  mle_coefs,
-  mle_val,
-  m,
-  parallel,
-  eJ,
-  dispersion,
-  a_val,
-  b_val,
-  max_it
-) {
-  B <- 100
-  AA <- seq(0.001, 0.999, length.out = B)
-
-  if (is.vector(eJ$vectors)) {
-    eJ$vectors <- matrix(eJ$vectors, ncol = 1)
-  }
-
-  i <- 0
-  xi <- list()
-  prev_xi <- rep(1, length(mle_coefs))
-  pb <- progress::progress_bar$new(
-    total = length(AA),
-    format = "[:bar] :percent eta :eta",
-    show_after = 0,
-    force = TRUE
-  )
-  for (alpha in AA) {
-    pb$tick()
-    i <- i + 1
-    xi[[i]] <- imvar(
-      X,
-      y,
-      prev_xi,
-      family,
-      alpha,
-      mle = mle_coefs,
-      mle_val,
-      eJ$vectors,
-      eJ$values,
-      dispersion,
-      tol = .01,
-      a_val = a_val,
-      b_val = b_val,
-      max_it = max_it,
-      parallel = FALSE
-    )
-    prev_xi <- xi[[i]]
-  }
-  U <- runif(m)
-  lerped_xi <- -1
-  samples <- matrix(nrow = length(mle_coefs), ncol = m)
-  i <- 0
-  for (u in U) {
-    i <- i + 1
-    if (u < min(AA)) {
-      lerped_xi <- xi[[1]]
-    } else if (u > max(AA)) {
-      lerped_xi <- xi[[B]]
-    } else {
-      r <- sum(AA < u)
-      w <- (u - AA[r]) / (AA[r + 1] - AA[r])
-      lerped_xi <- (1 - w) * xi[[r]] + w * xi[[r + 1]]
-    }
-
-    rand_dir <- generate_unit_matrix(1, length(mle_coefs))
-    spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
-    print(lerped_xi)
-    print(sqrt(dispersion))
-
-    samples[, i] <- mle_coefs +
-      as.vector(
-        sqrt(qchisq(1 - u, length(mle_coefs))) * sqrt(lerped_xi) * spatial_dir * sqrt(dispersion)
-      )
-  }
-  return(samples)
-}
-
 
 #' Generate Elliptical Approximation Samples (Inner Probability)
 #'
@@ -431,25 +274,6 @@ glim_inner_prob_approx_samples <- function(
     prev_xi <- xi[[i]]
   }
 
-  # Call the new parallel C++ wrapper directly
-  # xi <- imvar_parallel_grid(
-  #   X = X,
-  #   y = y,
-  #   alpha_grid = AA,
-  #   family = family,
-  #   mle = mle_coefs,
-  #   mle_val = mle_val,
-  #   J_vectors = as.matrix(eJ$vectors),
-  #   J_values = as.vector(eJ$values),
-  #   dispersion = dispersion,
-  #   tol = .01,
-  #   a_val = a_val,
-  #   b_val = b_val,
-  #   max_it = max_it,
-  #   m = m,
-  #   n_threads = parallel::detectCores() - 1
-  # )
-
   U <- runif(m)
   lerped_xi <- -1
   samples <- matrix(nrow = length(mle_coefs), ncol = m)
@@ -470,7 +294,9 @@ glim_inner_prob_approx_samples <- function(
     spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
 
     samples[, i] <- mle_coefs +
-      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * sqrt(lerped_xi) * spatial_dir * dispersion)
+      as.vector(
+        sqrt(qchisq(1 - u, length(mle_coefs))) * sqrt(lerped_xi) * spatial_dir * sqrt(dispersion)
+      )
   }
   return(samples)
 }
