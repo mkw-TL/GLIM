@@ -221,7 +221,7 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   return plausabilities;
 }
 
-double w(int a_val, int b_val, int s) {
+double w(double a_val, double b_val, int s) {
   return (double)a_val / std::pow(1.0 + s, b_val);
 }
 
@@ -240,6 +240,9 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
 
   // These are all the dimensions we would like to traverse
   for (int d = 0; d < D; d++) {
+    if (alpha == .003) {
+      Rcpp::Rcout << "dimension: " << d << "\n";
+    }
     // log(xi) because we are getting the exponentiated version
     double xi_d = std::log(xi(d));
 
@@ -254,7 +257,10 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
     arma::mat MPlus(D, 1);
     arma::mat MMinus(D, 1);
     while (true) {
-      // Rcpp::Rcout << "xi_d is " << xi_d << "\n";
+      if (alpha == .003) {
+        Rcpp::Rcout << "xi_d is " << xi_d << "\n";
+      }
+
       xi_d = std::max(-20.0, std::min(10.0, xi_d));
       // Xi scales singular values. exp parameterization avoids negative xi.
       posts_xi_d = posts_d * std::exp(xi_d / 2.0);
@@ -266,18 +272,27 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
       double val2 = fit_glm_omp_cpp(X, y, mle, MMinus.t(), family, 1, m,
                                     parallel, TRUE)(0, 0);
       double g_xi = std::max(val1, val2) - alpha;
-
-      if (std::abs(g_xi) <= tol || it >= max_it) {
+      // std::abs(g_xi) <= tol ||
+      if (it >= max_it) {
         break;
       } else {
         xi_d = xi_d + w(a_val, b_val, it) * g_xi;
         it++;
       }
     }
+    if (alpha == .003) {
+      Rcpp::Rcout << "xi_d before scaling: " << xi_d << "\n";
+    }
+
     xi_d = std::max(-20.0, std::min(10.0, xi_d));
     xi(d) = std::exp(xi_d);
+    if (alpha == .003) {
+      Rcpp::Rcout << "xi(d) after exponentiating: " << xi(d) << "\n";
+    }
   }
-
+  if (alpha == .003) {
+    Rcpp::Rcout << "xi: " << xi << "\n";
+  }
   return xi;
 }
 

@@ -134,7 +134,7 @@ generate_grid <- function(
 ) {
   initial_xi <- rep(1, length(mle_coefs))
 
-  alpha_target <- 0.001
+  alpha_target <- 0.003
 
   imvar_xi <- imvar(
     X,
@@ -147,22 +147,33 @@ generate_grid <- function(
     eigen_vecs,
     eigen_vals,
     dispersion,
-    tol = .005, # the tolerance value
-    a_val = 5, # found through a grid search
+    tol = .001, # the tolerance value
+    a_val = .5, # found through a grid search
     b_val = 1, # found through a grid search
-    max_it = 25,
+    max_it = 30,
     parallel = FALSE,
     m = m # This is our m value
   )
-  # sqrt(dispersion * xi / eigen_val)
-  q_val <- qchisq(1 - alpha_target, df = length(mle_coefs) - 1) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
-  base_scale <- sqrt(dispersion * q_val * abs(1 / eigen_vals))
+  q_val <- qchisq(1 - alpha_target, df = length(mle_coefs)) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
+  base_scale <- sqrt(dispersion * q_val * (1 / eigen_vals))
+  print("dispersion")
+  print(dispersion)
   semi_axes <- base_scale * sqrt(imvar_xi)
+  print("imvar_xi")
+  print(sqrt(imvar_xi))
+  print("semi_axes")
+  print(semi_axes)
+  print("eigen_vecs")
+  print(eigen_vecs)
   transformed_mat <- eigen_vecs %*% diag(as.vector(semi_axes)) # Takes the principle axes (through diag) and scales them (by semi_axes), then rotate to eigen_vector span
+  print("transformed_mat")
+  print(transformed_mat)
 
   # To make the beta coordinate the largest, we have our transformation matrix (times u, where u is a unit sphere).
   # Then, for a particular coordinate, we have b1 = row_1 * u, where this is maximized if u is in the direction of row_1.
   H <- sqrt(rowSums(transformed_mat^2))
+  print("H")
+  print(H)
 
   # Generate the Axis-Aligned Grid using the bounding box widths
   beta <- list()
@@ -279,6 +290,10 @@ glim_inner_prob_approx_samples_orig <- function(
   B <- 100
   AA <- seq(0.001, 0.999, length.out = B)
 
+  if (is.vector(eJ$vectors)) {
+    eJ$vectors <- matrix(eJ$vectors, ncol = 1)
+  }
+
   i <- 0
   xi <- list()
   prev_xi <- rep(1, length(mle_coefs))
@@ -290,7 +305,6 @@ glim_inner_prob_approx_samples_orig <- function(
   )
   for (alpha in AA) {
     pb$tick()
-    # TODO tryCatch
     i <- i + 1
     xi[[i]] <- imvar(
       X,
@@ -300,8 +314,8 @@ glim_inner_prob_approx_samples_orig <- function(
       alpha,
       mle = mle_coefs,
       mle_val,
-      as.matrix(eJ$vectors),
-      as.vector(eJ$values),
+      eJ$vectors,
+      eJ$values,
       dispersion,
       tol = .01,
       a_val = a_val,
@@ -329,9 +343,13 @@ glim_inner_prob_approx_samples_orig <- function(
 
     rand_dir <- generate_unit_matrix(1, length(mle_coefs))
     spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
+    print(lerped_xi)
+    print(sqrt(dispersion))
 
     samples[, i] <- mle_coefs +
-      as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * sqrt(lerped_xi) * spatial_dir * dispersion)
+      as.vector(
+        sqrt(qchisq(1 - u, length(mle_coefs))) * sqrt(lerped_xi) * spatial_dir * sqrt(dispersion)
+      )
   }
   return(samples)
 }
@@ -432,7 +450,6 @@ glim_inner_prob_approx_samples <- function(
   #   n_threads = parallel::detectCores() - 1
   # )
 
-  message("We've gotten the xi's")
   U <- runif(m)
   lerped_xi <- -1
   samples <- matrix(nrow = length(mle_coefs), ncol = m)
@@ -843,18 +860,24 @@ glim <- function(
       b_val = b_val,
       max_it = max_it
     )
-    beta_seq_list <- list()
-    for (i in 1:nrow(samples)) {
-      beta_seq_list[[i]] <- seq(min(samples[i, ]), max(samples[i, ]), length.out = n_grid_evals)
-    }
-    beta_p2p_grid <- as.matrix(expand.grid(beta_seq_list))
-    beta_p2p_grid <- rbind(beta_p2p_grid, t(mle_coefs))
-    poss <- p2p_function(X, y, samples, t(beta_p2p_grid))
-    colnames(beta_p2p_grid) <- colnames(X)
+    betas <- generate_grid(
+      X,
+      y,
+      family,
+      mle_coefs,
+      eJ$vectors,
+      eJ$values,
+      dispersion,
+      ll_mle_original_data,
+      n_grid_evals,
+      m
+    )
+    poss <- p2p_function(X, y, samples, t(betas))
+    colnames(betas) <- colnames(X)
     obj_to_return <- list(
       samples = samples,
       possibilities = poss,
-      betas = beta_p2p_grid,
+      betas = betas,
       family = family,
       X = X,
       y = y,
