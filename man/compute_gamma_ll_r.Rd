@@ -19,3 +19,17 @@ The calculated log-likelihood.
 \description{
 Compute Gamma Log-Likelihood
 }
+\examples{
+\dontrun{
+set.seed(1)
+y <- rgamma(20, shape = 4, rate = 4 / 2)
+
+# Vector eta: log-likelihood for a single linear predictor
+eta_vec <- log(rep(2, 20))
+compute_gamma_ll_r(y, eta_vec, shape = 4)
+
+# Matrix eta: log-likelihood evaluated at several candidate linear predictors
+eta_mat <- matrix(log(rep(c(1.8, 2, 2.2), each = 20)), ncol = 3)
+compute_gamma_ll_r(y, eta_mat, shape = 4)
+}
+}

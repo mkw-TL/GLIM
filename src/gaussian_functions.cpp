@@ -41,7 +41,7 @@ arma::vec compute_gaussian_ll_mat(const arma::vec &y, const arma::mat &mu,
 }
 
 // [[Rcpp::export]]
-double est_dispersion(const arma::vec &y, const arma::vec &mu, int p) {
+double est_dispersion_normal(const arma::vec &y, const arma::vec &mu, int p) {
   return arma::accu((y - mu) % (y - mu)) / (y.n_elem - p);
 }
 
@@ -58,8 +58,7 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
   // Estimated dispersion
   int p = beta_vals.n_elem;
 
-  double sigma = std::sqrt(est_dispersion(y, mu_hat, p));
-
+  double sigma = std::sqrt(est_dispersion_normal(y, mu_hat, p));
   double true_ll = compute_gaussian_ll(y, mu, sigma);
   double mle_val = compute_gaussian_ll(y, mu_hat, sigma);
   double f_x = true_ll - mle_val;

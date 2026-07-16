@@ -135,7 +135,7 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
     case GlmFamily::Binomial: {
       LogisticPlResult result =
           glm_logis_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, false);
-      if (result.sim_separated > 0) {
+      if (result.sim_seperated > 0) {
         // Note that sim_seperated is a percentage of how many sims (for that
         // beta value) went poorly. Don't have a conceptual idea on how to pass
         // this back out.
@@ -231,7 +231,7 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
                 const double mle_val, const arma::mat &J_vectors,
                 const arma::vec &J_values, double dispersion, double tol = 1e-2,
                 double a_val = 2.0, double b_val = 0.65, int max_it = 25,
-                bool parallel = false, int m = 100) {
+                bool parallel = true, int m = 100) {
   int D = mle.size();
 
   // Setup Chi-Squared distribution to replicate R's qchisq()
@@ -262,9 +262,9 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
       MMinus = mle - posts_xi_d;
 
       double val1 = fit_glm_omp_cpp(X, y, mle, MPlus.t(), family, 1, m,
-                                    parallel, TRUE)(0, 0);
+                                    parallel, true, false)(0, 0);
       double val2 = fit_glm_omp_cpp(X, y, mle, MMinus.t(), family, 1, m,
-                                    parallel, TRUE)(0, 0);
+                                    parallel, true, false)(0, 0);
       double g_xi = std::max(val1, val2) - alpha;
       if (std::abs(g_xi) <= tol || it >= max_it) {
         break;
@@ -278,68 +278,6 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
     xi(d) = std::exp(xi_d);
   }
   return xi;
-}
-
-// [[Rcpp::export]]
-Rcpp::List imvar_parallel_grid(arma::mat X, arma::vec y, arma::vec alpha_grid,
-                               const std::string family, const arma::vec &mle,
-                               const double mle_val, const arma::mat &J_vectors,
-                               const arma::vec &J_values, double dispersion,
-                               double tol = 1e-2, double a_val = 2.0,
-                               double b_val = 0.65, int max_it = 25,
-                               int m = 100, int n_threads = 4) {
-
-  int B = alpha_grid.size();
-  int D = mle.size();
-
-  // Thread-safe container to store results independently by index
-  std::vector<arma::vec> results(B);
-
-#ifdef _OPENMP
-  omp_set_num_threads(n_threads);
-#endif
-
-#pragma omp parallel
-  {
-    // Get total threads and current thread ID
-    int total_threads = 1;
-    int thread_id = 0;
-#ifdef _OPENMP
-    total_threads = omp_get_num_threads();
-    thread_id = omp_get_thread_num();
-#endif
-
-    // Manually calculate a contiguous chunk of the grid for this thread
-    int chunk_size = B / total_threads;
-    int remainder = B % total_threads;
-
-    int start_idx = thread_id * chunk_size + std::min(thread_id, remainder);
-    int end_idx = start_idx + chunk_size + (thread_id < remainder ? 1 : 0);
-
-    // 1. Each thread starts its sequential block with a "bad guess"
-    arma::vec prev_xi = arma::ones<arma::vec>(D) + 2 * alpha_grid[start_idx];
-
-    // 2. Run this thread's chunk sequentially to leverage warm-starting
-    for (int i = start_idx; i < end_idx; ++i) {
-      double alpha = alpha_grid[i];
-
-      // Pass the updated prev_xi into imvar
-      results[i] =
-          imvar(X, y, prev_xi, family, alpha, mle, mle_val, J_vectors, J_values,
-                dispersion, tol, a_val, b_val, max_it, false, m);
-
-      // Update prev_xi for the next alpha iteration in this thread's chunk
-      prev_xi = results[i];
-    }
-  }
-
-  // Safely convert back to Rcpp::List sequentially
-  Rcpp::List out_list(B);
-  for (int i = 0; i < B; i++) {
-    out_list[i] = results[i];
-  }
-
-  return out_list;
 }
 
 // [[Rcpp::export]]

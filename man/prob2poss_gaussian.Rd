@@ -21,3 +21,19 @@ A vector of mapped possibility values.
 \description{
 Probability to Possibility Mapping for Gaussian Regression
 }
+\examples{
+\dontrun{
+set.seed(1)
+n <- 100
+X <- cbind(intercept = 1, x = rnorm(n))
+y <- 2 + 1.5 * X[, "x"] + rnorm(n)
+
+# Simulated candidate coefficient vectors (one per column)
+samples <- cbind(c(1.8, 1.4), c(2.1, 1.6), c(2.0, 1.5))
+
+# Theta value(s) to evaluate against the simulated samples
+the_compared_theta <- c(2, 1.5)
+
+prob2poss_gaussian(X, y, samples, the_compared_theta)
+}
+}

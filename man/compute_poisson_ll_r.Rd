@@ -17,3 +17,17 @@ The calculated log-likelihood.
 \description{
 Compute Poisson Log-Likelihood
 }
+\examples{
+\dontrun{
+set.seed(1)
+y <- rpois(20, lambda = 3)
+
+# Vector eta: log-likelihood for a single linear predictor
+eta_vec <- log(rep(3, 20))
+compute_poisson_ll_r(y, eta_vec)
+
+# Matrix eta: log-likelihood evaluated at several candidate linear predictors
+eta_mat <- matrix(log(rep(c(2.5, 3, 3.5), each = 20)), ncol = 3)
+compute_poisson_ll_r(y, eta_mat)
+}
+}

@@ -17,5 +17,12 @@ get_CI_manual(alpha, betas, possibilities)
 A matrix of compatable beta values from the grid.
 }
 \description{
-Note that a 95\% confidence interval corresponds to alpha = .05
+Requires a grid of betas. Note that a 95\% confidence interval corresponds to alpha = .05
+}
+\examples{
+betas <- cbind(intercept = c(1.8, 1.9, 2.0, 2.1, 2.2), x = c(1.3, 1.4, 1.5, 1.6, 1.7))
+possibilities <- c(0.02, 0.20, 1.00, 0.30, 0.03)
+
+# 95\% confidence region (alpha = .05)
+get_CI_manual(alpha = .05, betas = betas, possibilities = possibilities)
 }

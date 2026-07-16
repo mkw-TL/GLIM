@@ -21,3 +21,19 @@ A vector of mapped possibility values.
 \description{
 Probability to Possibility Mapping for Poisson Regression
 }
+\examples{
+\dontrun{
+set.seed(1)
+n <- 100
+X <- cbind(intercept = 1, x = rnorm(n, sd = .2))
+y <- rpois(n, lambda = exp(X \%*\% c(1, .5)))
+
+# Simulated candidate coefficient vectors (one per column)
+samples <- cbind(c(0.9, 0.4), c(1.1, 0.6), c(1.0, 0.5))
+
+# Theta value(s) to evaluate against the simulated samples
+the_compared_theta <- c(1, .5)
+
+prob2poss_poisson(X, y, samples, the_compared_theta)
+}
+}

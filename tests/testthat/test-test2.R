@@ -141,23 +141,6 @@ test_that("BLAS threads are restored even if C++ throws an error", {
   expect_equal(RhpcBLASctl::blas_get_num_procs(), original_threads)
 })
 
-test_that("glim handles two-column integer matrices (Success/Failure)", {
-  X <- matrix(rnorm(20), ncol = 2)
-  # 10 trials per row
-  successes <- rbinom(10, 10, 0.5)
-  failures <- 10 - successes
-  y_mat <- cbind(successes, failures)
-
-  # Ensure it doesn't crash during the row replication process
-  expect_no_error(suppressWarnings(glim(
-    y_mat ~ X,
-    family = "binomial",
-    betas = matrix(0, 1, 3),
-    m = 10,
-    parallel = FALSE
-  )))
-})
-
 # test_that("glim handles factor y correctly", {
 #   X <- matrix(rnorm(20), ncol = 2)
 #   y_fac <- factor(sample(c("Control", "Treatment"), 10, replace = TRUE))

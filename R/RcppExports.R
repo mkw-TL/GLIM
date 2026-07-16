@@ -9,12 +9,8 @@ fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, num_threads = 1L, m 
     .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family, num_threads, m, parallel, approx, appendix)
 }
 
-imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, parallel = FALSE, m = 100L) {
+imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, parallel = TRUE, m = 100L) {
     .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, parallel, m)
-}
-
-imvar_parallel_grid <- function(X, y, alpha_grid, family, mle, mle_val, J_vectors, J_values, dispersion, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, m = 100L, n_threads = 4L) {
-    .Call(`_GLIM_imvar_parallel_grid`, X, y, alpha_grid, family, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, m, n_threads)
 }
 
 appendix_code <- function(num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val) {
@@ -57,8 +53,8 @@ compute_gaussian_ll_mat <- function(y, mu, sigma) {
     .Call(`_GLIM_compute_gaussian_ll_mat`, y, mu, sigma)
 }
 
-est_dispersion <- function(y, mu, p) {
-    .Call(`_GLIM_est_dispersion`, y, mu, p)
+est_dispersion_normal <- function(y, mu, p) {
+    .Call(`_GLIM_est_dispersion_normal`, y, mu, p)
 }
 
 glm_gaussian_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx, appendix) {

@@ -21,3 +21,19 @@ A vector of mapped possibility values.
 \description{
 Probability to Possibility Mapping for Logistic Regression
 }
+\examples{
+\dontrun{
+set.seed(1)
+n <- 100
+X <- cbind(intercept = 1, x = rnorm(n))
+y <- rbinom(n, 1, plogis(X \%*\% c(0, 1.5)))
+
+# Simulated candidate coefficient vectors (one per column)
+samples <- cbind(c(0, 1.2), c(0.1, 1.6), c(-0.1, 1.4))
+
+# Theta value(s) to evaluate against the simulated samples
+the_compared_theta <- c(0, 1.5)
+
+prob2poss_logis(X, y, samples, the_compared_theta)
+}
+}

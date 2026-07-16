@@ -9,11 +9,22 @@
 \arguments{
 \item{x}{A 'glim_object' from 'glim()'}
 
-\item{...}{Currently unused}
+\item{...}{Used to pass in an alpha cut. Ex: 'alpha = .10'}
 }
 \value{
 Marginal plots for betas
 }
 \description{
 Plotting for glim objects
+}
+\examples{
+\dontrun{
+fit <- glim(y ~ x, data = dat, family = "gaussian")
+
+# Plot marginal profiled plausibility for each coefficient
+plot(fit)
+
+# Overlay a reference line at a chosen alpha cutoff
+plot(fit, alpha = .05)
+}
 }

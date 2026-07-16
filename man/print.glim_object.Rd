@@ -17,3 +17,14 @@ Print output
 \description{
 Printing for glim objects
 }
+\examples{
+\dontrun{
+fit <- glim(y ~ x, data = dat, family = "gaussian")
+
+# Print the 95\% confidence and credible region (default)
+print(fit)
+
+# Print at a different alpha level
+print(fit, alpha = .10)
+}
+}

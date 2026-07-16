@@ -2,69 +2,15 @@
 #' @importFrom Rcpp sourceCpp
 #' @importFrom progress progress_bar
 #' @importFrom parallel detectCores
-#' @importFrom stats logLik glm Gamma poisson inverse.gaussian lm coef runif qchisq model.matrix rnorm
+#' @importFrom stats logLik glm Gamma poisson inverse.gaussian lm coef runif qchisq model.matrix rnorm model.offset model.response binomial
 #' @importFrom utils head
+#' @importFrom graphics par plot.default abline grid mtext
+#' @importFrom methods is
 #' @import RcppProgress
 NULL
 
-# Original code written by Joe Harrison (jrharr25@ncsu.edu), translated to cpp by Gemini
-# pkgbuild::compile_dll() validates the package directory differently. Rcpp might implement it's directory check differently
-# After making changes, restart R, get in the package directory
-# devtools::document()
-# devtools::install() or devtools::load_all()
 
-#' Scale the design matrix
-#'
-#' Scales the design matrix for numerical stability when fitting. Columns
-#' with two or fewer unique values (intercepts, dummy/indicator variables)
-#' are left untouched; all other ("continuous") columns are divided by
-#' their root-mean-square so that no single predictor dominates purely
-#' because of its measurement scale.
-#'
-#' @param X A numeric design matrix (a data frame will be coerced to a
-#'   matrix automatically).
-#' @return Scaled design matrix (excludes intercepts and dummy variables)
-#' @examples
-#' X <- cbind(intercept = 1, age = c(20, 45, 70, 33), male = c(1, 0, 1, 0))
-#' scale_design_matrix(X)
-#'
-#' # A matrix with no continuous columns is returned unchanged
-#' scale_design_matrix(cbind(intercept = 1, male = c(1, 0, 1, 0)))
-#' @export
-scale_design_matrix <- function(X) {
-  if (is.data.frame(X)) {
-    X <- as.matrix(X)
-  }
-  if (!is.matrix(X) || !is.numeric(X)) {
-    stop(
-      "Input Error: 'X' must be a numeric matrix (or a data frame coercible to one).",
-      call. = FALSE
-    )
-  }
-  if (ncol(X) == 0 || nrow(X) == 0) {
-    stop("Input Error: 'X' must have at least one row and one column.", call. = FALSE)
-  }
-  if (any(!is.finite(X))) {
-    stop("Input Error: 'X' contains NA/NaN/Inf values, which cannot be scaled.", call. = FALSE)
-  }
-
-  # Find columns with more than 2 unique values ("continuous" predictors)
-  continuous_cols <- apply(X, 2, function(col) length(unique(col)) > 2)
-
-  # Nothing to scale (e.g. only an intercept and/or dummy columns): return as-is
-  if (!any(continuous_cols)) {
-    return(X)
-  }
-
-  # drop = FALSE guards against a single continuous column silently
-  # collapsing to a plain vector, which would break the assignment below
-  cols_to_scale <- X[, continuous_cols, drop = FALSE]
-
-  X[, continuous_cols] <- scale(cols_to_scale, center = FALSE)
-
-  return(X)
-}
-
+# Original code written by Joe Harrison (jrharr25@ncsu.edu), translated to C++ by Gemini
 
 #' Fits GLIM (Raw Implementation)
 #'
@@ -132,9 +78,17 @@ generate_grid <- function(
   n_grid_evals = 25,
   m = 500
 ) {
+  print(head(X))
+  print(head(y))
+  print(family)
+  print(mle_coefs)
+  print(eigen_vecs)
+  print(eigen_vals)
+  print(dispersion)
+  print(ll_mle_original_data)
   initial_xi <- rep(1, length(mle_coefs))
 
-  alpha_target <- 0.003
+  alpha_target <- 0.001
 
   imvar_xi <- imvar(
     X,
@@ -147,14 +101,16 @@ generate_grid <- function(
     eigen_vecs,
     eigen_vals,
     dispersion,
-    tol = .002, # the tolerance value
+    tol = .001, # the tolerance value
     a_val = .5, # found through a grid search
     b_val = 1, # found through a grid search
     max_it = 25,
     parallel = FALSE,
     m = m # This is our m value
   )
+  print(imvar_xi)
   q_val <- qchisq(1 - alpha_target, df = length(mle_coefs)) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
+  print(dispersion)
   base_scale <- sqrt(dispersion * q_val * (1 / eigen_vals))
   semi_axes <- base_scale * sqrt(imvar_xi)
   transformed_mat <- eigen_vecs %*% diag(as.vector(semi_axes)) # Takes the principle axes (through diag) and scales them (by semi_axes), then rotate to eigen_vector span
@@ -162,6 +118,7 @@ generate_grid <- function(
   # To make the beta coordinate the largest, we have our transformation matrix (times u, where u is a unit sphere).
   # Then, for a particular coordinate, we have b1 = row_1 * u, where this is maximized if u is in the direction of row_1.
   H <- sqrt(rowSums(transformed_mat^2))
+  print(H)
 
   # Generate the Axis-Aligned Grid using the bounding box widths
   beta <- list()
@@ -269,7 +226,7 @@ glim_inner_prob_approx_samples <- function(
       a_val = a_val,
       b_val = b_val,
       max_it = max_it,
-      parallel = FALSE
+      parallel = TRUE
     )
     prev_xi <- xi[[i]]
   }
@@ -315,9 +272,31 @@ glim_inner_prob_approx_samples <- function(
 #' @param family String denoting the exponential family. Choices are `"gaussian"`, `"binomial"`, `"gamma"`, `"poisson"`, `"inverse.gaussian"`.
 #' @param m Number of samples/evaluations to perform (default `1000`).
 #' @param approx Logical indicating whether to use the elliptical approximation (default `FALSE`).
-#' @param parallel Logical indicating whether to process in parallel.
 #' @param ... Other arguments include a_val, b_val, max_it, betas, n_grid_evals, tol, and num_samps.
 #' @return If using an elliptical approximation, returns samples of parameter values. Else, returns a list containing the matrix of betas upon which it was evaluated, and a vector of the corresponding possibilities.
+#' @examples
+#' \dontrun{
+#' set.seed(1)
+#' n <- 100
+#' x <- rnorm(n)
+#' y <- 2 + 1.5 * x + rnorm(n)
+#' dat <- data.frame(x = x, y = y)
+#'
+#' # Grid-based evaluation (default)
+#' fit <- glim(y ~ x, data = dat, family = "gaussian", m = 500)
+#' get_CI(fit, alpha = .05)
+#' plot(fit)
+#' print(fit)
+#'
+#' # Elliptical approximation instead of a grid search
+#' fit_approx <- glim(y ~ x, data = dat, family = "gaussian", approx = TRUE, m = 500)
+#'
+#' # Passing a custom grid of betas to evaluate via '...'
+#' beta0_seq <- seq(0, 4, length.out = 10)
+#' beta1_seq <- seq(0, 3, length.out = 10)
+#' custom_betas <- as.matrix(expand.grid(beta0_seq, beta1_seq))
+#' fit_custom <- glim(y ~ x, data = dat, family = "gaussian", betas = custom_betas)
+#' }
 #' @export
 glim <- function(
   formula,
@@ -326,7 +305,6 @@ glim <- function(
   m = 1000,
   approx = FALSE,
   appendix = FALSE,
-  parallel = TRUE,
   tol = 1e-2,
   ...
 ) {
@@ -379,6 +357,10 @@ glim <- function(
     b_val <- args$b_val
   } else {
     b_val <- .65
+  }
+  parallel <- TRUE
+  if ("parallel" %in% names(args)) {
+    parallel <- args$parallel
   }
   betas <- NULL
   if (approx == FALSE) {
@@ -605,7 +587,7 @@ glim <- function(
   } else if (family == "normal" || family == "gaussian") {
     ll_mle_original_data <- as.numeric(logLik(lm(y ~ X - 1)))
     mle_coefs <- fit_gaussian_cpp(X, y)
-    dispersion <- 1
+    dispersion <- est_dispersion_normal(y, X %*% mle_coefs, length(mle_coefs))
     if (is.null(betas)) {
       J <- crossprod(X, X)
     }
@@ -761,6 +743,21 @@ glim <- function(
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
 #' @return A vector of mapped possibility values.
+#' @examples
+#' \dontrun{
+#' set.seed(1)
+#' n <- 100
+#' X <- cbind(intercept = 1, x = rnorm(n))
+#' y <- rbinom(n, 1, plogis(X %*% c(0, 1.5)))
+#'
+#' # Simulated candidate coefficient vectors (one per column)
+#' samples <- cbind(c(0, 1.2), c(0.1, 1.6), c(-0.1, 1.4))
+#'
+#' # Theta value(s) to evaluate against the simulated samples
+#' the_compared_theta <- c(0, 1.5)
+#'
+#' prob2poss_logis(X, y, samples, the_compared_theta)
+#' }
 #' @export
 prob2poss_logis <- function(X, y, samples, the_compared_theta) {
   if (is.data.frame(X)) {
@@ -817,6 +814,21 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
 #' @return A vector of mapped possibility values.
+#' @examples
+#' \dontrun{
+#' set.seed(1)
+#' n <- 100
+#' X <- cbind(intercept = 1, x = rnorm(n, sd = .2))
+#' y <- rgamma(n, shape = 5, rate = 5 / exp(X %*% c(1, .5)))
+#'
+#' # Simulated candidate coefficient vectors (one per column)
+#' samples <- cbind(c(0.9, 0.4), c(1.1, 0.6), c(1.0, 0.5))
+#'
+#' # Theta values to evaluate against the simulated samples (must not be a scalar)
+#' the_compared_theta <- cbind(c(1, .5))
+#'
+#' prob2poss_gamma(X, y, samples, the_compared_theta)
+#' }
 #' @export
 prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
   if (is.data.frame(X)) {
@@ -832,12 +844,26 @@ prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
   sapply(ll_val, function(x) sum(ll_val_samps <= x) / length(ll_val_samps))
 }
 
+
 #' Compute Gamma Log-Likelihood
 #'
 #' @param y Response vector.
 #' @param eta Linear predictor (can be a vector or a matrix).
 #' @param shape The shape parameter for the gamma distribution.
 #' @return The calculated log-likelihood.
+#' @examples
+#' \dontrun{
+#' set.seed(1)
+#' y <- rgamma(20, shape = 4, rate = 4 / 2)
+#'
+#' # Vector eta: log-likelihood for a single linear predictor
+#' eta_vec <- log(rep(2, 20))
+#' compute_gamma_ll_r(y, eta_vec, shape = 4)
+#'
+#' # Matrix eta: log-likelihood evaluated at several candidate linear predictors
+#' eta_mat <- matrix(log(rep(c(1.8, 2, 2.2), each = 20)), ncol = 3)
+#' compute_gamma_ll_r(y, eta_mat, shape = 4)
+#' }
 #' @export
 compute_gamma_ll_r <- function(y, eta, shape) {
   if (is.vector(eta)) {
@@ -852,6 +878,19 @@ compute_gamma_ll_r <- function(y, eta, shape) {
 #' @param y Response vector.
 #' @param eta Linear predictor (can be a vector or a matrix).
 #' @return The calculated log-likelihood.
+#' @examples
+#' \dontrun{
+#' set.seed(1)
+#' y <- rpois(20, lambda = 3)
+#'
+#' # Vector eta: log-likelihood for a single linear predictor
+#' eta_vec <- log(rep(3, 20))
+#' compute_poisson_ll_r(y, eta_vec)
+#'
+#' # Matrix eta: log-likelihood evaluated at several candidate linear predictors
+#' eta_mat <- matrix(log(rep(c(2.5, 3, 3.5), each = 20)), ncol = 3)
+#' compute_poisson_ll_r(y, eta_mat)
+#' }
 #' @export
 compute_poisson_ll_r <- function(y, eta) {
   if (is.vector(eta)) {
@@ -866,6 +905,19 @@ compute_poisson_ll_r <- function(y, eta) {
 #' @param mu Mean (can be a vector or a matrix).
 #' @param sigma Estimated standard deviation
 #' @return The calculated log-likelihood.
+#' @examples
+#' \dontrun{
+#' set.seed(1)
+#' y <- rnorm(20, mean = 5, sd = 1)
+#'
+#' # Vector mu: log-likelihood for a single mean vector
+#' mu_vec <- rep(5, 20)
+#' compute_gaussian_ll_r(y, mu_vec, sigma = 1)
+#'
+#' # Matrix mu: log-likelihood evaluated at several candidate means
+#' mu_mat <- matrix(rep(c(4.5, 5, 5.5), each = 20), ncol = 3)
+#' compute_gaussian_ll_r(y, mu_mat, sigma = 1)
+#' }
 #' @export
 compute_gaussian_ll_r <- function(y, mu, sigma) {
   if (is.vector(mu)) {
@@ -880,6 +932,19 @@ compute_gaussian_ll_r <- function(y, mu, sigma) {
 #' @param mu Mean (can be a vector or a matrix).
 #' @param gamma_val Estimated dispersion
 #' @return The calculated log-likelihood.
+#' @examples
+#' \dontrun{
+#' set.seed(1)
+#' y <- statmod::rinvgauss(20, mean = 2, dispersion = 1)
+#'
+#' # Vector mu: log-likelihood for a single mean vector
+#' mu_vec <- rep(2, 20)
+#' compute_invgauss_ll_r(y, mu_vec, gamma_val = 1)
+#'
+#' # Matrix mu: log-likelihood evaluated at several candidate means
+#' mu_mat <- matrix(rep(c(1.8, 2, 2.2), each = 20), ncol = 3)
+#' compute_invgauss_ll_r(y, mu_mat, gamma_val = 1)
+#' }
 #' @export
 compute_invgauss_ll_r <- function(y, mu, gamma_val) {
   if (is.vector(mu)) {
@@ -897,9 +962,24 @@ compute_invgauss_ll_r <- function(y, mu, gamma_val) {
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
 #' @return A vector of mapped possibility values.
+#' @examples
+#' \dontrun{
+#' set.seed(1)
+#' n <- 100
+#' X <- cbind(intercept = 1, x = rnorm(n))
+#' y <- 2 + 1.5 * X[, "x"] + rnorm(n)
+#'
+#' # Simulated candidate coefficient vectors (one per column)
+#' samples <- cbind(c(1.8, 1.4), c(2.1, 1.6), c(2.0, 1.5))
+#'
+#' # Theta value(s) to evaluate against the simulated samples
+#' the_compared_theta <- c(2, 1.5)
+#'
+#' prob2poss_gaussian(X, y, samples, the_compared_theta)
+#' }
 #' @export
 prob2poss_gaussian <- function(X, y, samples, the_compared_theta) {
-  if (is.data.frame(X)) {
+  if (is.data.frame(X) || is.vector(X)) {
     X <- as.matrix(X)
   }
 
@@ -907,7 +987,7 @@ prob2poss_gaussian <- function(X, y, samples, the_compared_theta) {
 
   # Assuming identity link for Gaussian by default
   mle_coefs <- fit_gaussian_cpp(X, y)
-  est_sd <- sqrt(est_dispersion(y, X %*% mle_coefs, length(mle_coefs)))
+  est_sd <- est_dispersion_normal(y, X %*% mle_coefs, ncol(X)) # mle
   ll_val_samps <- as.vector(compute_gaussian_ll_r(y, eta, sigma = est_sd))
   ll_val <- as.vector(compute_gaussian_ll_r(y, X %*% the_compared_theta, sigma = est_sd))
 
@@ -924,6 +1004,21 @@ prob2poss_gaussian <- function(X, y, samples, the_compared_theta) {
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
 #' @return A vector of mapped possibility values.
+#' @examples
+#' \dontrun{
+#' set.seed(1)
+#' n <- 100
+#' X <- cbind(intercept = 1, x = rnorm(n, sd = .2))
+#' y <- statmod::rinvgauss(n, mean = exp(X %*% c(0.7, 0.3)), dispersion = 1)
+#'
+#' # Simulated candidate coefficient vectors (one per column)
+#' samples <- cbind(c(0.6, 0.2), c(0.8, 0.4), c(0.7, 0.3))
+#'
+#' # Theta values to evaluate against the simulated samples (must not be a scalar)
+#' the_compared_theta <- cbind(c(.7, .3))
+#'
+#' prob2poss_invgauss(X, y, samples, the_compared_theta)
+#' }
 #' @export
 prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
   if (is.data.frame(X)) {
@@ -948,112 +1043,6 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
 
   sapply(ll_val, function(x) sum(ll_val_samps <= x) / length(ll_val_samps))
 }
-
-
-# #' Faster Elliptical Approximation Samples (Alternative Implementation)
-# #'
-# #' Function called if doing elliptical approx, designed for better performance.
-# #'
-# #' @param X Predictor matrix.
-# #' @param y Response vector.
-# #' @param family A string indicating the error distribution. Default is `"gaussian"`.
-# #' @param mle_val The log-likelihood value at the maximum likelihood estimates.
-# #' @param m Number of samples to generate.
-# #' @param parallel Logical indicating whether to use parallel processing.
-# #' @param a Hyperparameter `a` for the approximation tuning.
-# #' @param b Hyperparameter `b` for the approximation tuning.
-# #' @param max_it Maximum number of iterations allowed for the algorithm.
-# #' @param tol Tolerance criteria for convergence.
-# #' @return A matrix of generated samples.
-# #' @export
-# glim_inner_prob_approx_samples_2 <- function(
-#   X,
-#   y,
-#   family = "gaussian",
-#   mle_val,
-#   m,
-#   parallel,
-#   a,
-#   b,
-#   max_it,
-#   tol
-# ) {
-#   print("glim_inner_prob")
-#   B <- 1000
-#   AA <- seq(0.001, 0.999, length = B)
-#   if (family == "gaussian" || family == "normal") {
-#     res <- lm(y ~ X - 1)
-#     J <- crossprod(X, X)
-#     dispersion <- 1
-#   } else if (family == "binomial") {
-#     res <- glm(y ~ X - 1, family = "binomial")
-#     p_i <- res$fitted.values
-#     J <- crossprod(X, X * (p_i * (1 - p_i)))
-#     dispersion <- 1
-#   } else if (family == "gamma") {
-#     res <- glm(y ~ X - 1, family = Gamma(link = "log"))
-#     J <- crossprod(X, X)
-#     mle_coefs <- res$coefficients
-#     dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
-#   } else if (family == "inverse.gaussian") {
-#     res <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
-#     eta <- X %*% res$coefficients
-#     mu_i <- as.vector(sqrt(1 / eta))
-#     J <- crossprod(X, X * (mu_i^3)) # TODO #7 check on this calculation
-#     dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
-#   } else if (family == "poisson") {
-#     res <- glm(y ~ X - 1, family = poisson(link = "log"))
-#     lambda_i <- res$fitted.values
-#     J <- crossprod(X, X * (lambda_i))
-#     dispersion <- 1
-#   }
-#   J <- (J + t(J)) / 2
-#   eJ <- eigen(J)
-
-#   eJ$values[eJ$values < 1e-4] <- .000001
-#   mle_coefs <- res$coefficients
-#   eJ_vectors <- eJ$vectors
-#   ej_values <- diag(eJ$values)
-
-#   matrix_of_xis <- get_xi(
-#     AA,
-#     mle_coefs,
-#     family,
-#     eJ_vectors,
-#     eJ_values,
-#     dispersion,
-#     mle_val,
-#     a,
-#     b,
-#     max_it,
-#     tol
-#   )
-
-#   u <- runif(m)
-#   lerped_xi <- c()
-#   samples <- matrix(nrow = length(mle_coefs), ncol = m)
-#   for (i in 1:m) {
-#     if (u[i] < 1 / length(AA)) {
-#       lerped_xi <- matrix_of_xis[, 1]
-#     } else if (u[i] > 1 - 1 / length(AA)) {
-#       lerped_xi <- matrix_of_xis[, length(AA)]
-#     } else {
-#       where_located <- findInterval(u[i], AA)
-#       w <- u[i] - AA[where_located]
-#       lerped_xi <- w * matrix_of_xis[, where_located] + (1 - w) * matrix_of_xis[, where_located + 1]
-#     }
-#     if (is.na(lerped_xi)) {
-#       print("You dun messed up")
-#     }
-
-#     rand_dir <- generate_unit_matrix(1, length(mle_coefs))
-#     spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
-
-#     samples[, i] <- mle_coefs +
-#       as.vector(sqrt(qchisq(1 - u, length(mle_coefs))) * lerped_xi * spatial_dir)
-#   }
-#   return(samples)
-# }
 
 #' Appendix C++ Bridge Function
 #'
@@ -1128,6 +1117,21 @@ appendix <- function(
 #' @param samples Matrix of simulated sample coefficients.
 #' @param the_compared_theta The theta values to compare against.
 #' @return A vector of mapped possibility values.
+#' @examples
+#' \dontrun{
+#' set.seed(1)
+#' n <- 100
+#' X <- cbind(intercept = 1, x = rnorm(n, sd = .2))
+#' y <- rpois(n, lambda = exp(X %*% c(1, .5)))
+#'
+#' # Simulated candidate coefficient vectors (one per column)
+#' samples <- cbind(c(0.9, 0.4), c(1.1, 0.6), c(1.0, 0.5))
+#'
+#' # Theta value(s) to evaluate against the simulated samples
+#' the_compared_theta <- c(1, .5)
+#'
+#' prob2poss_poisson(X, y, samples, the_compared_theta)
+#' }
 #' @export
 prob2poss_poisson <- function(X, y, samples, the_compared_theta) {
   if (is.data.frame(X)) {
@@ -1143,12 +1147,18 @@ prob2poss_poisson <- function(X, y, samples, the_compared_theta) {
 
 #' Returns a confidence interval
 #'
-#' Note that a 95% confidence interval corresponds to alpha = .05
+#' Requires a grid of betas. Note that a 95% confidence interval corresponds to alpha = .05
 #'
 #' @param alpha Note that a 95% confidence interval corresponds to alpha = .05
 #' @param betas The grid of beta values which we are evaluating on
 #' @param possibilities The vector of possibilities
 #' @return A matrix of compatable beta values from the grid.
+#' @examples
+#' betas <- cbind(intercept = c(1.8, 1.9, 2.0, 2.1, 2.2), x = c(1.3, 1.4, 1.5, 1.6, 1.7))
+#' possibilities <- c(0.02, 0.20, 1.00, 0.30, 0.03)
+#'
+#' # 95% confidence region (alpha = .05)
+#' get_CI_manual(alpha = .05, betas = betas, possibilities = possibilities)
 #' @export
 get_CI_manual <- function(alpha, betas, possibilities) {
   return(betas[possibilities > alpha, ])
@@ -1158,18 +1168,37 @@ get_CI_manual <- function(alpha, betas, possibilities) {
 #'
 #' Note that a 95% confidence interval corresponds to alpha = .05
 #'
-#' @param glim_object Note that a 95% confidence interval corresponds to alpha = .05
+#' @param glim_object An object returned by glim()
+#' @param ... Used to pass in the alpha level. Ex: 'alpha = .10'
 #' @return A matrix of compatable beta values from the grid.
+#' @examples
+#' \dontrun{
+#' fit <- glim(y ~ x, data = dat, family = "gaussian")
+#'
+#' # 95% confidence region (default)
+#' get_CI(fit)
+#'
+#' # 90% confidence region
+#' get_CI(fit, alpha = .10)
+#' }
 #' @export
-get_CI <- function(glim_object, alpha = .05) {
+get_CI <- function(glim_object, ...) {
+  args <- list(...)
+  alpha <- .05
+  if ("alpha" %in% names(args)) {
+    if (
+      (is.numeric(args$alpha)) & (length(args$alpha == 1)) & (args$alpha <= 1) & (args$alpha >= 0)
+    ) {
+      alpha <- args$alpha
+    } else {
+      stop("Alpha cutoff invalid")
+    }
+  }
+
   if (!is(glim_object, "glim_object")) {
     stop("Object which was passed is not a direct result from glim()")
   }
   return(glim_object$betas[glim_object$possibilities > alpha, ])
-}
-
-est_sig_sq <- function(y, mu, p) {
-  return(est_dispersion(y, mu, p))
 }
 
 #' Plot
@@ -1177,8 +1206,18 @@ est_sig_sq <- function(y, mu, p) {
 #' Plotting for glim objects
 #'
 #' @param x A 'glim_object' from 'glim()'
-#' @param ... Currently unused
+#' @param ... Used to pass in an alpha cut. Ex: 'alpha = .10'
 #' @return Marginal plots for betas
+#' @examples
+#' \dontrun{
+#' fit <- glim(y ~ x, data = dat, family = "gaussian")
+#'
+#' # Plot marginal profiled plausibility for each coefficient
+#' plot(fit)
+#'
+#' # Overlay a reference line at a chosen alpha cutoff
+#' plot(fit, alpha = .05)
+#' }
 #' @export
 plot.glim_object <- function(x, ...) {
   betas <- x$betas
@@ -1249,7 +1288,7 @@ plot.glim_object <- function(x, ...) {
 }
 
 
-# Note: Initially written by me, Gemini helped with formatting of output
+# Note: Initially written by the author, Gemini helped with formatting of output
 
 #' Print
 #'
@@ -1258,6 +1297,16 @@ plot.glim_object <- function(x, ...) {
 #' @param x A 'glim_object' from 'glim()'
 #' @param ... Supports differing alpha levels. EX: alpha = .05
 #' @return Print output
+#' @examples
+#' \dontrun{
+#' fit <- glim(y ~ x, data = dat, family = "gaussian")
+#'
+#' # Print the 95% confidence and credible region (default)
+#' print(fit)
+#'
+#' # Print at a different alpha level
+#' print(fit, alpha = .10)
+#' }
 #' @export
 print.glim_object <- function(x, ...) {
   args <- list(...)

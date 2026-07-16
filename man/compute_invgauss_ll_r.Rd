@@ -19,3 +19,17 @@ The calculated log-likelihood.
 \description{
 Compute inverse gaussian Log-Likelihood
 }
+\examples{
+\dontrun{
+set.seed(1)
+y <- statmod::rinvgauss(20, mean = 2, dispersion = 1)
+
+# Vector mu: log-likelihood for a single mean vector
+mu_vec <- rep(2, 20)
+compute_invgauss_ll_r(y, mu_vec, gamma_val = 1)
+
+# Matrix mu: log-likelihood evaluated at several candidate means
+mu_mat <- matrix(rep(c(1.8, 2, 2.2), each = 20), ncol = 3)
+compute_invgauss_ll_r(y, mu_mat, gamma_val = 1)
+}
+}

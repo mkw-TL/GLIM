@@ -69,31 +69,6 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// imvar_parallel_grid
-Rcpp::List imvar_parallel_grid(arma::mat X, arma::vec y, arma::vec alpha_grid, const std::string family, const arma::vec& mle, const double mle_val, const arma::mat& J_vectors, const arma::vec& J_values, double dispersion, double tol, double a_val, double b_val, int max_it, int m, int n_threads);
-RcppExport SEXP _GLIM_imvar_parallel_grid(SEXP XSEXP, SEXP ySEXP, SEXP alpha_gridSEXP, SEXP familySEXP, SEXP mleSEXP, SEXP mle_valSEXP, SEXP J_vectorsSEXP, SEXP J_valuesSEXP, SEXP dispersionSEXP, SEXP tolSEXP, SEXP a_valSEXP, SEXP b_valSEXP, SEXP max_itSEXP, SEXP mSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< arma::mat >::type X(XSEXP);
-    Rcpp::traits::input_parameter< arma::vec >::type y(ySEXP);
-    Rcpp::traits::input_parameter< arma::vec >::type alpha_grid(alpha_gridSEXP);
-    Rcpp::traits::input_parameter< const std::string >::type family(familySEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type mle(mleSEXP);
-    Rcpp::traits::input_parameter< const double >::type mle_val(mle_valSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type J_vectors(J_vectorsSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type J_values(J_valuesSEXP);
-    Rcpp::traits::input_parameter< double >::type dispersion(dispersionSEXP);
-    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
-    Rcpp::traits::input_parameter< double >::type a_val(a_valSEXP);
-    Rcpp::traits::input_parameter< double >::type b_val(b_valSEXP);
-    Rcpp::traits::input_parameter< int >::type max_it(max_itSEXP);
-    Rcpp::traits::input_parameter< int >::type m(mSEXP);
-    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(imvar_parallel_grid(X, y, alpha_grid, family, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, m, n_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
 // appendix_code
 arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y, arma::vec mle_coefs, arma::mat eig_vecs, arma::vec eig_vals, std::string family, double dispersion, int m, double tol, int max_it, int a_val, int b_val);
 RcppExport SEXP _GLIM_appendix_code(SEXP num_sampsSEXP, SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP eig_vecsSEXP, SEXP eig_valsSEXP, SEXP familySEXP, SEXP dispersionSEXP, SEXP mSEXP, SEXP tolSEXP, SEXP max_itSEXP, SEXP a_valSEXP, SEXP b_valSEXP) {
@@ -240,16 +215,16 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// est_dispersion
-double est_dispersion(const arma::vec& y, const arma::vec& mu, int p);
-RcppExport SEXP _GLIM_est_dispersion(SEXP ySEXP, SEXP muSEXP, SEXP pSEXP) {
+// est_dispersion_normal
+double est_dispersion_normal(const arma::vec& y, const arma::vec& mu, int p);
+RcppExport SEXP _GLIM_est_dispersion_normal(SEXP ySEXP, SEXP muSEXP, SEXP pSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type mu(muSEXP);
     Rcpp::traits::input_parameter< int >::type p(pSEXP);
-    rcpp_result_gen = Rcpp::wrap(est_dispersion(y, mu, p));
+    rcpp_result_gen = Rcpp::wrap(est_dispersion_normal(y, mu, p));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -407,7 +382,6 @@ static const R_CallMethodDef CallEntries[] = {
     {"_GLIM_generate_unit_matrix", (DL_FUNC) &_GLIM_generate_unit_matrix, 2},
     {"_GLIM_fit_glm_omp_cpp", (DL_FUNC) &_GLIM_fit_glm_omp_cpp, 10},
     {"_GLIM_imvar", (DL_FUNC) &_GLIM_imvar, 16},
-    {"_GLIM_imvar_parallel_grid", (DL_FUNC) &_GLIM_imvar_parallel_grid, 15},
     {"_GLIM_appendix_code", (DL_FUNC) &_GLIM_appendix_code, 13},
     {"_GLIM_fit_gamma_log_cpp", (DL_FUNC) &_GLIM_fit_gamma_log_cpp, 5},
     {"_GLIM_compute_gamma_ll", (DL_FUNC) &_GLIM_compute_gamma_ll, 3},
@@ -418,7 +392,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_GLIM_fit_gaussian_cpp", (DL_FUNC) &_GLIM_fit_gaussian_cpp, 2},
     {"_GLIM_compute_gaussian_ll", (DL_FUNC) &_GLIM_compute_gaussian_ll, 3},
     {"_GLIM_compute_gaussian_ll_mat", (DL_FUNC) &_GLIM_compute_gaussian_ll_mat, 3},
-    {"_GLIM_est_dispersion", (DL_FUNC) &_GLIM_est_dispersion, 3},
+    {"_GLIM_est_dispersion_normal", (DL_FUNC) &_GLIM_est_dispersion_normal, 3},
     {"_GLIM_glm_gaussian_pl_cpp", (DL_FUNC) &_GLIM_glm_gaussian_pl_cpp, 7},
     {"_GLIM_mle_estimate_dispersion_inv_gauss", (DL_FUNC) &_GLIM_mle_estimate_dispersion_inv_gauss, 2},
     {"_GLIM_fit_invgauss_cpp", (DL_FUNC) &_GLIM_fit_invgauss_cpp, 4},

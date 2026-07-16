@@ -19,3 +19,17 @@ The calculated log-likelihood.
 \description{
 Compute Gaussian Log-Likelihood
 }
+\examples{
+\dontrun{
+set.seed(1)
+y <- rnorm(20, mean = 5, sd = 1)
+
+# Vector mu: log-likelihood for a single mean vector
+mu_vec <- rep(5, 20)
+compute_gaussian_ll_r(y, mu_vec, sigma = 1)
+
+# Matrix mu: log-likelihood evaluated at several candidate means
+mu_mat <- matrix(rep(c(4.5, 5, 5.5), each = 20), ncol = 3)
+compute_gaussian_ll_r(y, mu_mat, sigma = 1)
+}
+}

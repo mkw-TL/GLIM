@@ -17,7 +17,7 @@ struct LogisticResult {
 struct LogisticPlResult {
   double poss;
   bool orig_seperated;
-  double sim_separated;
+  double sim_seperated;
 };
 struct LogisticResult1D {
   double beta;

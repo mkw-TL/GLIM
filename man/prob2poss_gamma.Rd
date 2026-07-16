@@ -21,3 +21,19 @@ A vector of mapped possibility values.
 \description{
 Will throw an error if \code{the_compared_theta} is a scalar.
 }
+\examples{
+\dontrun{
+set.seed(1)
+n <- 100
+X <- cbind(intercept = 1, x = rnorm(n, sd = .2))
+y <- rgamma(n, shape = 5, rate = 5 / exp(X \%*\% c(1, .5)))
+
+# Simulated candidate coefficient vectors (one per column)
+samples <- cbind(c(0.9, 0.4), c(1.1, 0.6), c(1.0, 0.5))
+
+# Theta values to evaluate against the simulated samples (must not be a scalar)
+the_compared_theta <- cbind(c(1, .5))
+
+prob2poss_gamma(X, y, samples, the_compared_theta)
+}
+}

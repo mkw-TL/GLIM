@@ -11,7 +11,6 @@ glim(
   m = 1000,
   approx = FALSE,
   appendix = FALSE,
-  parallel = TRUE,
   tol = 0.01,
   ...
 )
@@ -29,8 +28,6 @@ glim(
 
 \item{appendix}{Bool indicating whether the appendix method is to be used.}
 
-\item{parallel}{Logical indicating whether to process in parallel.}
-
 \item{tol}{Double indicating the level of precision the approximation should get to}
 
 \item{...}{Other arguments include a_val, b_val, max_it, betas, n_grid_evals, tol, and num_samps.}
@@ -44,4 +41,28 @@ A typical use would be MATRIX = as.matrix(expand.grid(beta_0_seq, beta_1_seq))
 }
 \details{
 If using the elliptical approximation, can tweak the Robbins-Monroe algorithm by changing a_val, b_val, and max_it.
+}
+\examples{
+\dontrun{
+set.seed(1)
+n <- 100
+x <- rnorm(n)
+y <- 2 + 1.5 * x + rnorm(n)
+dat <- data.frame(x = x, y = y)
+
+# Grid-based evaluation (default)
+fit <- glim(y ~ x, data = dat, family = "gaussian", m = 500)
+get_CI(fit, alpha = .05)
+plot(fit)
+print(fit)
+
+# Elliptical approximation instead of a grid search
+fit_approx <- glim(y ~ x, data = dat, family = "gaussian", approx = TRUE, m = 500)
+
+# Passing a custom grid of betas to evaluate via '...'
+beta0_seq <- seq(0, 4, length.out = 10)
+beta1_seq <- seq(0, 3, length.out = 10)
+custom_betas <- as.matrix(expand.grid(beta0_seq, beta1_seq))
+fit_custom <- glim(y ~ x, data = dat, family = "gaussian", betas = custom_betas)
+}
 }

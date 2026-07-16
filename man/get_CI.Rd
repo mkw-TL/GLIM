@@ -4,14 +4,27 @@
 \alias{get_CI}
 \title{Returns a confidence interval}
 \usage{
-get_CI(glim_object, alpha = 0.05)
+get_CI(glim_object, ...)
 }
 \arguments{
-\item{glim_object}{Note that a 95\% confidence interval corresponds to alpha = .05}
+\item{glim_object}{An object returned by glim()}
+
+\item{...}{Used to pass in the alpha level. Ex: 'alpha = .10'}
 }
 \value{
 A matrix of compatable beta values from the grid.
 }
 \description{
 Note that a 95\% confidence interval corresponds to alpha = .05
+}
+\examples{
+\dontrun{
+fit <- glim(y ~ x, data = dat, family = "gaussian")
+
+# 95\% confidence region (default)
+get_CI(fit)
+
+# 90\% confidence region
+get_CI(fit, alpha = .10)
+}
 }
