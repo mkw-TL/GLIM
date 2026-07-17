@@ -1,6 +1,4 @@
 #include "headers.h"
-#include <cmath>
-#include <limits>
 // #include <chrono>
 // [[Rcpp::depends(RcppArmadillo)]]
 // [[Rcpp::plugins(openmp)]]

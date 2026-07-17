@@ -6,9 +6,12 @@
 #include <boost/math/special_functions/digamma.hpp>
 #include <boost/math/special_functions/polygamma.hpp>
 #include <cmath>
-#include <omp.h>
 #include <progress.hpp>
 #include <progress_bar.hpp>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 struct LogisticResult {
   arma::vec beta;
