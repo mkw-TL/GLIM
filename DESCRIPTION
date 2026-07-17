@@ -2,9 +2,9 @@ Package: GLIM
 Title: Valid inference using the Inferential Models Framework
 Version: 0.0.0.2000
 Authors@R: 
-    person("Joseph", "Harrison", email = "jrharr25@ncsu.edu", role = c("aut", "cre"))
+    person("Joseph", "Harrison", email = "joe.harrison.va@gmail.com", role = c("aut", "cre"))
 Description: Creates Confidence Intervals that are Credible Intervals - requiring no prior whatsoever. An implementation of Ryan Martin's Inferential Models framework to the GLM context.
-License: MIT + file LICENSE
+License: GPL-3 + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 LinkingTo: 

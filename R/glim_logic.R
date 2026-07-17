@@ -10,7 +10,13 @@
 NULL
 
 
-# Original code written by Joe Harrison (jrharr25@ncsu.edu), translated to C++ by Gemini
+# Original code written by Joe Harrison (joe.harrison.va@gmail.com), translated to C++ by Gemini
+#
+# Linear Model formula parsing is copied from stats::lm in R.
+# Copyright (C) The R Core Team
+#
+# Distributed under the terms of the GNU General Public License,
+# version 3.
 
 #' Fits GLIM (Raw Implementation)
 #'
