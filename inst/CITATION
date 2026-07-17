@@ -1,3 +1,24 @@
-Some code adapted from stats::lm in R.
-Copyright (C) The R Core Team.
-Modified by Joseph Harrison
+citHeader("To cite GLIM in publications use:")
+
+bibentry(
+  bibtype = "Manual",
+  title = "GLIM: Generalized Linear Influence Models",
+  author = person("Joseph", "Harrison"),
+  year = "2026",
+  note = "R package version 0.1.0"
+)
+
+bibentry(
+bibtype = "Article",
+key = "Martin2026",
+author = person(c("Ryan", "Martin")),
+title = "An Efficient Monte Carlo Method for Valid Prior-Free Possibilistic Statistical Inference",
+journal = "Journal of the American Statistical Association",
+volume = "0",
+number = "0",
+pages = "1--13",
+year = "2026",
+publisher = "Taylor \& Francis",
+doi = "10.1080/01621459.2026.2671450",
+URL = "https://doi.org/10.1080/01621459.2026.2671450"
+)

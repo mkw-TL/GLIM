@@ -1,0 +1,16 @@
+This package contains code derived from the R 'stats' package.
+
+Original source:
+  stats::lm
+
+Copyright (C) The R Core Team
+
+The original code is distributed under the GNU General Public License
+(version 2 or version 3).
+
+Modifications for the GLIM package:
+
+Copyright (C) 2026 Joseph Harrison
+
+These modifications are also distributed under the GNU General Public
+License.
