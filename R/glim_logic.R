@@ -78,14 +78,6 @@ generate_grid <- function(
   n_grid_evals = 25,
   m = 500
 ) {
-  print(head(X))
-  print(head(y))
-  print(family)
-  print(mle_coefs)
-  print(eigen_vecs)
-  print(eigen_vals)
-  print(dispersion)
-  print(ll_mle_original_data)
   initial_xi <- rep(1, length(mle_coefs))
 
   alpha_target <- 0.001
@@ -108,9 +100,7 @@ generate_grid <- function(
     parallel = FALSE,
     m = m # This is our m value
   )
-  print(imvar_xi)
   q_val <- qchisq(1 - alpha_target, df = length(mle_coefs)) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
-  print(dispersion)
   base_scale <- sqrt(dispersion * q_val * (1 / eigen_vals))
   semi_axes <- base_scale * sqrt(imvar_xi)
   transformed_mat <- eigen_vecs %*% diag(as.vector(semi_axes)) # Takes the principle axes (through diag) and scales them (by semi_axes), then rotate to eigen_vector span
@@ -118,7 +108,6 @@ generate_grid <- function(
   # To make the beta coordinate the largest, we have our transformation matrix (times u, where u is a unit sphere).
   # Then, for a particular coordinate, we have b1 = row_1 * u, where this is maximized if u is in the direction of row_1.
   H <- sqrt(rowSums(transformed_mat^2))
-  print(H)
 
   # Generate the Axis-Aligned Grid using the bounding box widths
   beta <- list()
@@ -643,11 +632,12 @@ glim <- function(
         approx = approx
       ),
       samples = NULL,
-      betas = betas,
+      betas_evaluated = betas,
       family = family,
       X = X,
       y = y,
-      mle = mle_coefs
+      mle_coefs = mle_coefs,
+      logLik = ll_mle_original_data
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -683,13 +673,14 @@ glim <- function(
     poss <- p2p_function(X, y, samples, t(betas))
     colnames(betas) <- colnames(X)
     obj_to_return <- list(
-      samples = samples,
       possibilities = poss,
-      betas = betas,
+      samples = samples,
+      betas_evaluated = betas,
       family = family,
       X = X,
       y = y,
-      mle = mle_coefs
+      mle_coefs = mle_coefs,
+      logLik = ll_mle_original_data
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -723,13 +714,14 @@ glim <- function(
     poss <- p2p_function(X, y, samples, t(beta_appendix_grid))
     colnames(beta_appendix_grid) <- colnames(X)
     obj_to_return <- list(
-      samples = samples,
       possibilities = poss,
+      samples = samples,
       betas = beta_appendix_grid,
       family = family,
       X = X,
       y = y,
-      mle = mle_coefs
+      mle_coefs = mle_coefs,
+      logLik = ll_mle_original_data
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -1220,7 +1212,7 @@ get_CI <- function(glim_object, ...) {
 #' }
 #' @export
 plot.glim_object <- function(x, ...) {
-  betas <- x$betas
+  betas <- x$betas_evaluated
   poss <- x$possibilities
   family <- x$family
   args <- list(...)
@@ -1314,10 +1306,10 @@ print.glim_object <- function(x, ...) {
   if (length(args) == 1 & is.numeric(args$alpha)) {
     alpha <- args$alpha
   }
-  betas <- x$betas
+  betas <- x$betas_evaluated
   poss <- x$possibilities
   family <- x$family
-  mle_coefs <- as.numeric(x$mle)
+  mle_coefs <- as.numeric(x$mle_coefs)
 
   cat(sprintf("%.0f%% (marginal) confidence and credible region:\n", (1 - alpha) * 100))
   cat("------------------------------------------------------------------------\n")
@@ -1361,4 +1353,143 @@ print.glim_object <- function(x, ...) {
   print(summary_table, quote = FALSE)
   cat("------------------------------------------------------------------------\n")
   invisible(x)
+}
+
+
+#' Extract the log likelihood at the MLE
+#'
+#' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+#'
+#' @param x A 'glim_object' from 'glim()'
+#' @param ... Additional arguments
+#' @return A logLik class object
+#' @examples
+#' \dontrun{
+#' fit <- glim(y ~ x, data = dat, family = "gaussian")
+#'
+#' # Return the log likelihood evaluated at the MLE
+#' logLik(fit)
+#' }
+#' @export
+logLik.glim_object <- function(object, ...) {
+  val <- object$logLik
+  attr(val, "df") <- length(object$mle_coefs)
+  attr(val, "nobs") <- length(object$y)
+  class(val) <- "logLik"
+  return(val)
+}
+
+#' Extract the log likelihood at the MLE
+#'
+#' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+#'
+#' @param x A 'glim_object' from 'glim()'
+#' @param ... Additional arguments
+#' @return A logLik class object
+#' @examples
+#' \dontrun{
+#' fit <- glim(y ~ x, data = dat, family = "gaussian")
+#'
+#' # Return the log likelihood evaluated at the MLE
+#' logLik(fit)
+#' }
+#' @export
+coef.glim_object <- function(object, ...) {
+  val <- object$logLik
+  attr(val, "df") <- length(object$mle_coefs)
+  attr(val, "nobs") <- length(object$y)
+  class(val) <- "logLik"
+  return(val)
+}
+
+#' Extract the log likelihood at the MLE
+#'
+#' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+#'
+#' @param x A 'glim_object' from 'glim()'
+#' @param ... Additional arguments
+#' @return A logLik class object
+#' @examples
+#' \dontrun{
+#' fit <- glim(y ~ x, data = dat, family = "gaussian")
+#'
+#' # Return the log likelihood evaluated at the MLE
+#' logLik(fit)
+#' }
+#' @export
+confint.glim_object <- function(object, ...) {
+  val <- object$logLik
+  attr(val, "df") <- length(object$mle_coefs)
+  attr(val, "nobs") <- length(object$y)
+  class(val) <- "logLik"
+  return(val)
+}
+
+#' j
+#'
+#' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+#'
+#' @param x A 'glim_object' from 'glim()'
+#' @param ... Additional arguments
+#' @return A logLik class object
+#' @examples
+#' \dontrun{
+#' fit <- glim(y ~ x, data = dat, family = "gaussian")
+#'
+#' # Return the log likelihood evaluated at the MLE
+#' logLik(fit)
+#' }
+#' @export
+vcov.glim_object <- function(object, ...) {
+  val <- object$logLik
+  attr(val, "df") <- length(object$mle_coefs)
+  attr(val, "nobs") <- length(object$y)
+  class(val) <- "logLik"
+  return(val)
+}
+
+#' j
+#'
+#' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+#'
+#' @param x A 'glim_object' from 'glim()'
+#' @param ... Additional arguments
+#' @return A logLik class object
+#' @examples
+#' \dontrun{
+#' fit <- glim(y ~ x, data = dat, family = "gaussian")
+#'
+#' # Return the log likelihood evaluated at the MLE
+#' logLik(fit)
+#' }
+#' @export
+nobs.glim_object <- function(object, ...) {
+  val <- object$logLik
+  attr(val, "df") <- length(object$mle_coefs)
+  attr(val, "nobs") <- length(object$y)
+  class(val) <- "logLik"
+  return(val)
+}
+
+#' j
+#'
+#' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+#'
+#' @param x A 'glim_object' from 'glim()'
+#' @param ... Additional arguments
+#' @return A logLik class object
+#' @examples
+#' \dontrun{
+#' fit <- glim(y ~ x, data = dat, family = "gaussian")
+#'
+#' # Return the log likelihood evaluated at the MLE
+#' logLik(fit)
+#' }
+#' @export
+deviance.glim_object <- function(object, ...) {
+  val <- object$logLik
+  attr(val, "df") <- length(object$mle_coefs)
+  attr(val, "nobs") <- length(object$y)
+  class(val) <- "logLik"
+  return(val)
 }
