@@ -44,7 +44,7 @@ LogisticResult fit_logistic(const arma::mat &X, const arma::vec &y,
     if (separated)
       break;
 
-    // Guarantee ZERO temporary matrix allocations during weight multiplication
+    // No temporary matrix allocations during weight multiplication
     for (int j = 0; j < P; ++j) {
       for (int k = 0; k < N; ++k) {
         XW(k, j) = X(k, j) * w[k];
@@ -65,63 +65,6 @@ LogisticResult fit_logistic(const arma::mat &X, const arma::vec &y,
     proposed_beta += step;
 
     if (arma::norm(step) < 1e-6)
-      break;
-  }
-
-  return {proposed_beta, separated};
-}
-// Highly optimized, allocation-free inner solver
-LogisticResult1D fit_logistic_1d(const arma::vec &X, const arma::vec &y,
-                                 double initial_beta) {
-  int N = X.n_rows;
-  double proposed_beta = initial_beta;
-  bool separated = false;
-
-  // Pre-allocate vector memory
-  arma::vec eta(N), p(N), w(N);
-
-  for (int i = 0; i < 15; i++) {
-    eta = X * proposed_beta; // Vector-scalar multiplication
-    separated = false;
-
-    // Combined loop for probabilities, separation check, and weights
-    for (int k = 0; k < N; ++k) {
-      double p_k = 1.0 / (1.0 + std::exp(-eta[k]));
-      p[k] = p_k;
-
-      if (p_k < 1e-8 || p_k > (1.0 - 1e-8)) {
-        separated = true;
-      }
-
-      double w_k = p_k * (1.0 - p_k);
-      w[k] = (w_k < 1e-6) ? 1e-6 : w_k;
-    }
-
-    if (separated)
-      break;
-
-    // In 1D, XTWX and grad are pure scalars.
-    // We compute them in a single, cache-friendly pass.
-    double XTWX = 0.0;
-    double grad = 0.0;
-
-    for (int k = 0; k < N; ++k) {
-      double x_k = X[k];
-      XTWX += x_k * x_k * w[k];    // Equivalent to X.t() * W * X
-      grad += x_k * (y[k] - p[k]); // Equivalent to X.t() * (y - p)
-    }
-
-    // Safety check for zero-variance/empty steps
-    if (std::abs(XTWX) < 1e-9) {
-      break;
-    }
-
-    // Newton-Raphson update: step = grad / Hessian
-    double step = grad / XTWX;
-    proposed_beta += step;
-
-    // Convergence check using absolute scalar value
-    if (std::abs(step) < 1e-6)
       break;
   }
 
@@ -222,22 +165,23 @@ LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
 }
 
 // [[Rcpp::export]]
-double logistic_ll(const arma::mat &X, const arma::vec &y,
-                   const arma::vec &beta_vals) {
+double compute_logistic_ll(const arma::mat &X, const arma::vec &y,
+                           const arma::vec &beta_vals) {
   LogisticResult res = fit_logistic(X, y, beta_vals);
-  double mle_sim = -10000000000;
+  double ll = -10000000000;
   if (!res.seperated) {
-    mle_sim = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
+    ll = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
   }
-  return mle_sim;
+  return ll;
 }
+
 // [[Rcpp::export]]
-double logistic_ll_1d(const arma::vec &X, const arma::mat &y,
-                      const double beta_vals) {
-  LogisticResult1D res = fit_logistic_1d(X, y, beta_vals);
-  double mle_sim = -10000000;
-  if (!res.orig_seperated) {
-    mle_sim = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
+arma::vec compute_logistic_ll_mat(const arma::mat &X, const arma::vec &y,
+                                  const arma::mat &beta_vals) {
+  arma::vec ll(X.n_cols);
+  for (arma::uword i = 0; i < X.n_cols; i++) {
+    arma::vec beta_val = beta_vals.col(i);
+    ll(i) = compute_logistic_ll(X, y, beta_val);
   }
-  return mle_sim;
+  return ll;
 }

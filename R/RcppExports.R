@@ -81,12 +81,12 @@ glm_invgauss_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx, appendix)
     .Call(`_GLIM_glm_invgauss_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx, appendix)
 }
 
-logistic_ll <- function(X, y, beta_vals) {
-    .Call(`_GLIM_logistic_ll`, X, y, beta_vals)
+compute_logistic_ll <- function(X, y, beta_vals) {
+    .Call(`_GLIM_compute_logistic_ll`, X, y, beta_vals)
 }
 
-logistic_ll_1d <- function(X, y, beta_vals) {
-    .Call(`_GLIM_logistic_ll_1d`, X, y, beta_vals)
+compute_logistic_ll_mat <- function(X, y, beta_vals) {
+    .Call(`_GLIM_compute_logistic_ll_mat`, X, y, beta_vals)
 }
 
 compute_poisson_ll <- function(eta, y) {

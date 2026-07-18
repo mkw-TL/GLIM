@@ -14,7 +14,7 @@
 #endif
 
 struct LogisticResult {
-  arma::vec beta;
+  arma::mat beta;
   bool seperated;
 };
 struct LogisticPlResult {
@@ -23,7 +23,7 @@ struct LogisticPlResult {
   double sim_seperated;
 };
 struct LogisticResult1D {
-  double beta;
+  arma::vec beta;
   bool orig_seperated;
 };
 struct PoissonResult {

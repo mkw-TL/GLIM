@@ -2,6 +2,7 @@
 // Thoroughly vetted
 
 #include "headers.h"
+#include "omp.h"
 
 using namespace Rcpp;
 using namespace arma;
@@ -359,7 +360,11 @@ arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
     bool approx = false;
 
     while (true) {
-      if (omp_get_thread_num() == 0) {
+      bool thread_is_primary = true;
+#ifdef _OPENMP
+      thread_is_primary = (omp_get_thread_num() == 0);
+#endif
+      if (thread_is_primary) {
         if (p.check_abort() & (it % 5 == 0)) {
           interrupted = true;
         }

@@ -314,29 +314,29 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// logistic_ll
-double logistic_ll(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals);
-RcppExport SEXP _GLIM_logistic_ll(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP) {
+// compute_logistic_ll
+double compute_logistic_ll(const arma::mat& X, const arma::vec& y, const arma::vec& beta_vals);
+RcppExport SEXP _GLIM_compute_logistic_ll(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
-    rcpp_result_gen = Rcpp::wrap(logistic_ll(X, y, beta_vals));
+    rcpp_result_gen = Rcpp::wrap(compute_logistic_ll(X, y, beta_vals));
     return rcpp_result_gen;
 END_RCPP
 }
-// logistic_ll_1d
-double logistic_ll_1d(const arma::vec& X, const arma::mat& y, const double beta_vals);
-RcppExport SEXP _GLIM_logistic_ll_1d(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP) {
+// compute_logistic_ll_mat
+arma::vec compute_logistic_ll_mat(const arma::mat& X, const arma::vec& y, const arma::mat& beta_vals);
+RcppExport SEXP _GLIM_compute_logistic_ll_mat(SEXP XSEXP, SEXP ySEXP, SEXP beta_valsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::vec& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type y(ySEXP);
-    Rcpp::traits::input_parameter< const double >::type beta_vals(beta_valsSEXP);
-    rcpp_result_gen = Rcpp::wrap(logistic_ll_1d(X, y, beta_vals));
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type beta_vals(beta_valsSEXP);
+    rcpp_result_gen = Rcpp::wrap(compute_logistic_ll_mat(X, y, beta_vals));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -399,8 +399,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_GLIM_compute_invgauss_ll", (DL_FUNC) &_GLIM_compute_invgauss_ll, 3},
     {"_GLIM_compute_invgauss_ll_mat", (DL_FUNC) &_GLIM_compute_invgauss_ll_mat, 3},
     {"_GLIM_glm_invgauss_pl_cpp", (DL_FUNC) &_GLIM_glm_invgauss_pl_cpp, 7},
-    {"_GLIM_logistic_ll", (DL_FUNC) &_GLIM_logistic_ll, 3},
-    {"_GLIM_logistic_ll_1d", (DL_FUNC) &_GLIM_logistic_ll_1d, 3},
+    {"_GLIM_compute_logistic_ll", (DL_FUNC) &_GLIM_compute_logistic_ll, 3},
+    {"_GLIM_compute_logistic_ll_mat", (DL_FUNC) &_GLIM_compute_logistic_ll_mat, 3},
     {"_GLIM_compute_poisson_ll", (DL_FUNC) &_GLIM_compute_poisson_ll, 2},
     {"_GLIM_compute_poisson_ll_mat", (DL_FUNC) &_GLIM_compute_poisson_ll_mat, 2},
     {"_GLIM_fit_poisson_log_cpp", (DL_FUNC) &_GLIM_fit_poisson_log_cpp, 3},

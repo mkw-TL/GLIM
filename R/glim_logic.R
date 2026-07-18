@@ -2,7 +2,7 @@
 #' @importFrom Rcpp sourceCpp
 #' @importFrom progress progress_bar
 #' @importFrom parallel detectCores
-#' @importFrom stats logLik glm Gamma poisson inverse.gaussian lm coef runif qchisq model.matrix rnorm model.offset model.response binomial
+#' @importFrom stats logLik glm Gamma poisson inverse.gaussian lm coef runif qchisq model.matrix rnorm model.offset model.response binomial nobs vcov
 #' @importFrom utils head
 #' @importFrom graphics par plot.default abline grid mtext
 #' @importFrom methods is
@@ -526,7 +526,8 @@ glim <- function(
     if (any(fit$fitted.values > (1 - eps)) || any(fit$fitted.values < eps)) {
       stop("Data is completely seperable. MLE does not exist")
     }
-    mle_coefs <- coef(glm(y ~ X - 1, binomial))
+    mle_coefs <- fit$coefficients
+    vcov <- vcov(fit)
     p_i <- 1 / (1 + exp(-X %*% mle_coefs))
     dispersion <- 1
     if (is.null(betas)) {
@@ -534,15 +535,13 @@ glim <- function(
     }
     p2p_function <- prob2poss_logis
 
-    if (is.matrix(X)) {
-      ll_mle_original_data <- logistic_ll(X, y, mle_coefs)
-    } else {
-      ll_mle_original_data <- logistic_ll_1d(X, y, mle_coefs) # initial beta value of 0
-    }
+    ll_mle_original_data <- compute_logistic_ll(X, y, mle_coefs)
 
     ## Gamma setup
   } else if (family == "gamma") {
-    mle_coefs <- glm(y ~ X - 1, family = Gamma(link = "log"))$coefficients
+    fit <- glm(y ~ X - 1, family = Gamma(link = "log"))
+    mle_coefs <- coef(fit)
+    vcov <- vcov(fit)
     eta <- X %*% mle_coefs
     dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
     ll_mle_original_data <- compute_gamma_ll_r(y, eta, 1 / dispersion)
@@ -554,6 +553,7 @@ glim <- function(
     ## Poisson setup
   } else if (family == "poisson") {
     pois_fit <- glm(y ~ X - 1, family = poisson(link = "log")) #TODO trycatch
+    vcov <- vcov(pois_fit)
     ll_mle_original_data <- as.numeric(logLik(pois_fit))
     mle_coefs <- coef(pois_fit)
     eta <- X %*% mle_coefs
@@ -567,7 +567,7 @@ glim <- function(
     ## Inverse Gaussian setup
   } else if (family == "inverse.gaussian") {
     inv_gaus_fit <- glm(y ~ X - 1, family = inverse.gaussian(link = "1/mu^2"))
-
+    vcov <- vcov(inv_gaus_fit)
     ll_mle_original_data <- as.numeric(logLik(inv_gaus_fit))
     mle_coefs <- coef(inv_gaus_fit)
     eta <- X %*% mle_coefs
@@ -580,8 +580,10 @@ glim <- function(
 
     ## Gaussian Setup
   } else if (family == "normal" || family == "gaussian") {
-    ll_mle_original_data <- as.numeric(logLik(lm(y ~ X - 1)))
-    mle_coefs <- fit_gaussian_cpp(X, y)
+    fit <- lm(y ~ X - 1)
+    ll_mle_original_data <- as.numeric(logLik(fit))
+    mle_coefs <- coef(fit)
+    vcov <- vcov(fit)
     dispersion <- est_dispersion_normal(y, X %*% mle_coefs, length(mle_coefs))
     if (is.null(betas)) {
       J <- crossprod(X, X)
@@ -643,7 +645,8 @@ glim <- function(
       X = X,
       y = y,
       mle_coefs = mle_coefs,
-      logLik = ll_mle_original_data
+      logLik = ll_mle_original_data,
+      vcov = vcov
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -686,7 +689,8 @@ glim <- function(
       X = X,
       y = y,
       mle_coefs = mle_coefs,
-      logLik = ll_mle_original_data
+      logLik = ll_mle_original_data,
+      vcov = vcov
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -727,7 +731,8 @@ glim <- function(
       X = X,
       y = y,
       mle_coefs = mle_coefs,
-      logLik = ll_mle_original_data
+      logLik = ll_mle_original_data,
+      vcov = vcov
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -842,27 +847,8 @@ prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
   sapply(ll_val, function(x) sum(ll_val_samps <= x) / length(ll_val_samps))
 }
 
-
 #' Compute Gamma Log-Likelihood
-#'
-#' @param y Response vector.
-#' @param eta Linear predictor (can be a vector or a matrix).
-#' @param shape The shape parameter for the gamma distribution.
-#' @return The calculated log-likelihood.
-#' @examples
-#' \dontrun{
-#' set.seed(1)
-#' y <- rgamma(20, shape = 4, rate = 4 / 2)
-#'
-#' # Vector eta: log-likelihood for a single linear predictor
-#' eta_vec <- log(rep(2, 20))
-#' compute_gamma_ll_r(y, eta_vec, shape = 4)
-#'
-#' # Matrix eta: log-likelihood evaluated at several candidate linear predictors
-#' eta_mat <- matrix(log(rep(c(1.8, 2, 2.2), each = 20)), ncol = 3)
-#' compute_gamma_ll_r(y, eta_mat, shape = 4)
-#' }
-#' @export
+#' @noRd
 compute_gamma_ll_r <- function(y, eta, shape) {
   if (is.vector(eta)) {
     return(compute_gamma_ll(y, eta, shape))
@@ -872,24 +858,7 @@ compute_gamma_ll_r <- function(y, eta, shape) {
 }
 
 #' Compute Poisson Log-Likelihood
-#'
-#' @param y Response vector.
-#' @param eta Linear predictor (can be a vector or a matrix).
-#' @return The calculated log-likelihood.
-#' @examples
-#' \dontrun{
-#' set.seed(1)
-#' y <- rpois(20, lambda = 3)
-#'
-#' # Vector eta: log-likelihood for a single linear predictor
-#' eta_vec <- log(rep(3, 20))
-#' compute_poisson_ll_r(y, eta_vec)
-#'
-#' # Matrix eta: log-likelihood evaluated at several candidate linear predictors
-#' eta_mat <- matrix(log(rep(c(2.5, 3, 3.5), each = 20)), ncol = 3)
-#' compute_poisson_ll_r(y, eta_mat)
-#' }
-#' @export
+#' @noRd
 compute_poisson_ll_r <- function(y, eta) {
   if (is.vector(eta)) {
     return(compute_poisson_ll(eta, y))
@@ -899,24 +868,7 @@ compute_poisson_ll_r <- function(y, eta) {
 }
 
 #' Compute Gaussian Log-Likelihood
-#' @param y Response vector.
-#' @param mu Mean (can be a vector or a matrix).
-#' @param sigma Estimated standard deviation
-#' @return The calculated log-likelihood.
-#' @examples
-#' \dontrun{
-#' set.seed(1)
-#' y <- rnorm(20, mean = 5, sd = 1)
-#'
-#' # Vector mu: log-likelihood for a single mean vector
-#' mu_vec <- rep(5, 20)
-#' compute_gaussian_ll_r(y, mu_vec, sigma = 1)
-#'
-#' # Matrix mu: log-likelihood evaluated at several candidate means
-#' mu_mat <- matrix(rep(c(4.5, 5, 5.5), each = 20), ncol = 3)
-#' compute_gaussian_ll_r(y, mu_mat, sigma = 1)
-#' }
-#' @export
+#' @noRd
 compute_gaussian_ll_r <- function(y, mu, sigma) {
   if (is.vector(mu)) {
     return(compute_gaussian_ll(y, mu, sigma))
@@ -924,31 +876,24 @@ compute_gaussian_ll_r <- function(y, mu, sigma) {
     return(compute_gaussian_ll_mat(y, mu, sigma))
   }
 }
+
 #' Compute inverse gaussian Log-Likelihood
-#'
-#' @param y Response vector.
-#' @param mu Mean (can be a vector or a matrix).
-#' @param gamma_val Estimated dispersion
-#' @return The calculated log-likelihood.
-#' @examples
-#' \dontrun{
-#' set.seed(1)
-#' y <- statmod::rinvgauss(20, mean = 2, dispersion = 1)
-#'
-#' # Vector mu: log-likelihood for a single mean vector
-#' mu_vec <- rep(2, 20)
-#' compute_invgauss_ll_r(y, mu_vec, gamma_val = 1)
-#'
-#' # Matrix mu: log-likelihood evaluated at several candidate means
-#' mu_mat <- matrix(rep(c(1.8, 2, 2.2), each = 20), ncol = 3)
-#' compute_invgauss_ll_r(y, mu_mat, gamma_val = 1)
-#' }
-#' @export
+#' @noRd
 compute_invgauss_ll_r <- function(y, mu, gamma_val) {
   if (is.vector(mu)) {
     return(compute_invgauss_ll(y, mu, gamma_val))
   } else {
     return(compute_invgauss_ll_mat(y, mu, gamma_val))
+  }
+}
+
+#' Compute logistic Log-Likelihood
+#' @noRd
+compute_logistic_ll_r <- function(X, y, beta_vals) {
+  if (is.vector(beta_vals)) {
+    return(compute_logistic_ll(X, y, beta_vals))
+  } else {
+    return(compute_logistic_ll_mat(X, y, beta_vals))
   }
 }
 
@@ -1366,21 +1311,14 @@ print.glim_object <- function(x, ...) {
 #'
 #' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
 #'
-#' @param x A 'glim_object' from 'glim()'
+#' @param object A 'glim_object' from 'glim()'
 #' @param ... Additional arguments
 #' @return A logLik class object
-#' @examples
-#' \dontrun{
-#' fit <- glim(y ~ x, data = dat, family = "gaussian")
-#'
-#' # Return the log likelihood evaluated at the MLE
-#' logLik(fit)
-#' }
 #' @export
-logLik.glim_object <- function(x, ...) {
-  val <- x$logLik
-  attr(val, "df") <- length(x$mle_coefs)
-  attr(val, "nobs") <- length(x$y)
+logLik.glim_object <- function(object, ...) {
+  val <- object$logLik
+  attr(val, "df") <- length(object$mle_coefs)
+  attr(val, "nobs") <- length(object$y)
   class(val) <- "logLik"
   return(val)
 }
@@ -1389,16 +1327,9 @@ logLik.glim_object <- function(x, ...) {
 #'
 #' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
 #'
-#' @param x A 'glim_object' from 'glim()'
+#' @param object A 'glim_object' from 'glim()'
 #' @param ... Additional arguments
 #' @return A logLik class object
-#' @examples
-#' \dontrun{
-#' fit <- glim(y ~ x, data = dat, family = "gaussian")
-#'
-#' # Return the log likelihood evaluated at the MLE
-#' logLik(fit)
-#' }
 #' @export
 coef.glim_object <- function(object, ...) {
   val <- object$logLik
@@ -1412,90 +1343,120 @@ coef.glim_object <- function(object, ...) {
 #'
 #' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
 #'
-#' @param x A 'glim_object' from 'glim()'
+#' @param object A 'glim_object' from 'glim()'
 #' @param ... Additional arguments
-#' @return A logLik class object
-#' @examples
-#' \dontrun{
-#' fit <- glim(y ~ x, data = dat, family = "gaussian")
-#'
-#' # Return the log likelihood evaluated at the MLE
-#' logLik(fit)
-#' }
+#' @return A matrix containing the confidence/credible interval
 #' @export
 confint.glim_object <- function(object, ...) {
-  val <- object$logLik
-  attr(val, "df") <- length(object$mle_coefs)
-  attr(val, "nobs") <- length(object$y)
-  class(val) <- "logLik"
-  return(val)
+  alpha <- .05
+  args <- list(...)
+  if ("alpha" %in% names(args)) {
+    alpha <- args$alpha
+  }
+  row_names <- colnames(object$X)
+  lower_bound <- numeric(ncol(object$X))
+  upper_bound <- numeric(ncol(object$X))
+
+  for (col in 1:ncol(object$X)) {
+    max_plaus <- tapply(object$possibilities, object$betas[, col], max, na.rm = TRUE)
+
+    beta_vals <- as.numeric(names(max_plaus))
+    valid <- is.finite(beta_vals) & is.finite(max_plaus)
+    alpha_cut <- valid & (max_plaus > alpha)
+    valid_betas <- beta_vals[alpha_cut]
+
+    # Save results into our vectors
+    lower_bound[col] <- if (length(valid_betas) > 0) min(valid_betas) else NA
+    upper_bound[col] <- if (length(valid_betas) > 0) max(valid_betas) else NA
+  }
+  out <- matrix(c(lower_bound, upper_bound), ncol = 2)
+  lower_a <- (alpha / 2) * 100
+  upper_a <- (1 - (alpha / 2)) * 100
+  colnames(out) <- c(sprintf("%.1f %%", lower_a), sprintf("%.1f %%", upper_a))
+  rownames(out) <- row_names
+  return(out)
 }
 
-#' j
+#' Returns the variance-covariance at the MLE
 #'
-#' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+#' Extracts the variance-covariance matrix from the glim object.
 #'
-#' @param x A 'glim_object' from 'glim()'
+#' @param object A 'glim_object' from 'glim()'
 #' @param ... Additional arguments
 #' @return A logLik class object
-#' @examples
-#' \dontrun{
-#' fit <- glim(y ~ x, data = dat, family = "gaussian")
-#'
-#' # Return the log likelihood evaluated at the MLE
-#' logLik(fit)
-#' }
 #' @export
 vcov.glim_object <- function(object, ...) {
-  val <- object$logLik
-  attr(val, "df") <- length(object$mle_coefs)
-  attr(val, "nobs") <- length(object$y)
-  class(val) <- "logLik"
-  return(val)
+  return(object$vcov)
 }
 
-#' j
+#' nobs
 #'
-#' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+#' Returns the number of observations
 #'
-#' @param x A 'glim_object' from 'glim()'
+#' @param object A 'glim_object' from 'glim()'
 #' @param ... Additional arguments
-#' @return A logLik class object
-#' @examples
-#' \dontrun{
-#' fit <- glim(y ~ x, data = dat, family = "gaussian")
-#'
-#' # Return the log likelihood evaluated at the MLE
-#' logLik(fit)
-#' }
+#' @return nobs
 #' @export
 nobs.glim_object <- function(object, ...) {
-  val <- object$logLik
-  attr(val, "df") <- length(object$mle_coefs)
-  attr(val, "nobs") <- length(object$y)
-  class(val) <- "logLik"
-  return(val)
+  return(length(object$y))
 }
 
-#' j
+#' Evaluate log-likelihoods
 #'
-#' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+#' Helper function to evaluate log-likelihoods.
 #'
-#' @param x A 'glim_object' from 'glim()'
-#' @param ... Additional arguments
-#' @return A logLik class object
+#' @param family "gaussian", "binomial", "gamma", "inverse.gaussian", "poisson"
+#' @param y Vector of y values. Required to have more than 1 observation
+#' @param X Design matrix.
+#' @param betas Either a vector of the beta values, or a matrix where each row corresponds to the beta vector to evaluate. Will be transposed so that it conforms to the dimensions of X
+#' @return A vector/scalar of Log-Likelihood value(s)
 #' @examples
 #' \dontrun{
-#' fit <- glim(y ~ x, data = dat, family = "gaussian")
-#'
-#' # Return the log likelihood evaluated at the MLE
-#' logLik(fit)
+#' y <- rgamma(10, 3, 2)
+#' X <- cbind(rep(1, 10), runif(10))
+#' beta_eval_1 <- c(2.3, 12.4)
+#' beta_eval_2 <- c(5, 18.9)
+#' beta_eval_3 <- c(3.14, 22.2)
+#' betas <- matrix(c(beta_eval_1, beta_eval_2, beta_eval_3), nrow = 3, byrow = TRUE)
+#' compute_ll("gamma", y, X, betas)
 #' }
 #' @export
-deviance.glim_object <- function(object, ...) {
-  val <- object$logLik
-  attr(val, "df") <- length(object$mle_coefs)
-  attr(val, "nobs") <- length(object$y)
-  class(val) <- "logLik"
-  return(val)
+compute_ll <- function(family, y, X, betas) {
+  if (is.matrix(betas)) {
+    betas <- t(betas)
+  }
+  ll <- NULL
+  if (family == "gaussian") {
+    ll <- compute_gaussian_ll_r(
+      y,
+      X %*% betas,
+      sqrt(est_dispersion_normal(y, X %*% fit_gaussian_cpp(X, y), ncol(X)))
+    )
+  } else if (family == "gamma") {
+    ll <- compute_gamma_ll_r(
+      y = y,
+      exp(X %*% betas),
+      shape = 1 /
+        mle_estimate_dispersion_gamma(
+          y,
+          exp(X %*% fit_gamma_log_cpp(X = X, XtX = t(X) %*% X, y = y, rep(1, ncol(X)), FALSE)),
+          ncol(X)
+        )
+    )
+  } else if (family == "poisson") {
+    ll <- compute_poisson_ll_r(y, exp(X %*% betas))
+  } else if (family == "binomial") {
+    ll <- compute_logistic_ll_r(X, y, betas)
+  } else if (family == "inverse.gaussian") {
+    # Again, note that 1/eta will be element-wise
+    eta <- X %*% betas
+    ll <- compute_invgauss_ll_r(
+      y,
+      sqrt(1 / eta),
+      gamma_val = mle_estimate_dispersion_inv_gauss(y = y, mean(y))
+    )
+  } else {
+    stop("family not defined")
+  }
+  return(ll)
 }
