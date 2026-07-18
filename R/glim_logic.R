@@ -1377,10 +1377,10 @@ print.glim_object <- function(x, ...) {
 #' logLik(fit)
 #' }
 #' @export
-logLik.glim_object <- function(object, ...) {
-  val <- object$logLik
-  attr(val, "df") <- length(object$mle_coefs)
-  attr(val, "nobs") <- length(object$y)
+logLik.glim_object <- function(x, ...) {
+  val <- x$logLik
+  attr(val, "df") <- length(x$mle_coefs)
+  attr(val, "nobs") <- length(x$y)
   class(val) <- "logLik"
   return(val)
 }

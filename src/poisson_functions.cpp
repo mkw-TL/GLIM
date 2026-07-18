@@ -145,7 +145,7 @@ PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
 
   // Data generation. Parallel directive says that each thread should run this
   // code
-#pragma omp parallel if (approx == true & appendix == false)
+#pragma omp parallel if (approx == true && appendix == false)
   {
     std::random_device rd;
     std::mt19937 gen(rd());
