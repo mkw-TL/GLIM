@@ -1,6 +1,10 @@
 #ifndef HEADERS_H
 #define HEADERS_H
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include <RcppArmadillo.h>
 #include <boost/math/distributions/chi_squared.hpp>
 #include <boost/math/special_functions/digamma.hpp>
@@ -8,10 +12,6 @@
 #include <cmath>
 #include <progress.hpp>
 #include <progress_bar.hpp>
-
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 struct LogisticResult {
   arma::mat beta;

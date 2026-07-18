@@ -2,7 +2,6 @@
 // Thoroughly vetted
 
 #include "headers.h"
-#include "omp.h"
 
 using namespace Rcpp;
 using namespace arma;
