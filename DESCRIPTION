@@ -12,7 +12,6 @@ Imports:
     Rcpp, RcppProgress, progress, parallel, methods
 SystemRequirements: C++20, LAPACK, BLAS
 Config/roxygen2/version: 8.0.0
-Config/Needs/fs: env USE_BUNDLED_LIBUV=1
 RoxygenNote: 8.0.0
 Suggests: 
     testthat (>= 3.0.0), RhpcBLASctl, statmod

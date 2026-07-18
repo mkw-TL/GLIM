@@ -170,7 +170,8 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
 
     default:
       pl = -1;
-      // TODO #13 need a better exit method.
+      // This should never be reached, since filtering occurs in R before being
+      // passed here.
       break;
     }
 
@@ -221,8 +222,15 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   return plausabilities;
 }
 
-double w(double a_val, double b_val, int s) {
-  return (double)a_val / std::pow(1.0 + s, b_val);
+inline double w(double a_val, double b_val, int s) {
+  // Optimization for common exact exponents
+  if (b_val == 1.0) {
+    return a_val / (1.0 + s);
+  } else if (b_val == 0.5) {
+    return a_val / std::sqrt(1.0 + s);
+  }
+
+  return a_val / std::pow(1.0 + s, b_val);
 }
 
 // [[Rcpp::export]]

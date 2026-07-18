@@ -341,7 +341,7 @@ glim <- function(
       stop("Input Error: a_val must be a positive number")
     }
   } else {
-    a_val <- 2
+    a_val <- 1.5
   }
   if ("b_val" %in% names(args)) {
     if (is.numeric(args$b_val) & length(args$b_val) == 1 & args$b_val > 0) {
@@ -552,7 +552,10 @@ glim <- function(
 
     ## Poisson setup
   } else if (family == "poisson") {
-    pois_fit <- glm(y ~ X - 1, family = poisson(link = "log")) #TODO trycatch
+    pois_fit <- glm(y ~ X - 1, family = poisson(link = "log"))
+    if (!pois_fit$converged) {
+      stop("Poisson GLM fails to converge")
+    }
     vcov <- vcov(pois_fit)
     ll_mle_original_data <- as.numeric(logLik(pois_fit))
     mle_coefs <- coef(pois_fit)
@@ -1002,8 +1005,8 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
 #' @param m Parameter `m` defining scaling or sampling limits.
 #' @param tol Tolerance level for convergence criteria.
 #' @param max_it Maximum number of iterations the stochastic algorithm runs for for each grid value.
-#' @param a_val Hyperparameter `a` (should be between X and Y TODO)
-#' @param b_val Hyperparameter `b` (should be between X and Y TODO)
+#' @param a_val Hyperparameter `a`, the step size. Small values (1-2) are typically what this is set to
+#' @param b_val Hyperparameter `b`, the step-size decay. Should be between [.5 and 1]
 #' @param n_grid_evals Resolution of grid
 #' @return A matrix of output samples evaluated by the C++ backend.
 #' @noRd
