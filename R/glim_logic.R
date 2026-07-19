@@ -262,7 +262,7 @@ glim_inner_prob_approx_samples <- function(
 #'
 #' @param formula Formula object to be interpreted
 #' @param data Dataframe (if using)
-#' @param appendix Bool indicating whether the appendix method is to be used.
+#' @param radial Bool indicating whether the radial method is to be used.
 #' @param tol Double indicating the level of precision the approximation should get to
 #' @param family String denoting the exponential family. Choices are `"gaussian"`, `"binomial"`, `"gamma"`, `"poisson"`, `"inverse.gaussian"`.
 #' @param m Number of samples/evaluations to perform (default `1000`).
@@ -299,7 +299,7 @@ glim <- function(
   family = "gaussian",
   m = 1000,
   approx = FALSE,
-  appendix = FALSE,
+  radial = FALSE,
   tol = 1e-2,
   ...
 ) {
@@ -612,7 +612,7 @@ glim <- function(
     stop("Internal error: 'dispersion' must be a strictly positive numeric value.")
   }
 
-  if (approx == FALSE & appendix == FALSE) {
+  if (approx == FALSE & radial == FALSE) {
     if (is.null(betas)) {
       message("generating_grid_of_betas")
       betas <- generate_grid(
@@ -655,7 +655,7 @@ glim <- function(
     return(obj_to_return)
   }
 
-  if ((approx == TRUE) & (appendix == FALSE)) {
+  if ((approx == TRUE) & (radial == FALSE)) {
     samples <- glim_inner_prob_approx_samples(
       X = X,
       y = y,
@@ -699,11 +699,11 @@ glim <- function(
     return(obj_to_return)
   }
 
-  if (appendix == TRUE & approx == TRUE) {
-    stop("Appendix and approximation methods cannot both be used")
+  if (radial == TRUE & approx == TRUE) {
+    stop("Radial and Elliptical approximation methods cannot both be used")
   }
-  if (appendix == TRUE & approx == FALSE) {
-    samples <- appendix(
+  if (radial == TRUE & approx == FALSE) {
+    samples <- radial(
       num_samps,
       X,
       y,
@@ -723,13 +723,13 @@ glim <- function(
     for (i in 1:nrow(samples)) {
       beta_seq_list[[i]] <- seq(min(samples[i, ]), max(samples[i, ]), length.out = n_grid_evals)
     }
-    beta_appendix_grid <- as.matrix(expand.grid(beta_seq_list))
-    poss <- p2p_function(X, y, samples, t(beta_appendix_grid))
-    colnames(beta_appendix_grid) <- colnames(X)
+    beta_radial_grid <- as.matrix(expand.grid(beta_seq_list))
+    poss <- p2p_function(X, y, samples, t(beta_radial_grid))
+    colnames(beta_radial_grid) <- colnames(X)
     obj_to_return <- list(
       possibilities = poss,
       samples = samples,
-      betas = beta_appendix_grid,
+      betas = beta_radial_grid,
       family = family,
       X = X,
       y = y,
@@ -990,7 +990,7 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
   sapply(ll_val, function(x) sum(ll_val_samps <= x) / length(ll_val_samps))
 }
 
-#' Appendix C++ Bridge Function
+#' radial C++ Bridge Function
 #'
 #' Helper function acting as a bridge to underlying C++ routines for sample generation.
 #'
@@ -1010,7 +1010,7 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
 #' @param n_grid_evals Resolution of grid
 #' @return A matrix of output samples evaluated by the C++ backend.
 #' @noRd
-appendix <- function(
+radial <- function(
   num_samps,
   X,
   y,
@@ -1026,7 +1026,7 @@ appendix <- function(
   b_val,
   n_grid_evals
 ) {
-  output_samples <- appendix_code(
+  output_samples <- radial_code(
     num_samps,
     X,
     y,

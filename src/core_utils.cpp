@@ -62,7 +62,7 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
                           std::string family, // Pass string from R
                           int num_threads = 1, int m = 100,
                           bool parallel = true, bool approx = false,
-                          bool appendix = false) {
+                          bool radial = false) {
 
   // Convert the string to an Enum once right here
   GlmFamily fam = string_to_family(family);
@@ -121,7 +121,7 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   // which we don't need here. Don't want the overhead of allocating different
   // threads if it is fast enough to execute on a single
 #pragma omp parallel for schedule(                                             \
-        guided) if (approx == false && parallel == true && appendix == false)
+        guided) if (approx == false && parallel == true && radial == false)
   for (int i = 0; i < n_evals; i++) {
     arma::vec beta_vals = betas.row(i).t();
     double pl;
@@ -183,7 +183,7 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
     thread_id = omp_get_thread_num();
 #endif
 
-    if (thread_id == 0 && approx == false && appendix == false) {
+    if (thread_id == 0 && approx == false && radial == false) {
       // Calculate what the *actual current loop progress* is right now
       int current_percentage =
           (int)((double)100.0 * current_progress / n_evals);
@@ -210,7 +210,7 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
       }
     }
   }
-  if (approx == false && appendix == false) {
+  if (approx == false && radial == false) {
     int bar_width = 40;
     Rcpp::Rcout << "\rCalculating Plausibilities: [";
     for (int b = 0; b < bar_width; ++b) {
@@ -289,11 +289,10 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
 }
 
 // [[Rcpp::export]]
-arma::mat appendix_code(int num_samps, arma::mat X, arma::vec y,
-                        arma::vec mle_coefs, arma::mat eig_vecs,
-                        arma::vec eig_vals, std::string family,
-                        double dispersion, int m, double tol, int max_it,
-                        int a_val, int b_val) {
+arma::mat radial_code(int num_samps, arma::mat X, arma::vec y,
+                      arma::vec mle_coefs, arma::mat eig_vecs,
+                      arma::vec eig_vals, std::string family, double dispersion,
+                      int m, double tol, int max_it, int a_val, int b_val) {
   int d = X.n_cols;
   arma::mat sampled_betas(mle_coefs.n_elem, num_samps);
 
