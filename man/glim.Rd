@@ -10,7 +10,7 @@ glim(
   family = "gaussian",
   m = 1000,
   approx = FALSE,
-  appendix = FALSE,
+  radial = FALSE,
   tol = 0.01,
   ...
 )
@@ -26,7 +26,7 @@ glim(
 
 \item{approx}{Logical indicating whether to use the elliptical approximation (default \code{FALSE}).}
 
-\item{appendix}{Bool indicating whether the appendix method is to be used.}
+\item{radial}{Bool indicating whether the radial method is to be used.}
 
 \item{tol}{Double indicating the level of precision the approximation should get to}
 

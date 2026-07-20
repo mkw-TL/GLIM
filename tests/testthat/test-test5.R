@@ -115,10 +115,10 @@ test_that("glim validates m and tol", {
   expect_error(glim(y ~ x1, data = df, tol = -1))
 })
 
-test_that("glim errors when appendix and approx are both TRUE", {
+test_that("glim errors when radial and approx are both TRUE", {
   d <- make_gaussian_data()
   df <- data.frame(y = d$y, x1 = d$X[, 2])
-  expect_error(glim(y ~ x1, data = df, approx = TRUE, appendix = TRUE), "cannot both be used")
+  expect_error(glim(y ~ x1, data = df, approx = TRUE, radial = TRUE), "cannot both be used")
 })
 
 # Works just throws an error when running check()?

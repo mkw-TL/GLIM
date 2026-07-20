@@ -5,16 +5,16 @@ generate_unit_matrix <- function(n, d) {
     .Call(`_GLIM_generate_unit_matrix`, n, d)
 }
 
-fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, num_threads = 1L, m = 100L, parallel = TRUE, approx = FALSE, appendix = FALSE) {
-    .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family, num_threads, m, parallel, approx, appendix)
+fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, num_threads = 1L, m = 100L, parallel = TRUE, approx = FALSE, radial = FALSE) {
+    .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family, num_threads, m, parallel, approx, radial)
 }
 
 imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, parallel = TRUE, m = 100L) {
     .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, parallel, m)
 }
 
-appendix_code <- function(num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val) {
-    .Call(`_GLIM_appendix_code`, num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val)
+radial_code <- function(num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val) {
+    .Call(`_GLIM_radial_code`, num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val)
 }
 
 fit_gamma_log_cpp <- function(X, XtX, y, initial_beta, approx) {

@@ -362,11 +362,14 @@ glim <- function(
     if ("betas" %in% names(args)) {
       if (is.vector(args$betas)) {
         betas <- matrix(args$betas, nrow = 1)
-      } else if (!(is.matrix(args$betas) & typeof(args$betas) == "double")) {
-        stop("Grid of betas not in the correct form")
-      } else {
-        betas <- args$betas
       }
+      if (is.data.frame(args$betas)) {
+        args$betas <- as.matrix(args$betas)
+      }
+      if (!(is.matrix(args$betas) & typeof(args$betas) == "double")) {
+        stop("Grid of betas not in the correct form")
+      }
+      betas <- args$betas
     }
   }
   if ("n_grid_evals" %in% names(args)) {
@@ -530,9 +533,7 @@ glim <- function(
     vcov <- vcov(fit)
     p_i <- 1 / (1 + exp(-X %*% mle_coefs))
     dispersion <- 1
-    if (is.null(betas)) {
-      J <- crossprod(X, X * as.vector((p_i * (1 - p_i))))
-    }
+    J <- crossprod(X, X * as.vector((p_i * (1 - p_i))))
     p2p_function <- prob2poss_logis
 
     ll_mle_original_data <- compute_logistic_ll(X, y, mle_coefs)
@@ -545,9 +546,7 @@ glim <- function(
     eta <- X %*% mle_coefs
     dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
     ll_mle_original_data <- compute_gamma_ll_r(y, eta, 1 / dispersion)
-    if (is.null(betas)) {
-      J <- crossprod(X, X)
-    }
+    J <- crossprod(X, X)
     p2p_function <- prob2poss_gamma
 
     ## Poisson setup
@@ -562,9 +561,7 @@ glim <- function(
     eta <- X %*% mle_coefs
     lambda_i <- exp(eta)
     dispersion <- 1
-    if (is.null(betas)) {
-      J <- crossprod(X, X * as.vector(lambda_i))
-    }
+    J <- crossprod(X, X * as.vector(lambda_i))
     p2p_function <- prob2poss_poisson
 
     ## Inverse Gaussian setup
@@ -576,9 +573,7 @@ glim <- function(
     eta <- X %*% mle_coefs
     mu_i <- as.vector(sqrt(1 / eta))
     dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
-    if (is.null(betas)) {
-      J <- crossprod(X, X * (mu_i^3) / 4)
-    }
+    J <- crossprod(X, X * (mu_i^3) / 4)
     p2p_function <- prob2poss_invgauss
 
     ## Gaussian Setup
@@ -588,9 +583,7 @@ glim <- function(
     mle_coefs <- coef(fit)
     vcov <- vcov(fit)
     dispersion <- est_dispersion_normal(y, X %*% mle_coefs, length(mle_coefs))
-    if (is.null(betas)) {
-      J <- crossprod(X, X)
-    }
+    J <- crossprod(X, X)
     p2p_function <- prob2poss_gaussian
   } else {
     stop("Family not supported")
@@ -744,28 +737,11 @@ glim <- function(
 
 #' Probability to Possibility Mapping for Logistic Regression
 #'
-#' @param X Predictor matrix.
-#' @param y Response vector.
-#' @param samples Matrix of simulated sample coefficients.
-#' @param the_compared_theta The theta values to compare against.
-#' @return A vector of mapped possibility values.
-#' @examples
-#' \dontrun{
-#' set.seed(1)
-#' n <- 100
-#' X <- cbind(intercept = 1, x = rnorm(n))
-#' y <- rbinom(n, 1, plogis(X %*% c(0, 1.5)))
-#'
-#' # Simulated candidate coefficient vectors (one per column)
-#' samples <- cbind(c(0, 1.2), c(0.1, 1.6), c(-0.1, 1.4))
-#'
-#' # Theta value(s) to evaluate against the simulated samples
-#' the_compared_theta <- c(0, 1.5)
-#'
-#' prob2poss_logis(X, y, samples, the_compared_theta)
-#' }
-#' @export
+#' @noRd
 prob2poss_logis <- function(X, y, samples, the_compared_theta) {
+  if (any(!(y == 0 | y == 1))) {
+    stop("y must only comprise of zeros or ones")
+  }
   if (is.data.frame(X)) {
     X <- as.matrix(X)
   }
@@ -815,28 +791,11 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
 #'
 #' Will throw an error if \code{the_compared_theta} is a scalar.
 #'
-#' @param X Predictor matrix.
-#' @param y Response vector.
-#' @param samples Matrix of simulated sample coefficients.
-#' @param the_compared_theta The theta values to compare against.
-#' @return A vector of mapped possibility values.
-#' @examples
-#' \dontrun{
-#' set.seed(1)
-#' n <- 100
-#' X <- cbind(intercept = 1, x = rnorm(n, sd = .2))
-#' y <- rgamma(n, shape = 5, rate = 5 / exp(X %*% c(1, .5)))
-#'
-#' # Simulated candidate coefficient vectors (one per column)
-#' samples <- cbind(c(0.9, 0.4), c(1.1, 0.6), c(1.0, 0.5))
-#'
-#' # Theta values to evaluate against the simulated samples (must not be a scalar)
-#' the_compared_theta <- cbind(c(1, .5))
-#'
-#' prob2poss_gamma(X, y, samples, the_compared_theta)
-#' }
-#' @export
+#' @noRd
 prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
+  if (any(y < 0)) {
+    stop("y must be non-negative")
+  }
   if (is.data.frame(X)) {
     X <- as.matrix(X)
   }
@@ -883,6 +842,9 @@ compute_gaussian_ll_r <- function(y, mu, sigma) {
 #' Compute inverse gaussian Log-Likelihood
 #' @noRd
 compute_invgauss_ll_r <- function(y, mu, gamma_val) {
+  if (any(y <= 0)) {
+    stop("y cannot be negative or zero")
+  }
   if (is.vector(mu)) {
     return(compute_invgauss_ll(y, mu, gamma_val))
   } else {
@@ -893,6 +855,9 @@ compute_invgauss_ll_r <- function(y, mu, gamma_val) {
 #' Compute logistic Log-Likelihood
 #' @noRd
 compute_logistic_ll_r <- function(X, y, beta_vals) {
+  if (any(!(y == 0 | y == 1))) {
+    stop("y is not zeros or ones")
+  }
   if (is.vector(beta_vals)) {
     return(compute_logistic_ll(X, y, beta_vals))
   } else {
@@ -903,27 +868,7 @@ compute_logistic_ll_r <- function(X, y, beta_vals) {
 
 #' Probability to Possibility Mapping for Gaussian Regression
 #'
-#' @param X Predictor matrix.
-#' @param y Response vector.
-#' @param samples Matrix of simulated sample coefficients.
-#' @param the_compared_theta The theta values to compare against.
-#' @return A vector of mapped possibility values.
-#' @examples
-#' \dontrun{
-#' set.seed(1)
-#' n <- 100
-#' X <- cbind(intercept = 1, x = rnorm(n))
-#' y <- 2 + 1.5 * X[, "x"] + rnorm(n)
-#'
-#' # Simulated candidate coefficient vectors (one per column)
-#' samples <- cbind(c(1.8, 1.4), c(2.1, 1.6), c(2.0, 1.5))
-#'
-#' # Theta value(s) to evaluate against the simulated samples
-#' the_compared_theta <- c(2, 1.5)
-#'
-#' prob2poss_gaussian(X, y, samples, the_compared_theta)
-#' }
-#' @export
+#' @noRd
 prob2poss_gaussian <- function(X, y, samples, the_compared_theta) {
   if (is.data.frame(X) || is.vector(X)) {
     X <- as.matrix(X)
@@ -945,28 +890,11 @@ prob2poss_gaussian <- function(X, y, samples, the_compared_theta) {
 #'
 #' Will throw an error if \code{the_compared_theta} is a scalar.
 #'
-#' @param X Predictor matrix.
-#' @param y Response vector.
-#' @param samples Matrix of simulated sample coefficients.
-#' @param the_compared_theta The theta values to compare against.
-#' @return A vector of mapped possibility values.
-#' @examples
-#' \dontrun{
-#' set.seed(1)
-#' n <- 100
-#' X <- cbind(intercept = 1, x = rnorm(n, sd = .2))
-#' y <- statmod::rinvgauss(n, mean = exp(X %*% c(0.7, 0.3)), dispersion = 1)
-#'
-#' # Simulated candidate coefficient vectors (one per column)
-#' samples <- cbind(c(0.6, 0.2), c(0.8, 0.4), c(0.7, 0.3))
-#'
-#' # Theta values to evaluate against the simulated samples (must not be a scalar)
-#' the_compared_theta <- cbind(c(.7, .3))
-#'
-#' prob2poss_invgauss(X, y, samples, the_compared_theta)
-#' }
-#' @export
+#' @noRd
 prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
+  if (any(y <= 0)) {
+    stop("y cannot be negative or zero")
+  }
   if (is.data.frame(X)) {
     X <- as.matrix(X)
   }
@@ -990,7 +918,7 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
   sapply(ll_val, function(x) sum(ll_val_samps <= x) / length(ll_val_samps))
 }
 
-#' radial C++ Bridge Function
+#' Radial C++ Bridge Function
 #'
 #' Helper function acting as a bridge to underlying C++ routines for sample generation.
 #'
@@ -1006,7 +934,7 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
 #' @param tol Tolerance level for convergence criteria.
 #' @param max_it Maximum number of iterations the stochastic algorithm runs for for each grid value.
 #' @param a_val Hyperparameter `a`, the step size. Small values (1-2) are typically what this is set to
-#' @param b_val Hyperparameter `b`, the step-size decay. Should be between [.5 and 1]
+#' @param b_val Hyperparameter `b`, the step-size decay. Should be between \[.5 and 1\]
 #' @param n_grid_evals Resolution of grid
 #' @return A matrix of output samples evaluated by the C++ backend.
 #' @noRd
@@ -1058,28 +986,11 @@ radial <- function(
 
 #' Probability to Possibility Mapping for Poisson Regression
 #'
-#' @param X Predictor matrix.
-#' @param y Response vector.
-#' @param samples Matrix of simulated sample coefficients.
-#' @param the_compared_theta The theta values to compare against.
-#' @return A vector of mapped possibility values.
-#' @examples
-#' \dontrun{
-#' set.seed(1)
-#' n <- 100
-#' X <- cbind(intercept = 1, x = rnorm(n, sd = .2))
-#' y <- rpois(n, lambda = exp(X %*% c(1, .5)))
-#'
-#' # Simulated candidate coefficient vectors (one per column)
-#' samples <- cbind(c(0.9, 0.4), c(1.1, 0.6), c(1.0, 0.5))
-#'
-#' # Theta value(s) to evaluate against the simulated samples
-#' the_compared_theta <- c(1, .5)
-#'
-#' prob2poss_poisson(X, y, samples, the_compared_theta)
-#' }
-#' @export
+#' @noRd
 prob2poss_poisson <- function(X, y, samples, the_compared_theta) {
+  if (any(!(is.integer(y) & y >= 0))) {
+    stop("y must be positive integers")
+  }
   if (is.data.frame(X)) {
     X <- as.matrix(X)
   }
@@ -1238,7 +1149,7 @@ plot.glim_object <- function(x, ...) {
 
 #' Print
 #'
-#' Printing for glim objects
+#' Provides marginal confidence/credible regions at a specified alpha level. Can be changed by (say) alpha = .10. Produces a value of NA whenever the bound is not known (Likely the automatic grid was too small -- can be expanded through the betas argument in glim())
 #'
 #' @param x A 'glim_object' from 'glim()'
 #' @param ... Supports differing alpha levels. EX: alpha = .05
@@ -1271,8 +1182,9 @@ print.glim_object <- function(x, ...) {
   # Initialize vectors to collect data for the table
   row_names <- colnames(betas)
   mle_vals <- numeric(ncol(betas))
-  lower_bound <- numeric(ncol(betas))
-  upper_bound <- numeric(ncol(betas))
+  # Initialize empty vectors with true NA values instead of 0
+  lower_bound <- rep(NA_real_, ncol(betas))
+  upper_bound <- rep(NA_real_, ncol(betas))
 
   for (col in 1:ncol(betas)) {
     max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
@@ -1284,8 +1196,20 @@ print.glim_object <- function(x, ...) {
 
     # Save results into our vectors
     mle_vals[col] <- mle_coefs[col]
-    lower_bound[col] <- if (length(valid_betas) > 0) min(valid_betas) else NA
-    upper_bound[col] <- if (length(valid_betas) > 0) max(valid_betas) else NA
+    if (length(valid_betas) > 0) {
+      if (min(valid_betas) != min(betas[, col])) {
+        lower_bound[col] <- min(valid_betas)
+      } else {
+        lower_bound[col] <- NA_real_
+      }
+    }
+    if (length(valid_betas) > 0) {
+      if (max(valid_betas) != max(betas[, col])) {
+        upper_bound[col] <- max(valid_betas)
+      } else {
+        upper_bound[col] <- NA_real_
+      }
+    }
   }
 
   # Build the structured data frame
@@ -1451,8 +1375,13 @@ compute_ll <- function(family, y, X, betas) {
   } else if (family == "binomial") {
     ll <- compute_logistic_ll_r(X, y, betas)
   } else if (family == "inverse.gaussian") {
+    print("here")
+
     # Again, note that 1/eta will be element-wise
     eta <- X %*% betas
+    print(eta)
+    print(mle_estimate_dispersion_inv_gauss(y, mean(y)))
+    print(sqrt(1 / eta))
     ll <- compute_invgauss_ll_r(
       y,
       sqrt(1 / eta),
@@ -1462,4 +1391,58 @@ compute_ll <- function(family, y, X, betas) {
     stop("family not defined")
   }
   return(ll)
+}
+
+#' Probability to Possibility Transform
+#'
+#' From a set of samples (of beta values), return the possibility at any new beta value.
+#' @param family Either "guassian", "gamma", "inverse.gaussian", "poisson", "binomial"
+#' @param X Design X matrix
+#' @param y Vector of y values
+#' @param samples Each column is a new beta vector sample
+#' @param the_compared_theta Each row is vector of betas which we want the possibility
+#' @examples
+#' \dontrun{
+#' X <- cbind(intercept = 1, x1 = c(4, 3.3, 5))
+#' y <- rgamma(3, shape = 2, scale = 1.4)
+#'
+#' samples <- glim(y ~ X, family = "gamma", approx = TRUE)$samples
+#'
+#' beta_1_grid <- seq(-2, 2, by = .2)
+#' beta_2_grid <- seq(-1, 2, by = .2)
+#' evaluated_new_theta <- expand.grid(beta_1_grid, beta_2_grid)
+#' prob2poss("gamma", X, y, samples, evaluated_new_theta)
+#' }
+#' @export
+prob2poss <- function(family, X, y, samples, the_compared_theta) {
+  if (family == "gaussian") {
+    p2p_function <- prob2poss_gaussian
+  } else if (family == "gamma") {
+    p2p_function <- prob2poss_gamma
+  } else if (family == "inverse.gaussian") {
+    p2p_function <- prob2poss_invgauss
+  } else if (family == "poisson") {
+    p2p_function <- prob2poss_poisson
+  } else if (family == "binomial") {
+    p2p_function <- prob2poss_logis
+  } else {
+    stop("Family is incorrectly specified")
+  }
+  if (is.data.frame(the_compared_theta)) {
+    the_compared_theta <- as.matrix(the_compared_theta)
+  }
+  print(dim(X))
+  print(dim(samples))
+  if (!is.vector(the_compared_theta)) {
+    if (ncol(the_compared_theta) != ncol(X)) {
+      stop(
+        "Dimension mismatch. Check that the_compared_theta has each 'row' corresponding to a new parameter value"
+      )
+    }
+  }
+  if (length(y) != nrow(X)) {
+    stop("Dimension mismatch of X")
+  }
+  out <- p2p_function(X, y, samples, t(the_compared_theta))
+  return(out)
 }

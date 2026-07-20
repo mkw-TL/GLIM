@@ -15,7 +15,7 @@
 Print output
 }
 \description{
-Printing for glim objects
+Provides marginal confidence/credible regions at a specified alpha level. Can be changed by (say) alpha = .10. Produces a value of NA whenever the bound is not known (Likely the automatic grid was too small -- can be expanded through the betas argument in glim())
 }
 \examples{
 \dontrun{
