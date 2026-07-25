@@ -50,25 +50,35 @@ double est_dispersion_normal(const arma::vec &y, const arma::vec &mu, int p) {
 double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs,
                            const arma::vec &beta_vals, int m, bool approx,
-                           bool appendix) {
+                           bool radial, uint32_t base_seed = 0,
+                           int eval_index = 0) {
   int n = X.n_rows;
 
   arma::vec mu = X * beta_vals; // Identity link
   arma::vec mu_hat = X * mle_coefs;
+
   // Estimated dispersion
   int p = beta_vals.n_elem;
-
   double sigma = std::sqrt(est_dispersion_normal(y, mu_hat, p));
   double true_ll = compute_gaussian_ll(y, mu, sigma);
   double mle_val = compute_gaussian_ll(y, mu_hat, sigma);
   double f_x = true_ll - mle_val;
 
-  thread_local std::random_device rd;
-  thread_local std::mt19937 gen(rd());
-  std::normal_distribution<double> rnorm(0.0, 1.0);
+  // Check if we are already inside an active outer OpenMP loop
+  bool is_already_parallel = false;
+#ifdef _OPENMP
+  is_already_parallel = omp_in_parallel();
+#endif
+  bool run_inner_parallel = (radial || approx) && !is_already_parallel;
+  uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
 
   arma::mat Y(n, m);
+
+  // --- 1. Deterministic Parallel Data Generation ---
+#pragma omp parallel for schedule(static) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
+    std::mt19937 gen(eval_seed + j);
+    std::normal_distribution<double> rnorm(0.0, 1.0);
     for (int i = 0; i < n; i++) {
       Y(i, j) = mu(i) + sigma * rnorm(gen);
     }
@@ -76,6 +86,9 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
 
   int count_less = 0;
 
+  // --- 2. Parallel Model Fitting & Likelihood Evaluation ---
+#pragma omp parallel for schedule(guided)                                      \
+    reduction(+ : count_less) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
@@ -84,13 +97,7 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
     double mle_sim = compute_gaussian_ll(y_sim, mu_hat_sim, sigma);
     double llX_j = compute_gaussian_ll(y_sim, mu, sigma);
 
-    // Rcpp::Rcout << "llX_j: " << llX_j << "\n";
-    // Rcpp::Rcout << "true_ll: " << true_ll << "\n";
-    // Rcpp::Rcout << "mle_sim: " << mle_sim << "\n";
-    // Rcpp::Rcout << "mle_val: " << mle_val << "\n";
     double f_X_j = llX_j - mle_sim;
-    // Rcpp::Rcout << "f_x: " << f_x << "\n";
-    // Rcpp::Rcout << "f_X_j: " << f_X_j << "\n";
 
     if (f_X_j <= f_x) {
       count_less++;

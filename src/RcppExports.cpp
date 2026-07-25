@@ -24,8 +24,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // fit_glm_omp_cpp
-arma::mat fit_glm_omp_cpp(arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::mat& betas, std::string family, int num_threads, int m, bool parallel, bool approx, bool radial);
-RcppExport SEXP _GLIM_fit_glm_omp_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP betasSEXP, SEXP familySEXP, SEXP num_threadsSEXP, SEXP mSEXP, SEXP parallelSEXP, SEXP approxSEXP, SEXP radialSEXP) {
+arma::mat fit_glm_omp_cpp(arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::mat& betas, std::string family, int num_threads, int m, bool parallel, bool approx, bool radial, uint32_t base_seed);
+RcppExport SEXP _GLIM_fit_glm_omp_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP betasSEXP, SEXP familySEXP, SEXP num_threadsSEXP, SEXP mSEXP, SEXP parallelSEXP, SEXP approxSEXP, SEXP radialSEXP, SEXP base_seedSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -39,13 +39,14 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< bool >::type parallel(parallelSEXP);
     Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
     Rcpp::traits::input_parameter< bool >::type radial(radialSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_glm_omp_cpp(X, y, mle_coefs, betas, family, num_threads, m, parallel, approx, radial));
+    Rcpp::traits::input_parameter< uint32_t >::type base_seed(base_seedSEXP);
+    rcpp_result_gen = Rcpp::wrap(fit_glm_omp_cpp(X, y, mle_coefs, betas, family, num_threads, m, parallel, approx, radial, base_seed));
     return rcpp_result_gen;
 END_RCPP
 }
 // imvar
-arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi, const std::string family, double alpha, const arma::vec& mle, const double mle_val, const arma::mat& J_vectors, const arma::vec& J_values, double dispersion, double tol, double a_val, double b_val, int max_it, bool parallel, int m);
-RcppExport SEXP _GLIM_imvar(SEXP XSEXP, SEXP ySEXP, SEXP xiSEXP, SEXP familySEXP, SEXP alphaSEXP, SEXP mleSEXP, SEXP mle_valSEXP, SEXP J_vectorsSEXP, SEXP J_valuesSEXP, SEXP dispersionSEXP, SEXP tolSEXP, SEXP a_valSEXP, SEXP b_valSEXP, SEXP max_itSEXP, SEXP parallelSEXP, SEXP mSEXP) {
+arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi, const std::string family, double alpha, const arma::vec& mle, const double mle_val, const arma::mat& J_vectors, const arma::vec& J_values, double dispersion, double tol, double a_val, double b_val, int max_it, bool parallel, int m, uint32_t base_seed);
+RcppExport SEXP _GLIM_imvar(SEXP XSEXP, SEXP ySEXP, SEXP xiSEXP, SEXP familySEXP, SEXP alphaSEXP, SEXP mleSEXP, SEXP mle_valSEXP, SEXP J_vectorsSEXP, SEXP J_valuesSEXP, SEXP dispersionSEXP, SEXP tolSEXP, SEXP a_valSEXP, SEXP b_valSEXP, SEXP max_itSEXP, SEXP parallelSEXP, SEXP mSEXP, SEXP base_seedSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -65,13 +66,14 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type max_it(max_itSEXP);
     Rcpp::traits::input_parameter< bool >::type parallel(parallelSEXP);
     Rcpp::traits::input_parameter< int >::type m(mSEXP);
-    rcpp_result_gen = Rcpp::wrap(imvar(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, parallel, m));
+    Rcpp::traits::input_parameter< uint32_t >::type base_seed(base_seedSEXP);
+    rcpp_result_gen = Rcpp::wrap(imvar(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, parallel, m, base_seed));
     return rcpp_result_gen;
 END_RCPP
 }
 // radial_code
-arma::mat radial_code(int num_samps, arma::mat X, arma::vec y, arma::vec mle_coefs, arma::mat eig_vecs, arma::vec eig_vals, std::string family, double dispersion, int m, double tol, int max_it, int a_val, int b_val);
-RcppExport SEXP _GLIM_radial_code(SEXP num_sampsSEXP, SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP eig_vecsSEXP, SEXP eig_valsSEXP, SEXP familySEXP, SEXP dispersionSEXP, SEXP mSEXP, SEXP tolSEXP, SEXP max_itSEXP, SEXP a_valSEXP, SEXP b_valSEXP) {
+arma::mat radial_code(int num_samps, arma::mat X, arma::vec y, arma::vec mle_coefs, arma::mat eig_vecs, arma::vec eig_vals, std::string family, double dispersion, int m, double tol, int max_it, int a_val, int b_val, uint32_t base_seed);
+RcppExport SEXP _GLIM_radial_code(SEXP num_sampsSEXP, SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP eig_vecsSEXP, SEXP eig_valsSEXP, SEXP familySEXP, SEXP dispersionSEXP, SEXP mSEXP, SEXP tolSEXP, SEXP max_itSEXP, SEXP a_valSEXP, SEXP b_valSEXP, SEXP base_seedSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -88,7 +90,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type max_it(max_itSEXP);
     Rcpp::traits::input_parameter< int >::type a_val(a_valSEXP);
     Rcpp::traits::input_parameter< int >::type b_val(b_valSEXP);
-    rcpp_result_gen = Rcpp::wrap(radial_code(num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val));
+    Rcpp::traits::input_parameter< uint32_t >::type base_seed(base_seedSEXP);
+    rcpp_result_gen = Rcpp::wrap(radial_code(num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val, base_seed));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -160,8 +163,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // glm_gamma_pl_cpp
-double glm_gamma_pl_cpp(arma::mat& X, const arma::mat& XtX, const arma::vec& y, const arma::vec& mle_coefs, const arma::vec& beta_vals, int m, bool approx, bool appendix);
-RcppExport SEXP _GLIM_glm_gamma_pl_cpp(SEXP XSEXP, SEXP XtXSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP beta_valsSEXP, SEXP mSEXP, SEXP approxSEXP, SEXP appendixSEXP) {
+double glm_gamma_pl_cpp(arma::mat& X, const arma::mat& XtX, const arma::vec& y, const arma::vec& mle_coefs, const arma::vec& beta_vals, int m, bool approx, bool radial, uint32_t base_seed, int eval_index);
+RcppExport SEXP _GLIM_glm_gamma_pl_cpp(SEXP XSEXP, SEXP XtXSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP beta_valsSEXP, SEXP mSEXP, SEXP approxSEXP, SEXP radialSEXP, SEXP base_seedSEXP, SEXP eval_indexSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -172,8 +175,10 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
     Rcpp::traits::input_parameter< int >::type m(mSEXP);
     Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
-    Rcpp::traits::input_parameter< bool >::type appendix(appendixSEXP);
-    rcpp_result_gen = Rcpp::wrap(glm_gamma_pl_cpp(X, XtX, y, mle_coefs, beta_vals, m, approx, appendix));
+    Rcpp::traits::input_parameter< bool >::type radial(radialSEXP);
+    Rcpp::traits::input_parameter< uint32_t >::type base_seed(base_seedSEXP);
+    Rcpp::traits::input_parameter< int >::type eval_index(eval_indexSEXP);
+    rcpp_result_gen = Rcpp::wrap(glm_gamma_pl_cpp(X, XtX, y, mle_coefs, beta_vals, m, approx, radial, base_seed, eval_index));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -229,8 +234,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // glm_gaussian_pl_cpp
-double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::vec& beta_vals, int m, bool approx, bool appendix);
-RcppExport SEXP _GLIM_glm_gaussian_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP beta_valsSEXP, SEXP mSEXP, SEXP approxSEXP, SEXP appendixSEXP) {
+double glm_gaussian_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::vec& beta_vals, int m, bool approx, bool radial, uint32_t base_seed, int eval_index);
+RcppExport SEXP _GLIM_glm_gaussian_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP beta_valsSEXP, SEXP mSEXP, SEXP approxSEXP, SEXP radialSEXP, SEXP base_seedSEXP, SEXP eval_indexSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -240,8 +245,10 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
     Rcpp::traits::input_parameter< int >::type m(mSEXP);
     Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
-    Rcpp::traits::input_parameter< bool >::type appendix(appendixSEXP);
-    rcpp_result_gen = Rcpp::wrap(glm_gaussian_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, appendix));
+    Rcpp::traits::input_parameter< bool >::type radial(radialSEXP);
+    Rcpp::traits::input_parameter< uint32_t >::type base_seed(base_seedSEXP);
+    Rcpp::traits::input_parameter< int >::type eval_index(eval_indexSEXP);
+    rcpp_result_gen = Rcpp::wrap(glm_gaussian_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, radial, base_seed, eval_index));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -298,8 +305,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // glm_invgauss_pl_cpp
-double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::vec& beta_vals, int m, bool approx, bool appendix);
-RcppExport SEXP _GLIM_glm_invgauss_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP beta_valsSEXP, SEXP mSEXP, SEXP approxSEXP, SEXP appendixSEXP) {
+double glm_invgauss_pl_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::vec& beta_vals, int m, bool approx, bool radial, uint32_t base_seed, int eval_index);
+RcppExport SEXP _GLIM_glm_invgauss_pl_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP beta_valsSEXP, SEXP mSEXP, SEXP approxSEXP, SEXP radialSEXP, SEXP base_seedSEXP, SEXP eval_indexSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -309,8 +316,10 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::vec& >::type beta_vals(beta_valsSEXP);
     Rcpp::traits::input_parameter< int >::type m(mSEXP);
     Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
-    Rcpp::traits::input_parameter< bool >::type appendix(appendixSEXP);
-    rcpp_result_gen = Rcpp::wrap(glm_invgauss_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, appendix));
+    Rcpp::traits::input_parameter< bool >::type radial(radialSEXP);
+    Rcpp::traits::input_parameter< uint32_t >::type base_seed(base_seedSEXP);
+    Rcpp::traits::input_parameter< int >::type eval_index(eval_indexSEXP);
+    rcpp_result_gen = Rcpp::wrap(glm_invgauss_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, radial, base_seed, eval_index));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -380,25 +389,25 @@ END_RCPP
 
 static const R_CallMethodDef CallEntries[] = {
     {"_GLIM_generate_unit_matrix", (DL_FUNC) &_GLIM_generate_unit_matrix, 2},
-    {"_GLIM_fit_glm_omp_cpp", (DL_FUNC) &_GLIM_fit_glm_omp_cpp, 10},
-    {"_GLIM_imvar", (DL_FUNC) &_GLIM_imvar, 16},
-    {"_GLIM_radial_code", (DL_FUNC) &_GLIM_radial_code, 13},
+    {"_GLIM_fit_glm_omp_cpp", (DL_FUNC) &_GLIM_fit_glm_omp_cpp, 11},
+    {"_GLIM_imvar", (DL_FUNC) &_GLIM_imvar, 17},
+    {"_GLIM_radial_code", (DL_FUNC) &_GLIM_radial_code, 14},
     {"_GLIM_fit_gamma_log_cpp", (DL_FUNC) &_GLIM_fit_gamma_log_cpp, 5},
     {"_GLIM_compute_gamma_ll", (DL_FUNC) &_GLIM_compute_gamma_ll, 3},
     {"_GLIM_compute_gamma_ll_mat", (DL_FUNC) &_GLIM_compute_gamma_ll_mat, 3},
     {"_GLIM_pearson_estimate_dispersion_gamma", (DL_FUNC) &_GLIM_pearson_estimate_dispersion_gamma, 3},
     {"_GLIM_mle_estimate_dispersion_gamma", (DL_FUNC) &_GLIM_mle_estimate_dispersion_gamma, 3},
-    {"_GLIM_glm_gamma_pl_cpp", (DL_FUNC) &_GLIM_glm_gamma_pl_cpp, 8},
+    {"_GLIM_glm_gamma_pl_cpp", (DL_FUNC) &_GLIM_glm_gamma_pl_cpp, 10},
     {"_GLIM_fit_gaussian_cpp", (DL_FUNC) &_GLIM_fit_gaussian_cpp, 2},
     {"_GLIM_compute_gaussian_ll", (DL_FUNC) &_GLIM_compute_gaussian_ll, 3},
     {"_GLIM_compute_gaussian_ll_mat", (DL_FUNC) &_GLIM_compute_gaussian_ll_mat, 3},
     {"_GLIM_est_dispersion_normal", (DL_FUNC) &_GLIM_est_dispersion_normal, 3},
-    {"_GLIM_glm_gaussian_pl_cpp", (DL_FUNC) &_GLIM_glm_gaussian_pl_cpp, 7},
+    {"_GLIM_glm_gaussian_pl_cpp", (DL_FUNC) &_GLIM_glm_gaussian_pl_cpp, 9},
     {"_GLIM_mle_estimate_dispersion_inv_gauss", (DL_FUNC) &_GLIM_mle_estimate_dispersion_inv_gauss, 2},
     {"_GLIM_fit_invgauss_cpp", (DL_FUNC) &_GLIM_fit_invgauss_cpp, 4},
     {"_GLIM_compute_invgauss_ll", (DL_FUNC) &_GLIM_compute_invgauss_ll, 3},
     {"_GLIM_compute_invgauss_ll_mat", (DL_FUNC) &_GLIM_compute_invgauss_ll_mat, 3},
-    {"_GLIM_glm_invgauss_pl_cpp", (DL_FUNC) &_GLIM_glm_invgauss_pl_cpp, 7},
+    {"_GLIM_glm_invgauss_pl_cpp", (DL_FUNC) &_GLIM_glm_invgauss_pl_cpp, 9},
     {"_GLIM_compute_logistic_ll", (DL_FUNC) &_GLIM_compute_logistic_ll, 3},
     {"_GLIM_compute_logistic_ll_mat", (DL_FUNC) &_GLIM_compute_logistic_ll_mat, 3},
     {"_GLIM_compute_poisson_ll", (DL_FUNC) &_GLIM_compute_poisson_ll, 2},

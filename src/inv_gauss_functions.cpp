@@ -118,7 +118,8 @@ arma::vec compute_invgauss_ll_mat(const arma::vec &y, const arma::mat &mu,
 double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs,
                            const arma::vec &beta_vals, int m, bool approx,
-                           bool appendix) {
+                           bool radial, uint32_t base_seed = 0,
+                           int eval_index = 0) {
   int n = X.n_rows;
 
   arma::vec eta = X * beta_vals;
@@ -137,11 +138,19 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
   double mle_val = compute_invgauss_ll(y, mu_hat, gamma);
   double f_x = true_ll - mle_val;
 
-  thread_local std::random_device rd;
-  thread_local std::mt19937 gen(rd());
+  bool is_already_parallel = false;
+#ifdef _OPENMP
+  is_already_parallel = omp_in_parallel();
+#endif
+  bool run_inner_parallel = (radial || approx) && !is_already_parallel;
+  uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
 
   arma::mat Y(n, m);
+
+  // --- 1. Deterministic Parallel Data Generation ---
+#pragma omp parallel for schedule(static) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
+    std::mt19937 gen(eval_seed + j);
     for (int i = 0; i < n; i++) {
       Y(i, j) = rinvgauss_single(mu(i), gamma, gen);
     }
@@ -149,17 +158,20 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
 
   int count_less = 0;
 
+  // --- 2. Parallel Model Fitting & Likelihood Evaluation ---
+#pragma omp parallel for schedule(guided)                                      \
+    reduction(+ : count_less) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
     arma::vec coefs = fit_invgauss_cpp(X, y_sim, beta_vals, approx);
-    arma::vec eta_hat = X * coefs;
+    arma::vec eta_hat_sim = X * coefs;
 
     // Validate eta_hat to compute simulated MLE likelihood
-    eta_hat.elem(arma::find(eta_hat < 1e-6)).fill(1e-6);
-    arma::vec mu_hat = arma::pow(eta_hat, -0.5);
+    eta_hat_sim.elem(arma::find(eta_hat_sim < 1e-6)).fill(1e-6);
+    arma::vec mu_hat_sim = arma::pow(eta_hat_sim, -0.5);
 
-    double mle_sim = compute_invgauss_ll(y_sim, mu_hat, gamma);
+    double mle_sim = compute_invgauss_ll(y_sim, mu_hat_sim, gamma);
     double llX_j = compute_invgauss_ll(y_sim, mu, gamma);
 
     double f_X_j = llX_j - mle_sim;

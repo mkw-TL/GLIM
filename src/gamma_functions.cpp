@@ -172,7 +172,8 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
 // [[Rcpp::export]]
 double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
                         const arma::vec &mle_coefs, const arma::vec &beta_vals,
-                        int m, bool approx, bool appendix) {
+                        int m, bool approx, bool radial, uint32_t base_seed = 0,
+                        int eval_index = 0) {
   int n = X.n_rows;
 
   // Compute true expected values based on proposed betas
@@ -180,37 +181,34 @@ double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
   eta.elem(arma::find(eta > 50)).fill(50);
   eta.elem(arma::find(eta < -50)).fill(-50); // avoids D_mean explosions
   arma::vec mu = arma::exp(eta);
-  // TODO: #11 Add more warnings
-  // Note that Rcpp::Rcout will not play nicely with any parallelization
-  // Rcpp::Rcout << "Predictions clamped";
-  // Prevent mu from getting infinitesimally small
   mu.elem(arma::find(mu < 1e-8)).fill(1e-8);
 
   double dispersion = mle_estimate_dispersion_gamma(y, mu, beta_vals.n_elem);
   double shape = 1 / dispersion;
-  // Compute full log-likelihood for the observed data under proposed beta
   double true_ll = compute_gamma_ll(y, eta, shape);
 
-  // Note that the dispersion parameter is not estimated via mle in R's glm.
-  // Note, however, that we are simply accepcting a dispersion parameter as
-  // given in an argument
   arma::vec eta_hat = X * mle_coefs;
   eta_hat.elem(arma::find(eta_hat > 50)).fill(50);
   eta_hat.elem(arma::find(eta_hat < -50)).fill(-50);
   double mle_ll = compute_gamma_ll(y, eta_hat, shape);
   double f_x = true_ll - mle_ll;
 
-  thread_local std::random_device rd;
-  // rd() is a non-deterministic random number
-  thread_local std::mt19937 gen(rd());
+  bool is_already_parallel = false;
+#ifdef _OPENMP
+  is_already_parallel = omp_in_parallel();
+#endif
+  bool run_inner_parallel = (radial || approx) && !is_already_parallel;
+  uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
 
-  // Simulate Y matrix inline using R's Gamma RNG
   arma::mat Y(n, m);
   arma::vec scale = mu * dispersion;
+
+  // --- 1. Deterministic Parallel Data Generation ---
+#pragma omp parallel for schedule(static) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
+    std::mt19937 gen(eval_seed + j);
     for (int i = 0; i < n; i++) {
       std::gamma_distribution<double> rgamma(shape, scale(i));
-      // Uses gamma scale property
       double sim_val = rgamma(gen);
       Y(i, j) = (sim_val < 1e-10) ? 1e-10 : sim_val;
     }
@@ -218,24 +216,21 @@ double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
 
   int count_less = 0;
 
-  // If doing the imvar thing, then we want to parallelize the 100 glm evals per
-  // beta, rather than the betas.
-#pragma omp parallel for reduction(+ : count_less) if (approx == true)
+  // --- 2. Parallel Model Fitting & Likelihood Evaluation ---
+#pragma omp parallel for schedule(guided)                                      \
+    reduction(+ : count_less) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
     arma::vec beta_sim_hat =
         fit_gamma_log_cpp(X, XtX, y_sim, beta_vals, approx);
-    // Starting the IRLS algorithm at the beta_coefs that generated the Y
+
     arma::vec eta_sim_hat = X * beta_sim_hat;
     arma::vec mu_sim_hat = exp(eta_sim_hat);
 
-    // Need to pass in data to use the mle estimator.
     double shape_sim_hat = 1 / mle_estimate_dispersion_gamma(
                                    y_sim, mu_sim_hat, beta_sim_hat.n_elem);
 
     double llX_j = compute_gamma_ll(y_sim, eta, shape_sim_hat);
-
-    // Evaluate simulated MLE log-likelihood
     double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
     double f_X_j = llX_j - mle_sim;
 

@@ -6,8 +6,8 @@
 \usage{
 glim(
   formula,
-  data = NULL,
   family = "gaussian",
+  data = NULL,
   m = 1000,
   approx = FALSE,
   radial = FALSE,
@@ -18,9 +18,9 @@ glim(
 \arguments{
 \item{formula}{Formula object to be interpreted}
 
-\item{data}{Dataframe (if using)}
-
 \item{family}{String denoting the exponential family. Choices are \code{"gaussian"}, \code{"binomial"}, \code{"gamma"}, \code{"poisson"}, \code{"inverse.gaussian"}.}
+
+\item{data}{Dataframe (if using)}
 
 \item{m}{Number of samples/evaluations to perform (default \code{1000}).}
 

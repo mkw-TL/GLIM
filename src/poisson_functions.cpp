@@ -116,22 +116,20 @@ arma::vec fit_poisson_log_cpp(const arma::mat &X, const arma::vec &y,
   return res.beta;
 }
 
-// Main Parallelized Simulation Function for Poisson
 PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
                                    const arma::vec &mle_coefs,
                                    const arma::vec &beta_vals, int m,
-                                   bool approx, bool appendix) {
-  // auto t_start = std::chrono::high_resolution_clock::now();
+                                   bool approx, bool radial,
+                                   uint32_t base_seed = 0, int eval_index = 0) {
   int n = X.n_rows;
 
   arma::vec eta = X * beta_vals;
   eta = arma::clamp(eta, -10.0, 10.0);
   arma::vec mu = arma::exp(eta);
 
-  bool orig_seperated = false;
-
+  bool orig_separated = false;
   if (!mu.is_finite() || mu.max() > 1e5) {
-    orig_seperated = true;
+    orig_separated = true;
   }
 
   arma::vec eta_hat = X * mle_coefs;
@@ -143,99 +141,69 @@ PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
 
   arma::mat Y_sim(n, m); // Pre-allocate full simulation matrix
 
-  // Data generation. Parallel directive says that each thread should run this
-  // code
-#pragma omp parallel if (approx == true && appendix == false)
-  {
-    std::random_device rd;
-    std::mt19937 gen(rd());
+  // Check if we are already inside an active outer OpenMP loop
+  bool is_already_parallel = false;
+#ifdef _OPENMP
+  is_already_parallel = omp_in_parallel();
+#endif
 
-    // for loop divides up the work for the threads. Otherwise, every thread
-    // would run this parallel code Notice that the i loop is on the outside, so
-    // it doesn't have to reinstanciate the poisson_dist object
-#pragma omp for schedule(static)
-    for (int i = 0; i < n; i++) {
+  // Only enable inner parallelization if requested AND not already inside an
+  // outer parallel region
+  bool run_inner_parallel = (radial || approx) && !is_already_parallel;
+
+  // Derive a unique base seed for this specific grid evaluation point
+  uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
+
+  // --- 1. Deterministic Parallel Data Generation ---
+#pragma omp parallel for schedule(static) if (run_inner_parallel)
+  for (int j = 0; j < m; ++j) {
+    // Each simulation j gets a unique, deterministic seed
+    std::mt19937 gen(eval_seed + j);
+
+    for (int i = 0; i < n; ++i) {
       std::poisson_distribution<int> rpois(mu(i));
-      for (int j = 0; j < m; j++) {
-        Y_sim(i, j) = rpois(gen); // Each row gets m generations from pois(i)
-      }
+      Y_sim(i, j) = rpois(gen);
     }
   }
-  // The parallelization has ended!
 
+  // Parallel Model Fitting & Likelihood Evaluation
   int count_less = 0;
+  double prop_separated = 0.0;
 
-  // The (NEW!) parallelization has started!
-  double prop_seperated = 0;
-#pragma omp parallel reduction(+ : count_less, prop_seperated) if (approx)
-  {
-    // Thread-local
-    arma::vec y_sim_local(n);
-    arma::vec eta_hat_sim(n);
+#pragma omp parallel for schedule(guided)                                      \
+    reduction(+ : count_less, prop_separated) if (run_inner_parallel)
+  for (int j = 0; j < m; ++j) {
+    arma::vec y_sim_local = Y_sim.col(j);
 
-    // Fit our m (default 1000) different mle's.
-    // Each thread is responsible for a certain amount of these fits,
-#pragma omp for schedule(static)
-    for (int j = 0; j < m; j++) {
+    PoissonResult sim_res = fit_poisson_inner(X, y_sim_local, beta_vals);
+    if (sim_res.separated) {
+      prop_separated += 1.0;
+    }
 
-      y_sim_local = Y_sim.col(j);
+    arma::vec eta_hat_sim = X * sim_res.beta;
 
-      // auto s_start = std::chrono::high_resolution_clock::now();
-      PoissonResult sim_res = fit_poisson_inner(X, y_sim_local, beta_vals);
-      if (sim_res.seperated) {
-        prop_seperated++;
-      }
-      // auto s_end = std::chrono::high_resolution_clock::now();
-      // total_solver_time +=
-      //     std::chrono::duration<double>(s_end - s_start).count();
+    double mle_sim = 0.0;
+    double llX_j = 0.0;
 
-      // auto l_start = std::chrono::high_resolution_clock::now();
-      eta_hat_sim = X * sim_res.beta;
+    for (int i = 0; i < n; ++i) {
+      double eta_hat_sim_clamped =
+          std::max(-10.0, std::min(10.0, eta_hat_sim(i)));
 
-      double mle_sim = 0.0;
-      double llX_j = 0.0;
+      // In-place log-likelihood calculation
+      mle_sim +=
+          y_sim_local(i) * eta_hat_sim_clamped - std::exp(eta_hat_sim_clamped);
+      llX_j += y_sim_local(i) * eta(i) - mu(i);
+    }
 
-      for (int i = 0; i < n; i++) {
-        double eta_hat_sim_clamped = eta_hat_sim(i);
-        if (eta_hat_sim_clamped < -10.0)
-          eta_hat_sim_clamped = -10.0;
-        if (eta_hat_sim_clamped > 10.0)
-          eta_hat_sim_clamped = 10.0;
+    double f_X_j = llX_j - mle_sim;
 
-        // In place loglikelihood calculation
-        mle_sim += y_sim_local(i) * eta_hat_sim_clamped -
-                   std::exp(eta_hat_sim_clamped);
-        llX_j += y_sim_local(i) * eta(i) - mu(i);
-      }
-      // auto l_end = std::chrono::high_resolution_clock::now();
-      // total_likelihood_time +=
-      //     std::chrono::duration<double>(l_end - l_start).count();
-
-      double f_X_j = llX_j - mle_sim;
-
-      // Each thread will have their own count_less at the end
-      // Then the reduction kicks in and aggregates
-      if (f_X_j <= f_x) {
-        count_less++;
-      }
+    if (f_X_j <= f_x) {
+      count_less++;
     }
   }
-  prop_seperated = prop_seperated / m;
 
-  // auto t_end = std::chrono::high_resolution_clock::now();
+  double prop_sep = prop_separated / m;
+  double poss = 1.0 * count_less / m;
 
-  // Print results
-  // Rcpp::Rcout << "\n--- POISSON PROFILE ---" << "\n";
-  // Rcpp::Rcout << "Total Time:      "
-  // << std::chrono::duration<double>(t_end - t_start).count()
-  // << "s\n";
-  // Rcpp::Rcout << "Data Gen Time:   "
-  //             << std::chrono::duration<double>(t_sim_end - t_start).count()
-  //             << "s\n";
-  // Rcpp::Rcout << "Sum Solver Time: " << total_solver_time
-  //             << "s (Combined across threads)\n";
-  // Rcpp::Rcout << "Sum LL Time:     " << total_likelihood_time
-  //             << "s (Combined across threads)\n";
-
-  return {(double)count_less / m, orig_seperated, prop_seperated};
+  return {poss, orig_separated, prop_sep};
 }

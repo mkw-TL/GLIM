@@ -2,7 +2,7 @@
 % Please edit documentation in R/glim_logic.R
 \name{coef.glim_object}
 \alias{coef.glim_object}
-\title{Extract the log likelihood at the MLE}
+\title{Extract the MLE coefficients}
 \usage{
 \method{coef}{glim_object}(object, ...)
 }
@@ -12,8 +12,8 @@
 \item{...}{Additional arguments}
 }
 \value{
-A logLik class object
+A vector of MLE coefficients
 }
 \description{
-Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+Extract the MLE coefficients
 }

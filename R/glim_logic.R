@@ -31,9 +31,21 @@ NULL
 #' @param m Number of evaluations per beta (number of samples).
 #' @param parallel Logical indicating whether to run in parallel (primarily for debugging).
 #' @param approx Logical indicating whether to use the elliptical approximation.
+#' @param ... A way to pass in .Random.seed
 #' @return A matrix of evaluated possibility outputs.
 #' @noRd
-glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, parallel, approx) {
+glim_raw <- function(
+  X,
+  y,
+  family = "gaussian",
+  betas,
+  mle_coefs,
+  mle_val,
+  m,
+  parallel,
+  approx,
+  base_seed
+) {
   if (parallel) {
     num_omp_threads <- max(1, parallel::detectCores() - 1)
 
@@ -42,7 +54,7 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
     if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
       original_blas_threads <- RhpcBLASctl::blas_get_num_procs()
       RhpcBLASctl::blas_set_num_threads(1)
-      # If we get a function crash, reset the threads back to what it originally was
+      # If we get a function crash (or not!), reset the threads back to what it originally was
       on.exit(RhpcBLASctl::blas_set_num_threads(original_blas_threads), add = TRUE)
     }
   } else {
@@ -58,12 +70,9 @@ glim_raw <- function(X, y, family = "gaussian", betas, mle_coefs, mle_val, m, pa
     num_threads = num_omp_threads,
     m = m,
     parallel = parallel,
-    approx = approx
+    approx = approx,
+    base_seed = base_seed
   )
-  # If we changed the amount of threads that blas uses, change this back. Globally for the R session.
-  if (parallel & requireNamespace("RhpcBLASctl", quietly = TRUE)) {
-    RhpcBLASctl::blas_set_num_threads(original_blas_threads)
-  }
   return(output)
 }
 
@@ -104,7 +113,8 @@ generate_grid <- function(
     b_val = 1, # found through a grid search
     max_it = 25,
     parallel = FALSE,
-    m = m # This is our m value
+    m = m, # This is our m value
+    base_seed = sample.int(.Machine$integer.max, 1)
   )
   q_val <- qchisq(1 - alpha_target, df = length(mle_coefs)) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
   base_scale <- sqrt(dispersion * q_val * (1 / eigen_vals))
@@ -175,7 +185,8 @@ glim_inner_prob_approx_samples <- function(
   dispersion,
   a_val,
   b_val,
-  max_it
+  max_it,
+  base_seed
 ) {
   if (parallel) {
     num_omp_threads <- max(1, parallel::detectCores() - 1)
@@ -221,7 +232,9 @@ glim_inner_prob_approx_samples <- function(
       a_val = a_val,
       b_val = b_val,
       max_it = max_it,
-      parallel = TRUE
+      parallel = TRUE,
+      m = m,
+      base_seed = base_seed
     )
     prev_xi <- xi[[i]]
   }
@@ -295,8 +308,8 @@ glim_inner_prob_approx_samples <- function(
 #' @export
 glim <- function(
   formula,
-  data = NULL,
   family = "gaussian",
+  data = NULL,
   m = 1000,
   approx = FALSE,
   radial = FALSE,
@@ -607,7 +620,7 @@ glim <- function(
 
   if (approx == FALSE & radial == FALSE) {
     if (is.null(betas)) {
-      message("generating_grid_of_betas")
+      message("generating grid of betas")
       betas <- generate_grid(
         X,
         y,
@@ -620,9 +633,15 @@ glim <- function(
         n_grid_evals = n_grid_evals,
         m = m
       )
+      message(sprintf(
+        "There are %d grid points to evaluate. Each grid point requires %d glm fits\n",
+        n_grid_evals^length(mle_coefs),
+        m
+      ))
       colnames(betas) <- colnames(X)
     }
-    message(cat("Our MLE is: ", mle_coefs))
+    message("Our MLE is: ", paste(round(mle_coefs, 4), collapse = ", "))
+    base_seed <- sample.int(.Machine$integer.max, 1)
     obj_to_return <- list(
       possibilities = glim_raw(
         X,
@@ -633,7 +652,8 @@ glim <- function(
         mle_val = ll_mle_original_data,
         m = m,
         parallel = parallel,
-        approx = approx
+        approx = approx,
+        base_seed = base_seed
       ),
       samples = NULL,
       betas_evaluated = betas,
@@ -649,6 +669,7 @@ glim <- function(
   }
 
   if ((approx == TRUE) & (radial == FALSE)) {
+    base_seed <- sample.int(.Machine$integer.max, 1)
     samples <- glim_inner_prob_approx_samples(
       X = X,
       y = y,
@@ -661,7 +682,8 @@ glim <- function(
       dispersion = dispersion,
       a_val = a_val,
       b_val = b_val,
-      max_it = max_it
+      max_it = max_it,
+      base_seed = base_seed
     )
     betas <- generate_grid(
       X,
@@ -1250,20 +1272,16 @@ logLik.glim_object <- function(object, ...) {
   return(val)
 }
 
-#' Extract the log likelihood at the MLE
+#' Extract the MLE coefficients
 #'
-#' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+#' Extract the MLE coefficients
 #'
 #' @param object A 'glim_object' from 'glim()'
 #' @param ... Additional arguments
-#' @return A logLik class object
+#' @return A vector of MLE coefficients
 #' @export
 coef.glim_object <- function(object, ...) {
-  val <- object$logLik
-  attr(val, "df") <- length(object$mle_coefs)
-  attr(val, "nobs") <- length(object$y)
-  class(val) <- "logLik"
-  return(val)
+  return(object$mle_coefs)
 }
 
 #' Extract the log likelihood at the MLE

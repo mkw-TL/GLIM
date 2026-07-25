@@ -85,7 +85,8 @@ inline double sum_softplus(const arma::vec &eta) {
 LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
                                   const arma::vec &mle_coefs,
                                   const arma::vec &beta_vals, int m,
-                                  bool approx, bool appendix) {
+                                  bool approx, bool radial, uint32_t base_seed,
+                                  int eval_index) {
   // auto t_start = std::chrono::high_resolution_clock::now();
 
   int n = X.n_rows;
@@ -110,19 +111,31 @@ LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   }
 
   // Computing new random binomial data:
-  thread_local std::random_device rd;
-  thread_local std::mt19937 gen(rd());
-  std::uniform_real_distribution<double> runif(0.0, 1.0);
-  arma::mat Y(n, m);
+  bool is_already_parallel = false;
+#ifdef _OPENMP
+  is_already_parallel = omp_in_parallel();
+#endif
 
+  // Only enable inner parallelization if requested AND not already inside an
+  // outer parallel region
+  bool run_inner_parallel = (radial || approx) && !is_already_parallel;
+
+  // Derive a unique base seed for this specific grid evaluation point
+  uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
+
+  arma::mat Y_sim(n, m);
+  // --- 1. Deterministic Parallel Data Generation ---
+#pragma omp parallel for schedule(static) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
-    for (int i = 0; i < n; i++) {
-      Y(i, j) = (runif(gen) < p(i)) ? 1.0 : 0.0;
+    std::mt19937 gen(eval_seed + j);
+    for (int i = 0; i < n; ++i) {
+      std::bernoulli_distribution rbern(p(i));
+      Y_sim(i, j) = rbern(gen) ? 1.0 : 0.0;
     }
   }
 
   // Fast cross-product for all M simulations
-  arma::rowvec llX = eta.t() * Y - sum_log_term;
+  arma::rowvec llX = eta.t() * Y_sim - sum_log_term;
 
   // auto t_sim_end = std::chrono::high_resolution_clock::now();
 
@@ -130,37 +143,33 @@ LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   double prop_sep = 0;
 
 // Inner loop: fit models entirely in C++
-#pragma omp parallel for schedule(static) reduction(                           \
-        + : count_less, prop_sep) if (approx == true && appendix == false)
+#pragma omp parallel for schedule(guided)                                      \
+    reduction(+ : count_less, prop_sep) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
-    arma::vec y_sim = Y.col(j);
+    arma::vec y_sim = Y_sim.col(j);
 
-    // auto s_start = std::chrono::high_resolution_clock::now();
-
-    // Call the inner thread-safe solver
+    // Call inner solver returning LogisticResult struct
     LogisticResult sim_res = fit_logistic(X, y_sim, beta_vals);
-    if (sim_res.seperated == true) {
-      prop_sep++;
+    if (sim_res.separated) {
+      prop_sep += 1.0;
     }
 
     arma::vec eta_sim_hat = X * sim_res.beta;
 
+    // Fast softplus evaluation for simulated MLE log-likelihood
     double mle_sim = arma::dot(y_sim, eta_sim_hat) - sum_softplus(eta_sim_hat);
 
-    // Calculate the simulated test statistic
-    // llX[j] is the log-likelihood of the simulated data under the proposed
-    // betas
+    // Use pre-computed llX[j] instead of recomputing inside the loop
     double f_x_sim = llX[j] - mle_sim;
 
-    // Increment count_less if the simulated statistic is more extreme than the
-    // observed
     if (f_x_sim <= f_x) {
       count_less++;
     }
   }
 
-  prop_sep = prop_sep / m;
-  double poss = 1.0 * count_less / m;
+  prop_sep /= m;
+  double poss = static_cast<double>(count_less) / m;
+
   return {poss, orig_separated, prop_sep};
 }
 
@@ -169,7 +178,7 @@ double compute_logistic_ll(const arma::mat &X, const arma::vec &y,
                            const arma::vec &beta_vals) {
   LogisticResult res = fit_logistic(X, y, beta_vals);
   double ll = -10000000000;
-  if (!res.seperated) {
+  if (!res.separated) {
     ll = arma::dot(y, X * beta_vals) - sum_softplus(X * beta_vals);
   }
   return ll;
