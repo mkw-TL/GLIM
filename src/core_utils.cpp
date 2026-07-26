@@ -67,27 +67,24 @@ public:
 };
 
 // [[Rcpp::export]]
-arma::mat generate_unit_matrix(int n, int d) {
-  // Thread-local variables persist across calls but are completely unique to
-  // each thread
-  thread_local std::random_device rd;
-  thread_local std::mt19937 gen(rd());
+arma::mat generate_unit_matrix(int n, int d, uint32_t base_seed = 0,
+                               int eval_index = 0) {
+  // Derive a deterministic seed unique to this evaluation point
+  uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
+  std::mt19937 gen(eval_seed);
   std::normal_distribution<double> rnorm(0.0, 1.0);
 
   // Initialize matrix: d rows (dimensions) by n columns (samples)
   arma::mat m(d, n);
 
-  // Note that this is the transpose
-  // Populate the matrix with standard normals using our thread-safe engine
+  // Populate matrix with standard normal draws
   for (int j = 0; j < n; ++j) {
-    for (int i = 0; i < d; i++) {
+    for (int i = 0; i < d; ++i) {
       m(i, j) = rnorm(gen);
     }
   }
 
-  // arma::normalise(matrix, p-norm, dimension)
-  // p = 2 specifies the standard Euclidean L2 norm
-  // dim = 0 tells Armadillo to process column-by-column (dim = 1 would do rows)
+  // Normalize column-by-column (dim = 0) using L2 Euclidean norm (p = 2)
   return arma::normalise(m, 2, 0);
 }
 

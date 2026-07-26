@@ -255,7 +255,7 @@ glim_inner_prob_approx_samples <- function(
       lerped_xi <- (1 - w) * xi[[r]] + w * xi[[r + 1]]
     }
 
-    rand_dir <- generate_unit_matrix(1, length(mle_coefs))
+    rand_dir <- generate_unit_matrix(1, length(mle_coefs), base_seed, i)
     spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
 
     samples[, i] <- mle_coefs +

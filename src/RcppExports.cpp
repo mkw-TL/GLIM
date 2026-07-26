@@ -12,14 +12,16 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // generate_unit_matrix
-arma::mat generate_unit_matrix(int n, int d);
-RcppExport SEXP _GLIM_generate_unit_matrix(SEXP nSEXP, SEXP dSEXP) {
+arma::mat generate_unit_matrix(int n, int d, uint32_t base_seed, int eval_index);
+RcppExport SEXP _GLIM_generate_unit_matrix(SEXP nSEXP, SEXP dSEXP, SEXP base_seedSEXP, SEXP eval_indexSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< int >::type n(nSEXP);
     Rcpp::traits::input_parameter< int >::type d(dSEXP);
-    rcpp_result_gen = Rcpp::wrap(generate_unit_matrix(n, d));
+    Rcpp::traits::input_parameter< uint32_t >::type base_seed(base_seedSEXP);
+    Rcpp::traits::input_parameter< int >::type eval_index(eval_indexSEXP);
+    rcpp_result_gen = Rcpp::wrap(generate_unit_matrix(n, d, base_seed, eval_index));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -388,7 +390,7 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_GLIM_generate_unit_matrix", (DL_FUNC) &_GLIM_generate_unit_matrix, 2},
+    {"_GLIM_generate_unit_matrix", (DL_FUNC) &_GLIM_generate_unit_matrix, 4},
     {"_GLIM_fit_glm_omp_cpp", (DL_FUNC) &_GLIM_fit_glm_omp_cpp, 11},
     {"_GLIM_imvar", (DL_FUNC) &_GLIM_imvar, 17},
     {"_GLIM_radial_code", (DL_FUNC) &_GLIM_radial_code, 14},
