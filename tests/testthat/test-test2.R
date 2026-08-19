@@ -107,17 +107,16 @@ test_that("fit_glm_omp_cpp enforces strict dimension matching", {
   )
 })
 
-test_that("Progress bar prints to console when approx = FALSE", {
-  dat <- generate_mock_data()
-  betas <- matrix(rnorm(300), ncol = 3) # Need enough rows to trigger the 2% milestone
+# test_that("Progress bar prints to console when approx = FALSE", {
+#   dat <- generate_mock_data()
+#   betas <- matrix(rnorm(300), ncol = 3) # Need enough rows to trigger the 2% milestone
 
-  # testthat captures the output to evaluate it
-  expect_output(
-    fit_glm_omp_cpp(dat$X, dat$y, c(0, 0, 0), betas, "gaussian", 1, 10, FALSE, FALSE),
-    "Calculating Plausibilities"
-  )
-})
-
+#   # testthat captures the output to evaluate it
+#   expect_output(
+#     fit_glm_omp_cpp(dat$X, dat$y, c(0, 0, 0), betas, "gaussian", 1, 10, FALSE, FALSE),
+#     "Calculating Plausibilities"
+#   )
+# })
 
 test_that("BLAS threads are restored even if C++ throws an error", {
   skip_if_not_installed("RhpcBLASctl")

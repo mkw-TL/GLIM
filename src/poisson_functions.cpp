@@ -1,4 +1,5 @@
 #include "headers.h"
+#include <atomic>
 // #include <chrono>
 // [[Rcpp::depends(RcppArmadillo)]]
 // [[Rcpp::plugins(openmp)]]
@@ -120,6 +121,7 @@ PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
                                    const arma::vec &mle_coefs,
                                    const arma::vec &beta_vals, int m,
                                    bool approx, bool radial,
+                                   std::atomic<bool> &singular_warning,
                                    uint32_t base_seed = 0, int eval_index = 0) {
   int n = X.n_rows;
 

@@ -112,7 +112,8 @@ test_that("glim_raw works with the gaussian family", {
     mle_val = logLik(mle_fit),
     m = 100,
     parallel = FALSE,
-    approx = TRUE
+    approx = TRUE,
+    base_seed = 24
   )
 
   # Assert expected output type or structure

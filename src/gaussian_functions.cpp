@@ -7,16 +7,29 @@ using namespace arma;
 
 // Identity link Gaussian regression is just Ordinary Least Squares (OLS)
 // No IRLS loop is required.
-// [[Rcpp::export]]
-arma::vec fit_gaussian_cpp(const arma::mat &X, const arma::vec &y) {
+arma::vec fit_gaussian_cpp(const arma::mat &X, const arma::vec &y,
+                           std::atomic<bool> &singular_warning) {
   arma::vec proposed_beta;
-  bool success = arma::solve(proposed_beta, X, y, arma::solve_opts::fast);
+  // Now we do step-halfing. Ensures that any improvement we make does
+  // decrease the varaince. Avoids wild steps. Calculate the proposed step
+  bool success =
+      arma::solve(proposed_beta, X, y,
+                  arma::solve_opts::fast + arma::solve_opts::no_approx);
   if (!success) {
-    success = arma::solve(proposed_beta, X, y);
+    // Fast solver failed (e.g. non-positive definite / rank deficient).
+    // Try the general solver without automatic SVD fallback or console
+    // prints.
+    success = arma::solve(proposed_beta, X, y, arma::solve_opts::no_approx);
   }
+
   if (!success) {
-    // pseudo inverse for a full rank matrix X^g = (X^t X)^-1 * X^T
+    // Both exact solvers failed (matrix is genuinely singular/collinear).
+    // 1. Flag the main thread to emit the R warning safely after the loop
+    singular_warning = true;
+
+    // 2. Compute the approximate solution via pseudoinverse (SVD)
     proposed_beta = arma::pinv(X) * y;
+    success = true; // Mark as resolved via approximation
   }
   return proposed_beta;
 }
@@ -46,12 +59,11 @@ double est_dispersion_normal(const arma::vec &y, const arma::vec &mu, int p) {
 }
 
 // Main simulation function for Gaussian
-// [[Rcpp::export]]
 double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs,
                            const arma::vec &beta_vals, int m, bool approx,
-                           bool radial, uint32_t base_seed = 0,
-                           int eval_index = 0) {
+                           bool radial, std::atomic<bool> &singular_warning,
+                           uint32_t base_seed = 0, int eval_index = 0) {
   int n = X.n_rows;
 
   arma::vec mu = X * beta_vals; // Identity link
@@ -92,7 +104,7 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
 
-    arma::vec sim_coefs = fit_gaussian_cpp(X, y_sim);
+    arma::vec sim_coefs = fit_gaussian_cpp(X, y_sim, singular_warning);
     arma::vec mu_hat_sim = X * sim_coefs;
     double mle_sim = compute_gaussian_ll(y_sim, mu_hat_sim, sigma);
     double llX_j = compute_gaussian_ll(y_sim, mu, sigma);

@@ -91,11 +91,11 @@ generate_grid <- function(
   dispersion,
   ll_mle_original_data,
   n_grid_evals = 25,
-  m = 500
+  m = 1000
 ) {
   initial_xi <- rep(1, length(mle_coefs))
 
-  alpha_target <- 0.001
+  alpha_target <- 0.01
 
   imvar_xi <- imvar(
     X,
@@ -108,9 +108,10 @@ generate_grid <- function(
     eigen_vecs,
     eigen_vals,
     dispersion,
+    generate_grid = TRUE,
     tol = .001, # the tolerance value
-    a_val = .5, # found through a grid search
-    b_val = 1, # found through a grid search
+    a_val = 2, # found through a grid search
+    b_val = .65, # found through a grid search
     max_it = 25,
     parallel = FALSE,
     m = m, # This is our m value
@@ -123,6 +124,7 @@ generate_grid <- function(
 
   # To make the beta coordinate the largest, we have our transformation matrix (times u, where u is a unit sphere).
   # Then, for a particular coordinate, we have b1 = row_1 * u, where this is maximized if u is in the direction of row_1.
+  # Is component-wise squaring
   H <- sqrt(rowSums(transformed_mat^2))
 
   # Generate the Axis-Aligned Grid using the bounding box widths
@@ -144,7 +146,7 @@ generate_grid <- function(
   shifted_points <- sweep(betas, 2, mle_coefs, FUN = "-") # 2 means that it applies along the columns. Betas - mle_coefs for each column
   rotated_points <- shifted_points %*% eigen_vecs
   scaled_sq_points <- sweep(rotated_points^2, 2, semi_axes^2, FUN = "/")
-  inside_indices <- rowSums(scaled_sq_points) <= 1
+  inside_indices <- rowSums(scaled_sq_points) < 1.001 # allowing for machine tolerance. NEEDS TO BE STRICTLY LESS THAN
   # Check if they are inside the unit sphere (i.e. inside the ellipse)
   if (!any(inside_indices)) {
     stop(
@@ -203,10 +205,11 @@ glim_inner_prob_approx_samples <- function(
     num_omp_threads <- 1
   }
   B <- 100
-  AA <- seq(0.001, 0.999, length.out = B)
+  AA <- seq(0.01, 0.99, length.out = B)
 
   i <- 0
   xi <- list()
+  coordinate_marginal_bounds <- list()
   prev_xi <- rep(1, length(mle_coefs))
   pb <- progress::progress_bar$new(
     total = length(AA),
@@ -228,7 +231,8 @@ glim_inner_prob_approx_samples <- function(
       as.matrix(eJ$vectors),
       as.vector(eJ$values),
       dispersion,
-      tol = .01,
+      generate_grid = FALSE,
+      tol = .005,
       a_val = a_val,
       b_val = b_val,
       max_it = max_it,
@@ -237,6 +241,16 @@ glim_inner_prob_approx_samples <- function(
       base_seed = base_seed
     )
     prev_xi <- xi[[i]]
+    q_val <- qchisq(1 - alpha, df = length(mle_coefs)) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
+    base_scale <- sqrt(dispersion * q_val * (1 / eJ$values))
+    semi_axes <- base_scale * sqrt(prev_xi)
+    transformed_mat <- eJ$vectors %*% diag(as.vector(semi_axes)) # Takes the principle axes (through diag) and scales them (by semi_axes), then rotate to eigen_vector span
+
+    # To make the beta coordinate the largest, we have our transformation matrix (times u, where u is a unit sphere).
+    # Then, for a particular coordinate, we have b1 = row_1 * u, where this is maximized if u is in the direction of row_1.
+    # Is component-wise squaring
+    H <- sqrt(rowSums(transformed_mat^2))
+    coordinate_marginal_bounds[[i]] <- H
   }
 
   U <- runif(m)
@@ -263,7 +277,12 @@ glim_inner_prob_approx_samples <- function(
         sqrt(qchisq(1 - u, length(mle_coefs))) * sqrt(lerped_xi) * spatial_dir * sqrt(dispersion)
       )
   }
-  return(samples)
+  return(list(
+    samples = samples,
+    xi = xi,
+    alphas = AA,
+    coordinate_marginal_bounds = coordinate_marginal_bounds
+  ))
 }
 
 #' Generalized Linear Inferential Models (GLIM) Main Function
@@ -339,7 +358,7 @@ glim <- function(
   }
   # If more than one column is all 1s, drop the automatic R intercept
   # Gets rid of auto-prepended intercept if there already exists one. X == 1 is a boolean vector, so colsums is a good way of doing this
-  if (sum(colSums(X == 1) == nrow(X)) > 1 && "(Intercept)" %in% colnames(X)) {
+  if (sum(colSums(X == 1) == nrow(X)) > 1 & "(Intercept)" %in% colnames(X)) {
     X <- X[, colnames(X) != "(Intercept)", drop = FALSE]
   }
   y <- model.response(mf, "any")
@@ -461,17 +480,17 @@ glim <- function(
     choices = c("gaussian", "poisson", "gamma", "binomial", "inverse.gaussian")
   )
 
-  if (!is.logical(parallel) || length(parallel) != 1 || is.na(parallel)) {
+  if (!is.logical(parallel) | length(parallel) != 1 | is.na(parallel)) {
     stop("Input Error: 'parallel' must be either TRUE or FALSE.")
   }
 
-  if (!is.logical(approx) || length(approx) != 1 || is.na(approx)) {
+  if (!is.logical(approx) | length(approx) != 1 | is.na(approx)) {
     stop("Input Error: 'approx' must be either TRUE or FALSE.")
   }
 
   # Inside glim_raw or the main exported wrapper
   if (family == "poisson") {
-    if (any(y < 0) || !all(y == floor(y))) {
+    if (any(y < 0) | !all(y == floor(y))) {
       stop("Input Error: For Poisson family, 'y' must contain only non-negative integers.")
     }
   } else if (family %in% c("gamma", "inverse.gaussian")) {
@@ -483,11 +502,11 @@ glim <- function(
     }
   }
 
-  if (!is.numeric(m) || length(m) != 1 || m <= 0 || m != floor(m)) {
+  if (!is.numeric(m) | length(m) != 1 | m <= 0 | m != floor(m)) {
     stop("Input Error: 'm' (number of samples) must be a single positive integer.")
   }
 
-  if ((!is.numeric(tol) || length(tol) != 1 || tol <= 0)) {
+  if ((!is.numeric(tol) | length(tol) != 1 | tol <= 0)) {
     stop("Input Error: 'tol' must be a strictly positive numeric scalar.")
   }
 
@@ -497,15 +516,15 @@ glim <- function(
   }
   # Got rid of intercept logic, since covered.
   ## Binomial setup
-  if (family == "binomial" || family == "logistic") {
+  if (family == "binomial" | family == "logistic") {
     if (is.data.frame(X)) {
       X <- as.matrix(X)
     }
-    if (is.vector(y) && all(y == 0 | y == 1)) {
+    if (is.vector(y) & all(y == 0 | y == 1)) {
       if (length(y) != nrow(X)) {
         stop("y and X lengths differ")
       }
-    } else if (is.matrix(y) && ncol(y) == 2) {
+    } else if (is.matrix(y) & ncol(y) == 2) {
       # Two-column integer matrix (Successes / Failures)
       successes <- y[, 1]
       failures <- y[, 2]
@@ -539,7 +558,7 @@ glim <- function(
     # We are using (-1) so that R knows the X matrix we are using; we don't want to append any extra intercepts
     fit <- glm(y ~ X - 1, family = binomial)
     eps <- 10 * .Machine$double.eps
-    if (any(fit$fitted.values > (1 - eps)) || any(fit$fitted.values < eps)) {
+    if (any(fit$fitted.values > (1 - eps)) | any(fit$fitted.values < eps)) {
       stop("Data is completely seperable. MLE does not exist")
     }
     mle_coefs <- fit$coefficients
@@ -590,7 +609,7 @@ glim <- function(
     p2p_function <- prob2poss_invgauss
 
     ## Gaussian Setup
-  } else if (family == "normal" || family == "gaussian") {
+  } else if (family == "normal" | family == "gaussian") {
     fit <- lm(y ~ X - 1)
     ll_mle_original_data <- as.numeric(logLik(fit))
     mle_coefs <- coef(fit)
@@ -614,11 +633,11 @@ glim <- function(
       )
     }
   }
-  if (!missing(dispersion) && (!is.numeric(dispersion) || dispersion <= 0)) {
+  if (!missing(dispersion) & (!is.numeric(dispersion) | dispersion <= 0)) {
     stop("Internal error: 'dispersion' must be a strictly positive numeric value.")
   }
 
-  if (approx == FALSE & radial == FALSE) {
+  if ((approx == FALSE) & (radial == FALSE)) {
     if (is.null(betas)) {
       message("generating grid of betas")
       betas <- generate_grid(
@@ -634,10 +653,15 @@ glim <- function(
         m = m
       )
       message(sprintf(
-        "There are %d grid points to evaluate. Each grid point requires %d glm fits\n",
+        "There are (up to) %d grid points to evaluate. Each grid point requires %d glm fits\n",
         n_grid_evals^length(mle_coefs),
         m
       ))
+      if (n_grid_evals^length(mle_coefs) > 100000) {
+        message(sprintf(
+          "Be warned of crashes due to lack of memory For 5+ predictors, use approx = TRUE"
+        ))
+      }
       colnames(betas) <- colnames(X)
     }
     message("Our MLE is: ", paste(round(mle_coefs, 4), collapse = ", "))
@@ -662,7 +686,8 @@ glim <- function(
       y = y,
       mle_coefs = mle_coefs,
       logLik = ll_mle_original_data,
-      vcov = vcov
+      vcov = vcov,
+      dispersion = dispersion
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -670,7 +695,7 @@ glim <- function(
 
   if ((approx == TRUE) & (radial == FALSE)) {
     base_seed <- sample.int(.Machine$integer.max, 1)
-    samples <- glim_inner_prob_approx_samples(
+    inner_prob <- glim_inner_prob_approx_samples(
       X = X,
       y = y,
       family = family,
@@ -685,30 +710,20 @@ glim <- function(
       max_it = max_it,
       base_seed = base_seed
     )
-    betas <- generate_grid(
-      X,
-      y,
-      family,
-      mle_coefs,
-      eJ$vectors,
-      eJ$values,
-      dispersion,
-      ll_mle_original_data,
-      n_grid_evals,
-      m
-    )
-    poss <- p2p_function(X, y, samples, t(betas))
-    colnames(betas) <- colnames(X)
     obj_to_return <- list(
-      possibilities = poss,
-      samples = samples,
-      betas_evaluated = betas,
+      possibilities = NULL,
+      samples = inner_prob$samples,
+      xi = inner_prob$xi,
+      alphas = inner_prob$alphas,
+      coordinate_marginal_bounds = inner_prob$coordinate_marginal_bounds,
+      betas_evaluated = NULL,
       family = family,
       X = X,
       y = y,
       mle_coefs = mle_coefs,
       logLik = ll_mle_original_data,
-      vcov = vcov
+      vcov = vcov,
+      dispersion = dispersion
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -718,7 +733,7 @@ glim <- function(
     stop("Radial and Elliptical approximation methods cannot both be used")
   }
   if (radial == TRUE & approx == FALSE) {
-    samples <- radial(
+    radial_list <- radial(
       num_samps,
       X,
       y,
@@ -734,23 +749,21 @@ glim <- function(
       b_val,
       n_grid_evals = n_grid_evals
     )
-    beta_seq_list <- list()
-    for (i in 1:nrow(samples)) {
-      beta_seq_list[[i]] <- seq(min(samples[i, ]), max(samples[i, ]), length.out = n_grid_evals)
-    }
-    beta_radial_grid <- as.matrix(expand.grid(beta_seq_list))
-    poss <- p2p_function(X, y, samples, t(beta_radial_grid))
-    colnames(beta_radial_grid) <- colnames(X)
+    samples <- radial_list$samples
+    betas_evaluated <- radial_list$betas_evaluated
+
+    poss <- p2p_function(family, X, y, samples, t(betas_evaluated))
     obj_to_return <- list(
       possibilities = poss,
       samples = samples,
-      betas = beta_radial_grid,
+      betas_evaluated = betas_evaluated,
       family = family,
       X = X,
       y = y,
       mle_coefs = mle_coefs,
       logLik = ll_mle_original_data,
-      vcov = vcov
+      vcov = vcov,
+      dispersion = dispersion
     )
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -767,11 +780,11 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
   if (is.data.frame(X)) {
     X <- as.matrix(X)
   }
-  if (is.vector(y) && all(y == 0 | y == 1)) {
+  if (is.vector(y) & all(y == 0 | y == 1)) {
     if (length(y) != nrow(X)) {
       stop("y and X lengths differ")
     }
-  } else if (is.matrix(y) && ncol(y) == 2) {
+  } else if (is.matrix(y) & ncol(y) == 2) {
     # Two-column integer matrix (Successes / Failures)
     successes <- y[, 1]
     failures <- y[, 2]
@@ -892,7 +905,7 @@ compute_logistic_ll_r <- function(X, y, beta_vals) {
 #'
 #' @noRd
 prob2poss_gaussian <- function(X, y, samples, the_compared_theta) {
-  if (is.data.frame(X) || is.vector(X)) {
+  if (is.data.frame(X) | is.vector(X)) {
     X <- as.matrix(X)
   }
 
@@ -1003,7 +1016,7 @@ radial <- function(
     n_grid_evals = n_grid_evals,
     m = m
   )
-  return(output_samples)
+  return(list(output_samples = output_samples, betas_evaluated = grid))
 }
 
 #' Probability to Possibility Mapping for Poisson Regression
@@ -1102,6 +1115,7 @@ plot.glim_object <- function(x, ...) {
   betas <- x$betas_evaluated
   poss <- x$possibilities
   family <- x$family
+  alphas <- NULL
   args <- list(...)
   alpha <- -1
   if ("alpha" %in% names(args)) {
@@ -1113,57 +1127,109 @@ plot.glim_object <- function(x, ...) {
       stop("Alpha cutoff invalid")
     }
   }
+  if ("alphas" %in% names(x)) {
+    alphas <- x$alphas
+  }
+  if (is.null(betas)) {
+    # This means we are in the elliptical case
+    num_predictors <- length(x$mle_coefs)
+    grid_cols <- ceiling(sqrt(num_predictors))
+    grid_rows <- ceiling(num_predictors / grid_cols)
 
-  num_predictors <- ncol(betas)
-  grid_cols <- ceiling(sqrt(num_predictors))
-  grid_rows <- ceiling(num_predictors / grid_cols)
+    old_par <- par(no.readonly = TRUE)
+    # Add 'oma' (outer margin area) to par(). c(bottom, left, top, right)
+    # We add 3 lines of space to the top
+    par(mfrow = c(grid_rows, grid_cols), mar = c(4, 4, 3, 1), oma = c(0, 0, 3, 0))
 
-  old_par <- par(no.readonly = TRUE)
-  # Add 'oma' (outer margin area) to par(). c(bottom, left, top, right)
-  # We add 3 lines of space to the top
-  par(mfrow = c(grid_rows, grid_cols), mar = c(4, 4, 3, 1), oma = c(0, 0, 3, 0))
+    on.exit(par(old_par)) # if any crashes, don't have the user's state altered
+    xs <- c()
+    ys <- c()
+    for (col in 1:length(x$mle_coefs)) {
+      for (a in 1:length(alphas)) {
+        xs[a] <- x$mle_coefs[col] - x$coordinate_marginal_bounds[[a]][col]
+        ys[a] <- alphas[a]
+      }
+      xs[length(alphas) + 1] <- x$mle_coefs[col]
+      ys[length(alphas) + 1] <- 1
+      for (a in 1:length(alphas)) {
+        xs[length(alphas) + 1 + a] <- x$mle_coefs[col] + x$coordinate_marginal_bounds[[a]][col]
+        ys[length(alphas) + 1 + a] <- alphas[a]
+      }
+      ord <- order(xs)
+      xs <- xs[ord]
+      ys <- ys[ord]
 
-  on.exit(par(old_par)) # if any crashes, don't have the user's state altered
-
-  # Where the marginalization happens
-  for (col in 1:ncol(betas)) {
-    max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
-
-    # Filter out -Inf values from empty grid slices
-    beta_vals <- as.numeric(names(max_plaus))
-    valid <- is.finite(beta_vals) & is.finite(max_plaus)
-
-    if (any(valid)) {
-      plot.default(
-        beta_vals[valid],
-        max_plaus[valid],
-        type = 'l',
-        xlab = colnames(betas)[col],
-        ylab = "Profiled Plausibility",
-        ylim = c(0, 1)
+      plot.default(xs, ys, type = "l")
+      # Margin text. Ensuring family is correctly uppercased
+      mtext(
+        text = paste0(
+          toupper(substr(family, 1, 1)),
+          substr(family, 2, nchar(family)),
+          " Possibility contours (marginalized)"
+        ),
+        side = 3, # 3 means top
+        outer = TRUE, # Put it in the outer margin space
+        line = -.3, # Distance from the edge of the plots
+        cex = 1.3, # Font size multiplier (makes it larger)
+        font = 2 # 2 means Bold
       )
       if (alpha != -1) {
         abline(h = alpha, col = "red", lty = 3)
       }
       grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
-    } else {
-      # Draw an empty box if no data falls in this slice
-      plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
     }
+  } else {
+    num_predictors <- ncol(betas)
+    grid_cols <- ceiling(sqrt(num_predictors))
+    grid_rows <- ceiling(num_predictors / grid_cols)
+
+    old_par <- par(no.readonly = TRUE)
+    # Add 'oma' (outer margin area) to par(). c(bottom, left, top, right)
+    # We add 3 lines of space to the top
+    par(mfrow = c(grid_rows, grid_cols), mar = c(4, 4, 3, 1), oma = c(0, 0, 3, 0))
+
+    on.exit(par(old_par)) # if any crashes, don't have the user's state altered
+
+    # Where the marginalization happens
+    for (col in 1:ncol(betas)) {
+      max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
+
+      # Filter out -Inf values from empty grid slices
+      beta_vals <- as.numeric(names(max_plaus))
+      valid <- is.finite(beta_vals) & is.finite(max_plaus)
+
+      if (any(valid)) {
+        plot.default(
+          beta_vals[valid],
+          max_plaus[valid],
+          type = 'l',
+          xlab = colnames(betas)[col],
+          ylab = "Profiled Plausibility",
+          ylim = c(0, 1)
+        )
+        if (alpha != -1) {
+          abline(h = alpha, col = "red", lty = 3)
+        }
+        grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
+      } else {
+        # Draw an empty box if no data falls in this slice
+        plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
+      }
+    }
+    # Margin text. Ensuring family is correctly uppercased
+    mtext(
+      text = paste0(
+        toupper(substr(family, 1, 1)),
+        substr(family, 2, nchar(family)),
+        " Possibility contours (marginalized)"
+      ),
+      side = 3, # 3 means top
+      outer = TRUE, # Put it in the outer margin space
+      line = -.3, # Distance from the edge of the plots
+      cex = 1.3, # Font size multiplier (makes it larger)
+      font = 2 # 2 means Bold
+    )
   }
-  # Margin text. Ensuring family is correctly uppercased
-  mtext(
-    text = paste0(
-      toupper(substr(family, 1, 1)),
-      substr(family, 2, nchar(family)),
-      " Possibility contours (marginalized)"
-    ),
-    side = 3, # 3 means top
-    outer = TRUE, # Put it in the outer margin space
-    line = -.3, # Distance from the edge of the plots
-    cex = 1.3, # Font size multiplier (makes it larger)
-    font = 2 # 2 means Bold
-  )
 }
 
 
@@ -1197,46 +1263,64 @@ print.glim_object <- function(x, ...) {
   poss <- x$possibilities
   family <- x$family
   mle_coefs <- as.numeric(x$mle_coefs)
+  xis <- NULL
+  coordinate_marginal_bounds <- NULL
+  if ("xi" %in% names(x)) {
+    xis <- x$xi
+  }
+  if ("alphas" %in% names(x)) {
+    alphas <- x$alphas
+  }
+  if ("coordinate_marginal_bounds" %in% names(x)) {
+    coordinate_marginal_bounds <- x$coordinate_marginal_bounds[[sum(alphas > 1 - alpha)]] # Need to get the opposite. coordinate_marginal_bounds[[1]] corresponds to alpha = .01, CI of 99%
+  }
+
+  dispersion <- x$dispersion
 
   cat(sprintf("%.0f%% (marginal) confidence and credible region:\n", (1 - alpha) * 100))
   cat("------------------------------------------------------------------------\n")
 
-  # Initialize vectors to collect data for the table
-  row_names <- colnames(betas)
-  mle_vals <- numeric(ncol(betas))
-  # Initialize empty vectors with true NA values instead of 0
-  lower_bound <- rep(NA_real_, ncol(betas))
-  upper_bound <- rep(NA_real_, ncol(betas))
+  if (!is.null(betas)) {
+    # Initialize vectors to collect data for the table
+    row_names <- colnames(betas)
+    mle_vals <- numeric(ncol(betas))
+    # Initialize empty vectors with true NA values instead of 0
+    lower_bound <- rep(NA_real_, ncol(betas))
+    upper_bound <- rep(NA_real_, ncol(betas))
 
-  for (col in 1:ncol(betas)) {
-    max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
+    for (col in 1:ncol(betas)) {
+      max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
 
-    beta_vals <- as.numeric(names(max_plaus))
-    valid <- is.finite(beta_vals) & is.finite(max_plaus)
-    alpha_cut <- valid & (max_plaus > alpha)
-    valid_betas <- beta_vals[alpha_cut]
+      beta_vals <- as.numeric(names(max_plaus))
+      valid <- is.finite(beta_vals) & is.finite(max_plaus)
+      alpha_cut <- valid & (max_plaus > alpha)
+      valid_betas <- beta_vals[alpha_cut]
 
-    # Save results into our vectors
-    mle_vals[col] <- mle_coefs[col]
-    if (length(valid_betas) > 0) {
-      if (min(valid_betas) != min(betas[, col])) {
-        lower_bound[col] <- min(valid_betas)
-      } else {
-        lower_bound[col] <- NA_real_
+      # Save results into our vectors
+      if (length(valid_betas) > 0) {
+        if (min(valid_betas) != min(betas[, col])) {
+          lower_bound[col] <- min(valid_betas)
+        } else {
+          lower_bound[col] <- NA_real_
+        }
+      }
+      if (length(valid_betas) > 0) {
+        if (max(valid_betas) != max(betas[, col])) {
+          upper_bound[col] <- max(valid_betas)
+        } else {
+          upper_bound[col] <- NA_real_
+        }
       }
     }
-    if (length(valid_betas) > 0) {
-      if (max(valid_betas) != max(betas[, col])) {
-        upper_bound[col] <- max(valid_betas)
-      } else {
-        upper_bound[col] <- NA_real_
-      }
-    }
+  } else {
+    upper_bound <- mle_coefs + coordinate_marginal_bounds # marginal distances
+    lower_bound <- mle_coefs - coordinate_marginal_bounds
+    row_names <- colnames(x$X)
   }
 
   # Build the structured data frame
   summary_table <- data.frame(
-    Estimate = sprintf("%.4f", mle_vals),
+    Estimate = sprintf("%.4f", mle_coefs),
     Lower = sprintf("%.4f", lower_bound),
     Upper = sprintf("%.4f", upper_bound),
     row.names = row_names
@@ -1393,13 +1477,8 @@ compute_ll <- function(family, y, X, betas) {
   } else if (family == "binomial") {
     ll <- compute_logistic_ll_r(X, y, betas)
   } else if (family == "inverse.gaussian") {
-    print("here")
-
     # Again, note that 1/eta will be element-wise
     eta <- X %*% betas
-    print(eta)
-    print(mle_estimate_dispersion_inv_gauss(y, mean(y)))
-    print(sqrt(1 / eta))
     ll <- compute_invgauss_ll_r(
       y,
       sqrt(1 / eta),
@@ -1449,8 +1528,6 @@ prob2poss <- function(family, X, y, samples, the_compared_theta) {
   if (is.data.frame(the_compared_theta)) {
     the_compared_theta <- as.matrix(the_compared_theta)
   }
-  print(dim(X))
-  print(dim(samples))
   if (!is.vector(the_compared_theta)) {
     if (ncol(the_compared_theta) != ncol(X)) {
       stop(

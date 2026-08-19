@@ -85,8 +85,9 @@ inline double sum_softplus(const arma::vec &eta) {
 LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
                                   const arma::vec &mle_coefs,
                                   const arma::vec &beta_vals, int m,
-                                  bool approx, bool radial, uint32_t base_seed,
-                                  int eval_index) {
+                                  bool approx, bool radial,
+                                  std::atomic<bool> &singular_warning,
+                                  uint32_t base_seed, int eval_index) {
   // auto t_start = std::chrono::high_resolution_clock::now();
 
   int n = X.n_rows;

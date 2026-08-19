@@ -1,4 +1,5 @@
 #include "headers.h"
+#include <atomic>
 // [[Rcpp::depends(RcppArmadillo)]]
 // [[Rcpp::plugins(openmp)]]
 
@@ -10,10 +11,9 @@ double calculate_deviance_gamma(const arma::vec &y, const arma::vec &mu) {
 }
 
 // IRLS Gamma regression solver (Log link), fisher weights, W = 1.
-// [[Rcpp::export]]
 arma::vec fit_gamma_log_cpp(const arma::mat &X, const arma::mat &XtX,
                             const arma::vec &y, const arma::vec &initial_beta,
-                            bool approx) {
+                            bool approx, std::atomic<bool> &singular_warning) {
   arma::vec proposed_beta = initial_beta;
   // Initialization so that the y and eta_hat values start off close to
   // eachother.
@@ -40,10 +40,23 @@ arma::vec fit_gamma_log_cpp(const arma::mat &X, const arma::mat &XtX,
 
     // Now we do step-halfing. Ensures that any improvement we make does
     // decrease the varaince. Avoids wild steps. Calculate the proposed step
-    bool success = arma::solve(step, XtX, grad, arma::solve_opts::fast);
+    bool success = arma::solve(
+        step, XtX, grad, arma::solve_opts::fast + arma::solve_opts::no_approx);
     if (!success) {
-      // Rcpp::Rcout << "Less fast algorithm used \n";
-      success = arma::solve(step, XtX, grad);
+      // Fast solver failed (e.g. non-positive definite / rank deficient).
+      // Try the general solver without automatic SVD fallback or console
+      // prints.
+      success = arma::solve(step, XtX, grad, arma::solve_opts::no_approx);
+    }
+
+    if (!success) {
+      // Both exact solvers failed (matrix is genuinely singular/collinear).
+      // 1. Flag the main thread to emit the R warning safely after the loop
+      singular_warning = true;
+
+      // 2. Compute the approximate solution via pseudoinverse (SVD)
+      step = arma::pinv(XtX) * grad;
+      success = true; // Mark as resolved via approximation
     }
     if (!success) {
       break;
@@ -169,11 +182,11 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
 // 2. The main simulation function
 // Note that beta_vals is not the entire matrix of all possible betas, but just
 // for a single vector.
-// [[Rcpp::export]]
-double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
-                        const arma::vec &mle_coefs, const arma::vec &beta_vals,
-                        int m, bool approx, bool radial, uint32_t base_seed = 0,
-                        int eval_index = 0) {
+double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
+                        const arma::vec &y, const arma::vec &mle_coefs,
+                        const arma::vec &beta_vals, int m, bool approx,
+                        bool radial, std::atomic<bool> &singular_warning,
+                        uint32_t base_seed = 0, int eval_index = 0) {
   int n = X.n_rows;
 
   // Compute true expected values based on proposed betas
@@ -222,7 +235,7 @@ double glm_gamma_pl_cpp(arma::mat &X, const arma::mat &XtX, const arma::vec &y,
   for (int j = 0; j < m; ++j) {
     arma::vec y_sim = Y.col(j);
     arma::vec beta_sim_hat =
-        fit_gamma_log_cpp(X, XtX, y_sim, beta_vals, approx);
+        fit_gamma_log_cpp(X, XtX, y_sim, beta_vals, approx, singular_warning);
 
     arma::vec eta_sim_hat = X * beta_sim_hat;
     arma::vec mu_sim_hat = exp(eta_sim_hat);

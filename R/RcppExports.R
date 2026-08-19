@@ -9,16 +9,12 @@ fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, num_threads = 1L, m 
     .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family, num_threads, m, parallel, approx, radial, base_seed)
 }
 
-imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, parallel = TRUE, m = 1000L, base_seed = 31L) {
-    .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, tol, a_val, b_val, max_it, parallel, m, base_seed)
+imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, generate_grid, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, parallel = TRUE, m = 1000L, base_seed = 31L) {
+    .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, generate_grid, tol, a_val, b_val, max_it, parallel, m, base_seed)
 }
 
 radial_code <- function(num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val, base_seed = 0L) {
     .Call(`_GLIM_radial_code`, num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val, base_seed)
-}
-
-fit_gamma_log_cpp <- function(X, XtX, y, initial_beta, approx) {
-    .Call(`_GLIM_fit_gamma_log_cpp`, X, XtX, y, initial_beta, approx)
 }
 
 compute_gamma_ll <- function(y, eta, shape) {
@@ -37,14 +33,6 @@ mle_estimate_dispersion_gamma <- function(y, mu_hat, p) {
     .Call(`_GLIM_mle_estimate_dispersion_gamma`, y, mu_hat, p)
 }
 
-glm_gamma_pl_cpp <- function(X, XtX, y, mle_coefs, beta_vals, m, approx, radial, base_seed = 0L, eval_index = 0L) {
-    .Call(`_GLIM_glm_gamma_pl_cpp`, X, XtX, y, mle_coefs, beta_vals, m, approx, radial, base_seed, eval_index)
-}
-
-fit_gaussian_cpp <- function(X, y) {
-    .Call(`_GLIM_fit_gaussian_cpp`, X, y)
-}
-
 compute_gaussian_ll <- function(y, mu, sigma) {
     .Call(`_GLIM_compute_gaussian_ll`, y, mu, sigma)
 }
@@ -55,10 +43,6 @@ compute_gaussian_ll_mat <- function(y, mu, sigma) {
 
 est_dispersion_normal <- function(y, mu, p) {
     .Call(`_GLIM_est_dispersion_normal`, y, mu, p)
-}
-
-glm_gaussian_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx, radial, base_seed = 0L, eval_index = 0L) {
-    .Call(`_GLIM_glm_gaussian_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx, radial, base_seed, eval_index)
 }
 
 mle_estimate_dispersion_inv_gauss <- function(y, ybar) {
@@ -75,10 +59,6 @@ compute_invgauss_ll <- function(y, mu, gamma_val) {
 
 compute_invgauss_ll_mat <- function(y, mu, gamma_val) {
     .Call(`_GLIM_compute_invgauss_ll_mat`, y, mu, gamma_val)
-}
-
-glm_invgauss_pl_cpp <- function(X, y, mle_coefs, beta_vals, m, approx, radial, base_seed = 0L, eval_index = 0L) {
-    .Call(`_GLIM_glm_invgauss_pl_cpp`, X, y, mle_coefs, beta_vals, m, approx, radial, base_seed, eval_index)
 }
 
 compute_logistic_ll <- function(X, y, beta_vals) {
