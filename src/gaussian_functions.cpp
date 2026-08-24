@@ -58,22 +58,17 @@ double est_dispersion_normal(const arma::vec &y, const arma::vec &mu, int p) {
   return arma::accu((y - mu) % (y - mu)) / (y.n_elem - p);
 }
 
-// Main simulation function for Gaussian
-double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
-                           const arma::vec &mle_coefs,
-                           const arma::vec &beta_vals, int m, bool approx,
-                           bool radial, std::atomic<bool> &singular_warning,
-                           uint32_t base_seed = 0, int eval_index = 0) {
+// 1. Core Engine (Accepts precomputed scalars AND workspace)
+double glm_gaussian_pl_cpp(
+    const arma::mat &X, const arma::vec &y, const arma::vec &mle_coefs,
+    const arma::vec &beta_vals, int m, bool approx, bool radial,
+    std::atomic<bool> &singular_warning, uint32_t base_seed, int eval_index,
+    double sigma, double mle_val, // <-- Precomputed passed in
+    arma::mat &Y_sim_workspace) { // <-- Passed by reference!
   int n = X.n_rows;
 
   arma::vec mu = X * beta_vals; // Identity link
-  arma::vec mu_hat = X * mle_coefs;
-
-  // Estimated dispersion
-  int p = beta_vals.n_elem;
-  double sigma = std::sqrt(est_dispersion_normal(y, mu_hat, p));
   double true_ll = compute_gaussian_ll(y, mu, sigma);
-  double mle_val = compute_gaussian_ll(y, mu_hat, sigma);
   double f_x = true_ll - mle_val;
 
   // Check if we are already inside an active outer OpenMP loop
@@ -84,15 +79,14 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
   bool run_inner_parallel = (radial || approx) && !is_already_parallel;
   uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
 
-  arma::mat Y(n, m);
-
   // --- 1. Deterministic Parallel Data Generation ---
+  // Use the pre-allocated workspace
 #pragma omp parallel for schedule(static) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
     std::mt19937 gen(eval_seed + j);
     std::normal_distribution<double> rnorm(0.0, 1.0);
     for (int i = 0; i < n; i++) {
-      Y(i, j) = mu(i) + sigma * rnorm(gen);
+      Y_sim_workspace(i, j) = mu(i) + sigma * rnorm(gen);
     }
   }
 
@@ -102,7 +96,7 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
 #pragma omp parallel for schedule(guided)                                      \
     reduction(+ : count_less) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
-    arma::vec y_sim = Y.col(j);
+    arma::vec y_sim = Y_sim_workspace.col(j);
 
     arma::vec sim_coefs = fit_gaussian_cpp(X, y_sim, singular_warning);
     arma::vec mu_hat_sim = X * sim_coefs;
@@ -116,5 +110,24 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
     }
   }
 
-  return (double)1.0 * count_less / m;
+  return static_cast<double>(count_less) / m;
+}
+
+// 2. Convenience Wrapper (Calculates MLE scalars, requires workspace)
+double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
+                           const arma::vec &mle_coefs,
+                           const arma::vec &beta_vals, int m, bool approx,
+                           bool radial, std::atomic<bool> &singular_warning,
+                           uint32_t base_seed, int eval_index,
+                           arma::mat &Y_sim_workspace) {
+
+  // Precompute MLE invariants once per evaluation
+  int p = mle_coefs.n_elem;
+  arma::vec mu_hat = X * mle_coefs;
+  double sigma = std::sqrt(est_dispersion_normal(y, mu_hat, p));
+  double mle_val = compute_gaussian_ll(y, mu_hat, sigma);
+
+  return glm_gaussian_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, radial,
+                             singular_warning, base_seed, eval_index, sigma,
+                             mle_val, Y_sim_workspace);
 }

@@ -179,14 +179,14 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
   return (1 / nu);
 }
 
-// 2. The main simulation function
-// Note that beta_vals is not the entire matrix of all possible betas, but just
-// for a single vector.
-double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
-                        const arma::vec &y, const arma::vec &mle_coefs,
-                        const arma::vec &beta_vals, int m, bool approx,
-                        bool radial, std::atomic<bool> &singular_warning,
-                        uint32_t base_seed = 0, int eval_index = 0) {
+// 1. Core Engine (Accepts precomputed eta_hat AND workspace)
+double
+glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX, const arma::vec &y,
+                 const arma::vec &mle_coefs, const arma::vec &beta_vals, int m,
+                 bool approx, bool radial, std::atomic<bool> &singular_warning,
+                 uint32_t base_seed, int eval_index,
+                 const arma::vec &eta_hat,     // <-- Precomputed passed in
+                 arma::mat &Y_sim_workspace) { // <-- Passed by reference!
   int n = X.n_rows;
 
   // Compute true expected values based on proposed betas
@@ -197,12 +197,11 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
   mu.elem(arma::find(mu < 1e-8)).fill(1e-8);
 
   double dispersion = mle_estimate_dispersion_gamma(y, mu, beta_vals.n_elem);
-  double shape = 1 / dispersion;
+  double shape = 1.0 / dispersion;
   double true_ll = compute_gamma_ll(y, eta, shape);
 
-  arma::vec eta_hat = X * mle_coefs;
-  eta_hat.elem(arma::find(eta_hat > 50)).fill(50);
-  eta_hat.elem(arma::find(eta_hat < -50)).fill(-50);
+  // We use the precomputed eta_hat here, but compute mle_ll dynamically
+  // because 'shape' depends on the proposed beta_vals
   double mle_ll = compute_gamma_ll(y, eta_hat, shape);
   double f_x = true_ll - mle_ll;
 
@@ -213,17 +212,17 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
   bool run_inner_parallel = (radial || approx) && !is_already_parallel;
   uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
 
-  arma::mat Y(n, m);
   arma::vec scale = mu * dispersion;
 
   // --- 1. Deterministic Parallel Data Generation ---
+  // Use the pre-allocated workspace instead of allocating a new matrix Y
 #pragma omp parallel for schedule(static) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
     std::mt19937 gen(eval_seed + j);
     for (int i = 0; i < n; i++) {
       std::gamma_distribution<double> rgamma(shape, scale(i));
       double sim_val = rgamma(gen);
-      Y(i, j) = (sim_val < 1e-10) ? 1e-10 : sim_val;
+      Y_sim_workspace(i, j) = (sim_val < 1e-10) ? 1e-10 : sim_val;
     }
   }
 
@@ -233,15 +232,15 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
 #pragma omp parallel for schedule(guided)                                      \
     reduction(+ : count_less) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
-    arma::vec y_sim = Y.col(j);
+    arma::vec y_sim = Y_sim_workspace.col(j);
     arma::vec beta_sim_hat =
         fit_gamma_log_cpp(X, XtX, y_sim, beta_vals, approx, singular_warning);
 
     arma::vec eta_sim_hat = X * beta_sim_hat;
-    arma::vec mu_sim_hat = exp(eta_sim_hat);
+    arma::vec mu_sim_hat = arma::exp(eta_sim_hat);
 
-    double shape_sim_hat = 1 / mle_estimate_dispersion_gamma(
-                                   y_sim, mu_sim_hat, beta_sim_hat.n_elem);
+    double shape_sim_hat = 1.0 / mle_estimate_dispersion_gamma(
+                                     y_sim, mu_sim_hat, beta_sim_hat.n_elem);
 
     double llX_j = compute_gamma_ll(y_sim, eta, shape_sim_hat);
     double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
@@ -251,5 +250,25 @@ double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
       count_less++;
     }
   }
-  return (double)1.0 * count_less / m;
+
+  return static_cast<double>(count_less) / m;
+}
+
+// 2. Convenience Wrapper (Calculates MLE vectors, requires workspace)
+double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
+                        const arma::vec &y, const arma::vec &mle_coefs,
+                        const arma::vec &beta_vals, int m, bool approx,
+                        bool radial, std::atomic<bool> &singular_warning,
+                        uint32_t base_seed, int eval_index,
+                        arma::mat &Y_sim_workspace) {
+
+  // Precompute clipped eta_hat once per evaluation rather than inside the core
+  // engine
+  arma::vec eta_hat = X * mle_coefs;
+  eta_hat.elem(arma::find(eta_hat > 50)).fill(50);
+  eta_hat.elem(arma::find(eta_hat < -50)).fill(-50);
+
+  return glm_gamma_pl_cpp(X, XtX, y, mle_coefs, beta_vals, m, approx, radial,
+                          singular_warning, base_seed, eval_index, eta_hat,
+                          Y_sim_workspace);
 }

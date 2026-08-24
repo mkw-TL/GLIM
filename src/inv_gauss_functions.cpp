@@ -44,9 +44,9 @@ double mle_estimate_dispersion_inv_gauss(const arma::vec &y,
 }
 
 // IRLS Inverse Gaussian regression solver (1/mu^2 link)
-// [[Rcpp::export]]
 arma::vec fit_invgauss_cpp(const arma::mat &X, const arma::vec &y,
-                           const arma::vec &initial_beta, bool approx) {
+                           const arma::vec &initial_beta, bool approx,
+                           std::atomic<bool> &singular_warning) {
   arma::vec proposed_beta = initial_beta;
   for (int i = 0; i < 30; i++) {
     arma::vec eta = X * proposed_beta;
@@ -68,10 +68,10 @@ arma::vec fit_invgauss_cpp(const arma::mat &X, const arma::vec &y,
     arma::vec grad = -2.0 * X.t() * (y - mu);
 
     arma::vec step;
-    bool success = arma::solve(step, XTWX, grad, arma::solve_opts::fast);
+    bool success = arma::solve(step, XTWX, grad, arma::solve_opts::no_approx);
     if (!success) {
-      if (!arma::solve(step, XTWX, grad))
-        break;
+      singular_warning = true;
+      step = arma::pinv(XTWX) * grad;
     }
 
     // Line search (step halving) to ensure eta remains > 0
@@ -114,12 +114,13 @@ arma::vec compute_invgauss_ll_mat(const arma::vec &y, const arma::mat &mu,
   return ll;
 }
 
-// Main simulation function for Inverse Gaussian
-double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
-                           const arma::vec &mle_coefs,
-                           const arma::vec &beta_vals, int m, bool approx,
-                           bool radial, std::atomic<bool> &singular_warning,
-                           uint32_t base_seed = 0, int eval_index = 0) {
+// 1. Core Engine (Accepts precomputed mu_hat AND workspace)
+double glm_invgauss_pl_cpp(
+    const arma::mat &X, const arma::vec &y, const arma::vec &mle_coefs,
+    const arma::vec &beta_vals, int m, bool approx, bool radial,
+    std::atomic<bool> &singular_warning, uint32_t base_seed, int eval_index,
+    const arma::vec &mu_hat,      // <-- Precomputed passed in
+    arma::mat &Y_sim_workspace) { // <-- Passed by reference!
   int n = X.n_rows;
 
   arma::vec eta = X * beta_vals;
@@ -129,10 +130,7 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
   double estimated_dispersion = arma::accu(
       ((y - mu) % (y - mu)) /
       (((mu % mu % mu) * (y.n_elem - beta_vals.n_elem)) * (1 + sbar)));
-  double gamma = 1 / estimated_dispersion;
-
-  arma::vec eta_hat = X * mle_coefs;
-  arma::vec mu_hat = arma::pow(eta_hat, -.5);
+  double gamma = 1.0 / estimated_dispersion;
 
   double true_ll = compute_invgauss_ll(y, mu, gamma);
   double mle_val = compute_invgauss_ll(y, mu_hat, gamma);
@@ -145,14 +143,13 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
   bool run_inner_parallel = (radial || approx) && !is_already_parallel;
   uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
 
-  arma::mat Y(n, m);
-
   // --- 1. Deterministic Parallel Data Generation ---
+  // Reuses thread workspace instead of allocating a new matrix
 #pragma omp parallel for schedule(static) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
     std::mt19937 gen(eval_seed + j);
     for (int i = 0; i < n; i++) {
-      Y(i, j) = rinvgauss_single(mu(i), gamma, gen);
+      Y_sim_workspace(i, j) = rinvgauss_single(mu(i), gamma, gen);
     }
   }
 
@@ -162,9 +159,10 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
 #pragma omp parallel for schedule(guided)                                      \
     reduction(+ : count_less) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
-    arma::vec y_sim = Y.col(j);
+    arma::vec y_sim = Y_sim_workspace.col(j);
 
-    arma::vec coefs = fit_invgauss_cpp(X, y_sim, beta_vals, approx);
+    arma::vec coefs =
+        fit_invgauss_cpp(X, y_sim, beta_vals, approx, singular_warning);
     arma::vec eta_hat_sim = X * coefs;
 
     // Validate eta_hat to compute simulated MLE likelihood
@@ -181,5 +179,22 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
     }
   }
 
-  return (double)1.0 * count_less / m;
+  return static_cast<double>(count_less) / m;
+}
+
+// 2. Convenience Wrapper (Calculates MLE vectors, requires workspace)
+double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
+                           const arma::vec &mle_coefs,
+                           const arma::vec &beta_vals, int m, bool approx,
+                           bool radial, std::atomic<bool> &singular_warning,
+                           uint32_t base_seed, int eval_index,
+                           arma::mat &Y_sim_workspace) {
+
+  // Precompute mu_hat once per evaluation
+  arma::vec eta_hat = X * mle_coefs;
+  arma::vec mu_hat = arma::pow(eta_hat, -0.5);
+
+  return glm_invgauss_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, radial,
+                             singular_warning, base_seed, eval_index, mu_hat,
+                             Y_sim_workspace);
 }

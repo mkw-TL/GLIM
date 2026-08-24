@@ -61,6 +61,8 @@ glim_raw <- function(
     num_omp_threads <- 1
   }
 
+  Sys.sleep(1)
+
   output <- fit_glm_omp_cpp(
     X = X,
     y = y,
@@ -90,12 +92,14 @@ generate_grid <- function(
   eigen_vals,
   dispersion,
   ll_mle_original_data,
+  trim = TRUE,
   n_grid_evals = 25,
   m = 1000
 ) {
   initial_xi <- rep(1, length(mle_coefs))
 
   alpha_target <- 0.01
+  Sys.sleep(1)
 
   imvar_xi <- imvar(
     X,
@@ -109,7 +113,7 @@ generate_grid <- function(
     eigen_vals,
     dispersion,
     generate_grid = TRUE,
-    tol = .001, # the tolerance value
+    tol = .005, # the tolerance value
     a_val = 2, # found through a grid search
     b_val = .65, # found through a grid search
     max_it = 25,
@@ -146,7 +150,7 @@ generate_grid <- function(
   shifted_points <- sweep(betas, 2, mle_coefs, FUN = "-") # 2 means that it applies along the columns. Betas - mle_coefs for each column
   rotated_points <- shifted_points %*% eigen_vecs
   scaled_sq_points <- sweep(rotated_points^2, 2, semi_axes^2, FUN = "/")
-  inside_indices <- rowSums(scaled_sq_points) < 1.001 # allowing for machine tolerance. NEEDS TO BE STRICTLY LESS THAN
+  inside_indices <- rowSums(scaled_sq_points) <= 1.001 # allowing for machine tolerance.
   # Check if they are inside the unit sphere (i.e. inside the ellipse)
   if (!any(inside_indices)) {
     stop(
@@ -158,8 +162,11 @@ generate_grid <- function(
   }
   # Check if they are inside the unit sphere (i.e. inside the ellipse)
   # From betas, select all the columns (proposed betas) that are inside
-  points_inside <- betas[inside_indices, ]
-  return(points_inside)
+  if (trim == TRUE) {
+    points_inside <- betas[inside_indices, ]
+    return(points_inside)
+  }
+  return(betas)
 }
 
 #' Generate Elliptical Approximation Samples (Inner Probability)
@@ -188,6 +195,7 @@ glim_inner_prob_approx_samples <- function(
   a_val,
   b_val,
   max_it,
+  tol,
   base_seed
 ) {
   if (parallel) {
@@ -204,7 +212,7 @@ glim_inner_prob_approx_samples <- function(
   } else {
     num_omp_threads <- 1
   }
-  B <- 100
+  B <- 99
   AA <- seq(0.01, 0.99, length.out = B)
 
   i <- 0
@@ -231,8 +239,8 @@ glim_inner_prob_approx_samples <- function(
       as.matrix(eJ$vectors),
       as.vector(eJ$values),
       dispersion,
-      generate_grid = FALSE,
-      tol = .005,
+      generate_grid = FALSE, # unused argument to be deleted
+      tol = tol,
       a_val = a_val,
       b_val = b_val,
       max_it = max_it,
@@ -269,7 +277,7 @@ glim_inner_prob_approx_samples <- function(
       lerped_xi <- (1 - w) * xi[[r]] + w * xi[[r + 1]]
     }
 
-    rand_dir <- generate_unit_matrix(1, length(mle_coefs), base_seed, i)
+    rand_dir <- generate_unit_matrix_r(1, length(mle_coefs), base_seed, i)
     spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
 
     samples[, i] <- mle_coefs +
@@ -332,7 +340,7 @@ glim <- function(
   m = 1000,
   approx = FALSE,
   radial = FALSE,
-  tol = 1e-2,
+  tol = .005,
   ...
 ) {
   mf <- match.call(expand.dots = FALSE) # Captures the whole input
@@ -502,12 +510,24 @@ glim <- function(
     }
   }
 
-  if (!is.numeric(m) | length(m) != 1 | m <= 0 | m != floor(m)) {
-    stop("Input Error: 'm' (number of samples) must be a single positive integer.")
+  if ("m" %in% names(args)) {
+    if (is.numeric(args$m) & args$m %% 1 == 0 & length(args$m) == 1 & args$m > 0) {
+      m <- args$m
+    } else {
+      stop("Input Error: m must be a positive integer")
+    }
+  } else {
+    m <- 1000
   }
 
-  if ((!is.numeric(tol) | length(tol) != 1 | tol <= 0)) {
-    stop("Input Error: 'tol' must be a strictly positive numeric scalar.")
+  if ("tol" %in% names(args)) {
+    if (is.numeric(args$tol) & length(args$tol) == 1 & args$tol > 0 & args$tol < 1) {
+      m <- args$m
+    } else {
+      stop("Input Error: tol must be between 0 and 1")
+    }
+  } else {
+    tol <- .02
   }
 
   J <- NULL
@@ -562,18 +582,27 @@ glim <- function(
       stop("Data is completely seperable. MLE does not exist")
     }
     mle_coefs <- fit$coefficients
+    if (any(is.na(mle_coefs))) {
+      stop(
+        "Design matrix X is rank deficient / collinear. Remove redundant columns before calling glim()."
+      )
+    }
     vcov <- vcov(fit)
     p_i <- 1 / (1 + exp(-X %*% mle_coefs))
     dispersion <- 1
     J <- crossprod(X, X * as.vector((p_i * (1 - p_i))))
     p2p_function <- prob2poss_logis
 
-    ll_mle_original_data <- compute_logistic_ll(X, y, mle_coefs)
-
+    ll_mle_original_data <- compute_logistic_ll_r(X, y, mle_coefs)
     ## Gamma setup
   } else if (family == "gamma") {
     fit <- glm(y ~ X - 1, family = Gamma(link = "log"))
     mle_coefs <- coef(fit)
+    if (any(is.na(mle_coefs))) {
+      stop(
+        "Design matrix X is rank deficient / collinear. Remove redundant columns before calling glim()."
+      )
+    }
     vcov <- vcov(fit)
     eta <- X %*% mle_coefs
     dispersion <- mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
@@ -588,8 +617,13 @@ glim <- function(
       stop("Poisson GLM fails to converge")
     }
     vcov <- vcov(pois_fit)
-    ll_mle_original_data <- as.numeric(logLik(pois_fit))
     mle_coefs <- coef(pois_fit)
+    if (any(is.na(mle_coefs))) {
+      stop(
+        "Design matrix X is rank deficient / collinear. Remove redundant columns before calling glim()."
+      )
+    }
+    ll_mle_original_data <- as.numeric(logLik(pois_fit))
     eta <- X %*% mle_coefs
     lambda_i <- exp(eta)
     dispersion <- 1
@@ -602,6 +636,11 @@ glim <- function(
     vcov <- vcov(inv_gaus_fit)
     ll_mle_original_data <- as.numeric(logLik(inv_gaus_fit))
     mle_coefs <- coef(inv_gaus_fit)
+    if (any(is.na(mle_coefs))) {
+      stop(
+        "Design matrix X is rank deficient / collinear. Remove redundant columns before calling glim()."
+      )
+    }
     eta <- X %*% mle_coefs
     mu_i <- as.vector(sqrt(1 / eta))
     dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
@@ -613,6 +652,11 @@ glim <- function(
     fit <- lm(y ~ X - 1)
     ll_mle_original_data <- as.numeric(logLik(fit))
     mle_coefs <- coef(fit)
+    if (any(is.na(mle_coefs))) {
+      stop(
+        "Design matrix X is rank deficient / collinear. Remove redundant columns before calling glim()."
+      )
+    }
     vcov <- vcov(fit)
     dispersion <- est_dispersion_normal(y, X %*% mle_coefs, length(mle_coefs))
     J <- crossprod(X, X)
@@ -636,10 +680,10 @@ glim <- function(
   if (!missing(dispersion) & (!is.numeric(dispersion) | dispersion <= 0)) {
     stop("Internal error: 'dispersion' must be a strictly positive numeric value.")
   }
-
   if ((approx == FALSE) & (radial == FALSE)) {
     if (is.null(betas)) {
       message("generating grid of betas")
+      Sys.sleep(1)
       betas <- generate_grid(
         X,
         y,
@@ -708,6 +752,7 @@ glim <- function(
       a_val = a_val,
       b_val = b_val,
       max_it = max_it,
+      tol = tol,
       base_seed = base_seed
     )
     obj_to_return <- list(
@@ -749,10 +794,9 @@ glim <- function(
       b_val,
       n_grid_evals = n_grid_evals
     )
-    samples <- radial_list$samples
+    samples <- radial_list$output_samples
     betas_evaluated <- radial_list$betas_evaluated
-
-    poss <- p2p_function(family, X, y, samples, t(betas_evaluated))
+    poss <- prob2poss(family, X, y, samples, betas_evaluated)
     obj_to_return <- list(
       possibilities = poss,
       samples = samples,
@@ -1013,6 +1057,7 @@ radial <- function(
     eigen_vals = eJ$values,
     dispersion = dispersion,
     ll_mle_original_data = ll_mle_original_data,
+    trim = FALSE,
     n_grid_evals = n_grid_evals,
     m = m
   )

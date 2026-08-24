@@ -7,6 +7,7 @@
 #endif
 
 #define ARMA_DONT_PRINT_ERRORS
+#define ARMA_NO_DEBUG
 #include <RcppArmadillo.h>
 #include <boost/math/distributions/chi_squared.hpp>
 #include <boost/math/special_functions/digamma.hpp>
@@ -30,7 +31,6 @@ struct LogisticResult1D {
 };
 struct PoissonResult {
   arma::vec beta;
-  bool success;
   bool separated;
 };
 struct PoissonPlResult {
@@ -49,31 +49,72 @@ PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
                                    const arma::vec &beta_vals, int m,
                                    bool approx, bool radial,
                                    std::atomic<bool> &singular_warning,
-                                   uint32_t base_seed, int eval_index);
+                                   uint32_t base_seed, int eval_index,
+                                   double mle_ll, arma::mat &Y_sim_workspace);
+
+PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
+                                   const arma::vec &mle_coefs,
+                                   const arma::vec &beta_vals, int m,
+                                   bool approx, bool radial,
+                                   std::atomic<bool> &singular_warning,
+                                   uint32_t base_seed, int eval_index,
+                                   arma::mat &Y_sim_workspace);
 
 double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
                         const arma::vec &y, const arma::vec &mle_coefs,
                         const arma::vec &beta_vals, int m, bool approx,
                         bool radial, std::atomic<bool> &singular_warning,
-                        uint32_t base_seed, int eval_index);
+                        uint32_t base_seed, int eval_index,
+                        const arma::vec &eta_hat, arma::mat &Y_sim_workspace);
+
+double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
+                        const arma::vec &y, const arma::vec &mle_coefs,
+                        const arma::vec &beta_vals, int m, bool approx,
+                        bool radial, std::atomic<bool> &singular_warning,
+                        uint32_t base_seed, int eval_index,
+                        arma::mat &Y_sim_workspace);
+
+LogisticPlResult
+glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
+                 const arma::vec &mle_coefs, const arma::vec &beta_vals, int m,
+                 bool approx, bool radial, std::atomic<bool> &singular_warning,
+                 uint32_t base_seed, int eval_index, double mle_val,
+                 bool orig_separated, arma::mat &Y_sim_workspace);
 
 LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
                                   const arma::vec &mle_coefs,
                                   const arma::vec &beta_vals, int m,
                                   bool approx, bool radial,
                                   std::atomic<bool> &singular_warning,
-                                  uint32_t base_seed, int eval_index);
+                                  uint32_t base_seed, int eval_index,
+                                  arma::mat &Y_sim_workspace);
 
 double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs,
                            const arma::vec &beta_vals, int m, bool approx,
                            bool radial, std::atomic<bool> &singular_warning,
-                           uint32_t base_seed, int eval_index);
+                           uint32_t base_seed, int eval_index, double sigma,
+                           double mle_val, arma::mat &Y_sim_workspace);
+
+double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
+                           const arma::vec &mle_coefs,
+                           const arma::vec &beta_vals, int m, bool approx,
+                           bool radial, std::atomic<bool> &singular_warning,
+                           uint32_t base_seed, int eval_index,
+                           arma::mat &Y_sim_workspace);
 
 double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs,
                            const arma::vec &beta_vals, int m, bool approx,
                            bool radial, std::atomic<bool> &singular_warning,
-                           uint32_t base_seed, int eval_index);
+                           uint32_t base_seed, int eval_index,
+                           const arma::vec &mu_hat, arma::mat &Y_sim_workspace);
+
+double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
+                           const arma::vec &mle_coefs,
+                           const arma::vec &beta_vals, int m, bool approx,
+                           bool radial, std::atomic<bool> &singular_warning,
+                           uint32_t base_seed, int eval_index,
+                           arma::mat &Y_sim_workspace);
 
 #endif

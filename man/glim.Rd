@@ -11,7 +11,7 @@ glim(
   m = 1000,
   approx = FALSE,
   radial = FALSE,
-  tol = 0.01,
+  tol = 0.005,
   ...
 )
 }

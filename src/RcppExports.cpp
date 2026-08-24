@@ -11,17 +11,17 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
-// generate_unit_matrix
-arma::mat generate_unit_matrix(int n, int d, uint32_t base_seed, int eval_index);
-RcppExport SEXP _GLIM_generate_unit_matrix(SEXP nSEXP, SEXP dSEXP, SEXP base_seedSEXP, SEXP eval_indexSEXP) {
+// generate_unit_matrix_r
+arma::vec generate_unit_matrix_r(int rows, int d, uint32_t base_seed, int i);
+RcppExport SEXP _GLIM_generate_unit_matrix_r(SEXP rowsSEXP, SEXP dSEXP, SEXP base_seedSEXP, SEXP iSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< int >::type n(nSEXP);
+    Rcpp::traits::input_parameter< int >::type rows(rowsSEXP);
     Rcpp::traits::input_parameter< int >::type d(dSEXP);
     Rcpp::traits::input_parameter< uint32_t >::type base_seed(base_seedSEXP);
-    Rcpp::traits::input_parameter< int >::type eval_index(eval_indexSEXP);
-    rcpp_result_gen = Rcpp::wrap(generate_unit_matrix(n, d, base_seed, eval_index));
+    Rcpp::traits::input_parameter< int >::type i(iSEXP);
+    rcpp_result_gen = Rcpp::wrap(generate_unit_matrix_r(rows, d, base_seed, i));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -201,20 +201,6 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// fit_invgauss_cpp
-arma::vec fit_invgauss_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& initial_beta, bool approx);
-RcppExport SEXP _GLIM_fit_invgauss_cpp(SEXP XSEXP, SEXP ySEXP, SEXP initial_betaSEXP, SEXP approxSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type initial_beta(initial_betaSEXP);
-    Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_invgauss_cpp(X, y, initial_beta, approx));
-    return rcpp_result_gen;
-END_RCPP
-}
 // compute_invgauss_ll
 double compute_invgauss_ll(const arma::vec& y, const arma::vec& mu, double gamma_val);
 RcppExport SEXP _GLIM_compute_invgauss_ll(SEXP ySEXP, SEXP muSEXP, SEXP gamma_valSEXP) {
@@ -291,22 +277,9 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// fit_poisson_log_cpp
-arma::vec fit_poisson_log_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& initial_beta);
-RcppExport SEXP _GLIM_fit_poisson_log_cpp(SEXP XSEXP, SEXP ySEXP, SEXP initial_betaSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type initial_beta(initial_betaSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_poisson_log_cpp(X, y, initial_beta));
-    return rcpp_result_gen;
-END_RCPP
-}
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_GLIM_generate_unit_matrix", (DL_FUNC) &_GLIM_generate_unit_matrix, 4},
+    {"_GLIM_generate_unit_matrix_r", (DL_FUNC) &_GLIM_generate_unit_matrix_r, 4},
     {"_GLIM_fit_glm_omp_cpp", (DL_FUNC) &_GLIM_fit_glm_omp_cpp, 11},
     {"_GLIM_imvar", (DL_FUNC) &_GLIM_imvar, 18},
     {"_GLIM_radial_code", (DL_FUNC) &_GLIM_radial_code, 14},
@@ -318,14 +291,12 @@ static const R_CallMethodDef CallEntries[] = {
     {"_GLIM_compute_gaussian_ll_mat", (DL_FUNC) &_GLIM_compute_gaussian_ll_mat, 3},
     {"_GLIM_est_dispersion_normal", (DL_FUNC) &_GLIM_est_dispersion_normal, 3},
     {"_GLIM_mle_estimate_dispersion_inv_gauss", (DL_FUNC) &_GLIM_mle_estimate_dispersion_inv_gauss, 2},
-    {"_GLIM_fit_invgauss_cpp", (DL_FUNC) &_GLIM_fit_invgauss_cpp, 4},
     {"_GLIM_compute_invgauss_ll", (DL_FUNC) &_GLIM_compute_invgauss_ll, 3},
     {"_GLIM_compute_invgauss_ll_mat", (DL_FUNC) &_GLIM_compute_invgauss_ll_mat, 3},
     {"_GLIM_compute_logistic_ll", (DL_FUNC) &_GLIM_compute_logistic_ll, 3},
     {"_GLIM_compute_logistic_ll_mat", (DL_FUNC) &_GLIM_compute_logistic_ll_mat, 3},
     {"_GLIM_compute_poisson_ll", (DL_FUNC) &_GLIM_compute_poisson_ll, 2},
     {"_GLIM_compute_poisson_ll_mat", (DL_FUNC) &_GLIM_compute_poisson_ll_mat, 2},
-    {"_GLIM_fit_poisson_log_cpp", (DL_FUNC) &_GLIM_fit_poisson_log_cpp, 3},
     {NULL, NULL, 0}
 };
 

@@ -30,7 +30,8 @@ using namespace arma;
 // }
 
 PoissonResult fit_poisson_inner(const arma::mat &X, const arma::vec &y,
-                                const arma::vec &initial_beta) {
+                                const arma::vec &initial_beta,
+                                std::atomic<bool> &singular_warning) {
   int N = X.n_rows;
   int P = X.n_cols;
   arma::vec proposed_beta = initial_beta;
@@ -60,9 +61,11 @@ PoissonResult fit_poisson_inner(const arma::mat &X, const arma::vec &y,
     XTWX = X.t() * XW;
     grad = X.t() * (y - mu);
 
-    solver_success = arma::solve(step, XTWX, grad, arma::solve_opts::fast);
+    solver_success = arma::solve(step, XTWX, grad, arma::solve_opts::no_approx);
     if (!solver_success) {
-      solver_success = arma::solve(step, XTWX, grad);
+      singular_warning = true;
+      step = arma::pinv(XTWX) * grad;
+      solver_success = step.is_finite();
     }
 
     if (!solver_success || !step.is_finite()) {
@@ -91,7 +94,7 @@ PoissonResult fit_poisson_inner(const arma::mat &X, const arma::vec &y,
     }
   }
 
-  return {proposed_beta, solver_success, separated};
+  return {proposed_beta, separated};
 }
 
 // [[Rcpp::export]]
@@ -109,20 +112,20 @@ arma::vec compute_poisson_ll_mat(const arma::mat &eta, const arma::vec y) {
   return ll;
 }
 
-// Exported wrapper for diagnostic verification
-// [[Rcpp::export]]
 arma::vec fit_poisson_log_cpp(const arma::mat &X, const arma::vec &y,
-                              const arma::vec &initial_beta) {
-  PoissonResult res = fit_poisson_inner(X, y, initial_beta);
+                              const arma::vec &initial_beta,
+                              std::atomic<bool> &singular_warning) {
+  PoissonResult res = fit_poisson_inner(X, y, initial_beta, singular_warning);
   return res.beta;
 }
 
-PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
-                                   const arma::vec &mle_coefs,
-                                   const arma::vec &beta_vals, int m,
-                                   bool approx, bool radial,
-                                   std::atomic<bool> &singular_warning,
-                                   uint32_t base_seed = 0, int eval_index = 0) {
+// 1. Core Engine (Accepts precomputed scalars AND workspace)
+PoissonPlResult glm_poisson_pl_cpp(
+    const arma::mat &X, const arma::vec &y, const arma::vec &mle_coefs,
+    const arma::vec &beta_vals, int m, bool approx, bool radial,
+    std::atomic<bool> &singular_warning, uint32_t base_seed, int eval_index,
+    double mle_ll,                // <-- Precomputed passed in
+    arma::mat &Y_sim_workspace) { // <-- Passed by reference!
   int n = X.n_rows;
 
   arma::vec eta = X * beta_vals;
@@ -134,14 +137,8 @@ PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
     orig_separated = true;
   }
 
-  arma::vec eta_hat = X * mle_coefs;
-  eta_hat = arma::clamp(eta_hat, -10.0, 10.0);
-
   double true_ll = compute_poisson_ll(eta, y);
-  double mle_ll = compute_poisson_ll(eta_hat, y);
   double f_x = true_ll - mle_ll;
-
-  arma::mat Y_sim(n, m); // Pre-allocate full simulation matrix
 
   // Check if we are already inside an active outer OpenMP loop
   bool is_already_parallel = false;
@@ -149,35 +146,30 @@ PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
   is_already_parallel = omp_in_parallel();
 #endif
 
-  // Only enable inner parallelization if requested AND not already inside an
-  // outer parallel region
   bool run_inner_parallel = (radial || approx) && !is_already_parallel;
-
-  // Derive a unique base seed for this specific grid evaluation point
   uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
 
   // --- 1. Deterministic Parallel Data Generation ---
 #pragma omp parallel for schedule(static) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
-    // Each simulation j gets a unique, deterministic seed
     std::mt19937 gen(eval_seed + j);
-
     for (int i = 0; i < n; ++i) {
       std::poisson_distribution<int> rpois(mu(i));
-      Y_sim(i, j) = rpois(gen);
+      Y_sim_workspace(i, j) = rpois(gen);
     }
   }
 
-  // Parallel Model Fitting & Likelihood Evaluation
+  // --- 2. Parallel Model Fitting & Likelihood Evaluation ---
   int count_less = 0;
   double prop_separated = 0.0;
 
 #pragma omp parallel for schedule(guided)                                      \
     reduction(+ : count_less, prop_separated) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
-    arma::vec y_sim_local = Y_sim.col(j);
+    arma::vec y_sim_local = Y_sim_workspace.col(j);
 
-    PoissonResult sim_res = fit_poisson_inner(X, y_sim_local, beta_vals);
+    PoissonResult sim_res =
+        fit_poisson_inner(X, y_sim_local, beta_vals, singular_warning);
     if (sim_res.separated) {
       prop_separated += 1.0;
     }
@@ -204,8 +196,25 @@ PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
     }
   }
 
-  double prop_sep = prop_separated / m;
-  double poss = 1.0 * count_less / m;
+  return {static_cast<double>(count_less) / m, orig_separated,
+          prop_separated / m};
+}
 
-  return {poss, orig_separated, prop_sep};
+// 2. Convenience Wrapper (Calculates MLE scalars, requires workspace)
+PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
+                                   const arma::vec &mle_coefs,
+                                   const arma::vec &beta_vals, int m,
+                                   bool approx, bool radial,
+                                   std::atomic<bool> &singular_warning,
+                                   uint32_t base_seed, int eval_index,
+                                   arma::mat &Y_sim_workspace) {
+
+  // Precompute MLE log-likelihood once per evaluation
+  arma::vec eta_hat = X * mle_coefs;
+  eta_hat = arma::clamp(eta_hat, -10.0, 10.0);
+  double mle_ll = compute_poisson_ll(eta_hat, y);
+
+  return glm_poisson_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, radial,
+                            singular_warning, base_seed, eval_index, mle_ll,
+                            Y_sim_workspace);
 }
