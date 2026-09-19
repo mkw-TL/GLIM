@@ -1,15 +1,15 @@
 Package: GLIM
-Title: Valid inference using the Inferential Models Framework
-Version: 0.0.0.2000
+Title: Valid Inference Using the Inferential Models Framework
+Version: 0.1.0
 Authors@R: person("Joseph", "Harrison", email = "joe.harrison.va@gmail.com", role = c("aut", "cre"))
-Description: Creates Confidence Intervals that are Credible Intervals - requiring no prior whatsoever. An implementation of Ryan Martin's Inferential Models framework to the GLM context.
+Description: Creates Confidence Intervals that are Credible Intervals - requiring no prior whatsoever. An implementation of Ryan Martin's Inferential Models framework to the Generalized Linear Model context.
 License: GPL-2 | GPL-3
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 LinkingTo: 
     Rcpp, RcppProgress, RcppArmadillo, BH
 Imports: 
-    Rcpp, RcppProgress, progress, parallel, methods
+    Rcpp, RcppProgress, progress, methods
 SystemRequirements: C++20, LAPACK, BLAS
 Config/roxygen2/version: 8.0.0
 RoxygenNote: 8.0.0

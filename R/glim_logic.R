@@ -79,6 +79,56 @@ glim_raw <- function(
 }
 
 
+gradient <- function(family, X, y, beta, dispersion = 1) {
+  # Calculate the linear predictor vector for all observations
+  eta <- as.vector(X %*% beta)
+
+  if (family == "gaussian") {
+    mu <- eta
+    return(as.vector(crossprod(X, y - mu)) / dispersion)
+  } else if (family == "poisson") {
+    mu <- exp(eta)
+    return(as.vector(crossprod(X, y - mu)))
+  } else if (family == "binomial") {
+    mu <- 1 / (1 + exp(-eta))
+    return(as.vector(crossprod(X, y - mu)))
+  } else if (family == "gamma") {
+    mu <- exp(eta)
+    return(as.vector(crossprod(X, (y / mu) - 1)) / dispersion)
+  } else if (family == "inverse.gaussian") {
+    mu <- eta^(-1 / 2)
+    return(as.vector(crossprod(X, mu - y)) / (2 * dispersion))
+  } else {
+    stop("Family provided to the gradient not recognized")
+  }
+}
+
+partial <- function(family, X, y, beta, dispersion, j) {
+  # Calculate the linear predictor vector for all n observations once
+  eta <- as.vector(X %*% beta)
+
+  if (family == "gaussian") {
+    mu <- eta
+    return(sum((y - mu) * X[, j]) / dispersion)
+  } else if (family == "poisson") {
+    mu <- exp(eta)
+    return(sum((y - mu) * X[, j]))
+  } else if (family == "binomial") {
+    # Note the added negative sign for the logit inverse
+    mu <- 1 / (1 + exp(-eta))
+    return(sum((y - mu) * X[, j]))
+  } else if (family == "gamma") {
+    mu <- exp(eta)
+    return(sum((y / mu - 1) * X[, j]) / dispersion)
+  } else if (family == "inverse.gaussian") {
+    mu <- eta^(-1 / 2)
+    return(sum((mu - y) * X[, j]) / (2 * dispersion))
+  } else {
+    stop("Family provided to the gradient not recognized")
+  }
+}
+
+
 #' Generates a grid of parameter values (cut by imvar)
 #'
 #' Aligned in parameter grid, rather than eigen-vector space for easier marginalization
@@ -92,7 +142,7 @@ generate_grid <- function(
   eigen_vals,
   dispersion,
   ll_mle_original_data,
-  trim = TRUE,
+  trim = FALSE,
   n_grid_evals = 25,
   m = 1000
 ) {
@@ -135,6 +185,7 @@ generate_grid <- function(
   beta <- list()
   n_left <- floor((n_grid_evals - 1) / 2)
   n_right <- n_grid_evals - 1 - n_left # if n_grid_evals is even, right side gets one more data point
+  approx_grid_resolution <- c()
   for (i in 1:length(mle_coefs)) {
     beta[[i]] <- c(
       # Allocate half the points to the left, half to the right
@@ -142,6 +193,8 @@ generate_grid <- function(
       mle_coefs[i], # Exact MLE
       seq(mle_coefs[i], mle_coefs[i] + H[i], length.out = n_right + 1)[-1] # Right side excluding MLE
     )
+    approx_grid_resolution[i] <- 2
+    H[i] / n_grid_evals # only approximate because of the MLE, and depending on if even or odd. Used later for extending out parameter space
   }
 
   betas <- as.matrix(expand.grid(beta))
@@ -166,7 +219,7 @@ generate_grid <- function(
     points_inside <- betas[inside_indices, ]
     return(points_inside)
   }
-  return(betas)
+  return(list(betas = betas, approx_grid_resolution = approx_grid_resolution))
 }
 
 #' Generate Elliptical Approximation Samples (Inner Probability)
@@ -452,10 +505,34 @@ glim <- function(
   } else {
     num_samps <- 2000
   }
+  if ("threshold_alpha" %in% names(args)) {
+    if (
+      is.integer(as.integer(args$threshold_alpha)) &
+        length(args$threshold_alpha) == 1 &
+        args$threshold_alpha > 0
+    ) {
+      threshold_alpha <- args$threshold_alpha
+    } else {
+      stop("Input Error: threshold_alpha must be a positive integer")
+    }
+  } else {
+    threshold_alpha <- .05
+  }
+
   if (!is.null(names(args))) {
     if (
       !(all(
-        names(args) %in% c("a_val", "b_val", "max_it", "betas", "n_grid_evals", "tol", "num_samps")
+        names(args) %in%
+          c(
+            "a_val",
+            "b_val",
+            "max_it",
+            "betas",
+            "n_grid_evals",
+            "tol",
+            "num_samps",
+            "threshold_alpha"
+          )
       ))
     ) {
       stop("Incorrect names of additional arguments passed")
@@ -684,7 +761,7 @@ glim <- function(
     if (is.null(betas)) {
       message("generating grid of betas")
       Sys.sleep(1)
-      betas <- generate_grid(
+      generated_grid <- generate_grid(
         X,
         y,
         family,
@@ -696,6 +773,7 @@ glim <- function(
         n_grid_evals = n_grid_evals,
         m = m
       )
+      betas <- generated_grid$betas
       message(sprintf(
         "There are (up to) %d grid points to evaluate. Each grid point requires %d glm fits\n",
         n_grid_evals^length(mle_coefs),
@@ -710,6 +788,92 @@ glim <- function(
     }
     message("Our MLE is: ", paste(round(mle_coefs, 4), collapse = ", "))
     base_seed <- sample.int(.Machine$integer.max, 1)
+    possibilities <- glim_raw(
+      X,
+      y,
+      family = family,
+      betas,
+      mle_coefs,
+      mle_val = ll_mle_original_data,
+      m = m,
+      parallel = parallel,
+      approx = approx,
+      base_seed = base_seed
+    )
+    tolerance <- .01
+    extended_betas <- list()
+    extended_plaus <- list()
+    for (p in 1:nrow(betas)) {
+      possible_vectors <- betas[which(betas[, p] == min(betas[, p])), ] # the minimum. Need to continue to follow the gradient away from the mean
+      chosen_extreme <- possible_vectors
+      if (ncol(possible_vectors) != 1) {
+        chosen_extreme <- colMeans(possible_vectors)
+      }
+      change_in_marginal <- chosen_extreme[p] - generated_grid$approx_grid_resolution[p] # minus because right now extending the minimum direction
+      # TODO need to extend the positive direction as well
+
+      plaus_of_theta_marginal <- possibilities[which(betas[, p] == min(betas[, p]))]
+      # allow for conservatism by avoiding early termination due to randomness. Note that we are doing essentially multiple testing, although also note that plausibility is always susceptible to upwards noise
+      # Do I want to increase the number of samples here? Unsure how many steps it will take -- hold off for now
+      # This does not activate if the plausibility is low enough
+      l <- 0
+      while (plaus_of_theta_marginal > threshold_alpha - tolerance) {
+        l <- l + 1
+        extended_betas[[p]] <- matrix(ncol = length(beta))
+        extended_betas[[p]] <- c()
+        normalizing_constant <- 0
+        for (r in 1:nrow(betas)) {
+          if (r != p) {
+            # add the sums of partials together (excluding column p)
+            normalizing_constant <- normalizing_constant +
+              partial(family, X, y, chosen_extreme, r)^2
+          }
+        }
+
+        for (q in 1:nrow(betas)) {
+          if (q != p) {
+            # By lagrange multipliers, the new value is theta - L1 * Lr / norm^2
+            # TODO check if positive or negative partial
+            chosen_extreme[q] <- chosen_extreme[q] +
+              partial(
+                family = family,
+                X,
+                y,
+                beta = chosen_extreme,
+                dispersion = dispersion,
+                j = p
+              ) *
+                partial(
+                  family = family,
+                  X,
+                  y,
+                  beta = chosen_extreme,
+                  dispersion = dispersion,
+                  j = q
+                ) /
+                normalizing_constant
+          }
+        }
+        chosen_extreme[p] <- change_in_marginal
+        extended_betas[[p]][l, ] <- chosen_extreme
+
+        possibility_of_extreme <- glim_raw(
+          X,
+          y,
+          family = family,
+          chosen_extreme,
+          mle_coefs,
+          mle_val = ll_mle_original_data,
+          m = m,
+          parallel = parallel,
+          approx = approx,
+          base_seed = base_seed
+        )
+
+        extended_plaus[[p]][l] <- possibility_of_extreme
+      }
+    }
+
     obj_to_return <- list(
       possibilities = glim_raw(
         X,
