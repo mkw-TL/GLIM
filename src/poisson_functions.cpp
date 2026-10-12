@@ -61,7 +61,9 @@ PoissonResult fit_poisson_inner(const arma::mat &X, const arma::vec &y,
     XTWX = X.t() * XW;
     grad = X.t() * (y - mu);
 
-    solver_success = arma::solve(step, XTWX, grad, arma::solve_opts::no_approx);
+    solver_success =
+        arma::solve(step, XTWX, grad,
+                    arma::solve_opts::no_approx + solve_opts::likely_sympd);
     if (!solver_success) {
       singular_warning = true;
       step = arma::pinv(XTWX) * grad;

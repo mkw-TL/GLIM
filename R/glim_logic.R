@@ -44,6 +44,7 @@ glim_raw <- function(
   m,
   parallel,
   approx,
+  show_progress,
   base_seed
 ) {
   if (parallel) {
@@ -61,8 +62,6 @@ glim_raw <- function(
     num_omp_threads <- 1
   }
 
-  Sys.sleep(1)
-
   output <- fit_glm_omp_cpp(
     X = X,
     y = y,
@@ -73,6 +72,7 @@ glim_raw <- function(
     m = m,
     parallel = parallel,
     approx = approx,
+    show_progress = show_progress,
     base_seed = base_seed
   )
   return(output)
@@ -193,8 +193,7 @@ generate_grid <- function(
       mle_coefs[i], # Exact MLE
       seq(mle_coefs[i], mle_coefs[i] + H[i], length.out = n_right + 1)[-1] # Right side excluding MLE
     )
-    approx_grid_resolution[i] <- 2
-    H[i] / n_grid_evals # only approximate because of the MLE, and depending on if even or odd. Used later for extending out parameter space
+    approx_grid_resolution[i] <- 2 * H[i] / n_grid_evals # only approximate because of the MLE, and depending on if even or odd. Used later for extending out parameter space
   }
 
   betas <- as.matrix(expand.grid(beta))
@@ -217,7 +216,7 @@ generate_grid <- function(
   # From betas, select all the columns (proposed betas) that are inside
   if (trim == TRUE) {
     points_inside <- betas[inside_indices, ]
-    return(points_inside)
+    return(list(betas = points_inside, approx_grid_resolution = approx_grid_resolution))
   }
   return(list(betas = betas, approx_grid_resolution = approx_grid_resolution))
 }
@@ -345,6 +344,120 @@ glim_inner_prob_approx_samples <- function(
     coordinate_marginal_bounds = coordinate_marginal_bounds
   ))
 }
+
+glm_weights <- function(family, eta, dispersion = 1) {
+  if (family %in% c("gaussian", "normal")) {
+    rep(1 / dispersion, length(eta))
+  } else if (family == "poisson") {
+    exp(eta)
+  } else if (family == "binomial") {
+    mu <- 1 / (1 + exp(-eta))
+    mu * (1 - mu)
+  } else if (family == "gamma") {
+    rep(1 / dispersion, length(eta))
+  } else if (family == "inverse.gaussian") {
+    mu <- eta^(-1 / 2) # NaN if eta < 0; callers check is.finite()
+    (mu^3) / (4 * dispersion)
+  } else {
+    stop("Unsupported family for weight calculation")
+  }
+}
+
+# db_0/db_c is is what we are calculating. RETURNS A P-1 vector. Does not append the value of 1 for the partial deriv of the column wrt to itself
+profile_tangent <- function(family, X, beta, col, dispersion = 1) {
+  off_idx <- setdiff(1:length(beta), col)
+  if (length(off_idx) == 0) {
+    return(numeric(0))
+  }
+
+  w <- glm_weights(family, as.vector(X %*% beta), dispersion)
+  if (!all(is.finite(w))) {
+    return(NULL)
+  }
+
+  Info <- crossprod(X, w * X)
+  I_oo <- Info[off_idx, off_idx, drop = FALSE] # select the submatrix of other beta vals
+  I_oc <- Info[off_idx, col]
+  ridge <- max(1e-8 * mean(diag(I_oo)), 1e-12)
+
+  # -I_oo^-1 * I_oc is db_0/db_c.
+  tryCatch(as.vector(-solve(I_oo + diag(ridge, length(off_idx)), I_oc)), error = function(e) NULL)
+}
+
+# Does NOT handle the logic of the step-size. Only operates on the p-1 other columns
+correct_profile_point <- function(
+  family,
+  X,
+  y,
+  beta,
+  col,
+  dispersion = 1,
+  mle_coefs = NULL,
+  max_iter = 50,
+  tol = 1e-8
+) {
+  beta <- as.numeric(beta)
+  p <- length(beta)
+  off_idx <- setdiff(1:p, col)
+
+  ll_old <- compute_ll(family, y, X, beta, mle_coefs)
+  if (!is.finite(ll_old)) {
+    return(beta)
+  }
+
+  X_others <- X[, off_idx, drop = FALSE]
+
+  for (iter in 1:max_iter) {
+    eta <- as.vector(X %*% beta)
+    grad_off <- gradient(family = family, X = X, y = y, beta = beta, dispersion = dispersion)[
+      off_idx
+    ]
+    w <- glm_weights(family, eta, dispersion)
+    if (!all(is.finite(grad_off)) || !all(is.finite(w))) {
+      break
+    }
+
+    # Using info instead of observed hessian because always positive def
+    Info <- crossprod(X_others, w * X_others)
+    ridge <- max(1e-8 * mean(diag(Info)), 1e-12)
+    Info_reg <- Info + diag(ridge, length(off_idx))
+
+    delta <- tryCatch(solve(Info_reg, grad_off), error = function(e) NULL)
+    if (is.null(delta) | !all(is.finite(delta))) {
+      break
+    }
+
+    decrement <- sum(grad_off * delta)
+    if (decrement < tol) {
+      break
+    }
+
+    # Step-halving: accept only non-decreasing log-likelihood
+    step_multiplier <- 1
+    accepted <- FALSE
+    proposed_beta <- beta
+    while (step_multiplier > 1e-10) {
+      proposed_beta[off_idx] <- beta[off_idx] + step_multiplier * delta
+      ll_new <- compute_ll(family, y, X, proposed_beta, mle_coefs)
+      if (ll_new >= ll_old) {
+        accepted <- TRUE
+        break
+      }
+      step_multiplier <- step_multiplier / 2
+    }
+
+    if (!accepted) {
+      # No improving step: at numerical precision limit if decrement is tiny
+      break
+    }
+
+    beta <- proposed_beta
+    ll_old <- ll_new
+  }
+
+  return(beta)
+}
+
 
 #' Generalized Linear Inferential Models (GLIM) Main Function
 #'
@@ -505,34 +618,21 @@ glim <- function(
   } else {
     num_samps <- 2000
   }
-  if ("threshold_alpha" %in% names(args)) {
-    if (
-      is.integer(as.integer(args$threshold_alpha)) &
-        length(args$threshold_alpha) == 1 &
-        args$threshold_alpha > 0
-    ) {
-      threshold_alpha <- args$threshold_alpha
+  if ("alpha" %in% names(args)) {
+    if (is.integer(as.integer(args$alpha)) & length(args$alpha) == 1 & args$alpha > 0) {
+      alpha <- args$alpha
     } else {
-      stop("Input Error: threshold_alpha must be a positive integer")
+      stop("Input Error: alpha must be a positive number")
     }
   } else {
-    threshold_alpha <- .05
+    alpha <- .05
   }
 
   if (!is.null(names(args))) {
     if (
       !(all(
         names(args) %in%
-          c(
-            "a_val",
-            "b_val",
-            "max_it",
-            "betas",
-            "n_grid_evals",
-            "tol",
-            "num_samps",
-            "threshold_alpha"
-          )
+          c("a_val", "b_val", "max_it", "betas", "n_grid_evals", "tol", "num_samps", "alpha")
       ))
     ) {
       stop("Incorrect names of additional arguments passed")
@@ -757,10 +857,11 @@ glim <- function(
   if (!missing(dispersion) & (!is.numeric(dispersion) | dispersion <= 0)) {
     stop("Internal error: 'dispersion' must be a strictly positive numeric value.")
   }
+  show_progress <- FALSE
   if ((approx == FALSE) & (radial == FALSE)) {
+    show_progress <- TRUE
     if (is.null(betas)) {
       message("generating grid of betas")
-      Sys.sleep(1)
       generated_grid <- generate_grid(
         X,
         y,
@@ -771,6 +872,7 @@ glim <- function(
         dispersion,
         ll_mle_original_data,
         n_grid_evals = n_grid_evals,
+        trim = TRUE,
         m = m
       )
       betas <- generated_grid$betas
@@ -798,97 +900,171 @@ glim <- function(
       m = m,
       parallel = parallel,
       approx = approx,
+      show_progress = show_progress,
       base_seed = base_seed
     )
     tolerance <- .01
-    extended_betas <- list()
-    extended_plaus <- list()
-    for (p in 1:nrow(betas)) {
-      possible_vectors <- betas[which(betas[, p] == min(betas[, p])), ] # the minimum. Need to continue to follow the gradient away from the mean
-      chosen_extreme <- possible_vectors
-      if (ncol(possible_vectors) != 1) {
-        chosen_extreme <- colMeans(possible_vectors)
+    extended_in_neg_betas <- vector("list", ncol(X))
+    extended_in_pos_betas <- vector("list", ncol(X))
+    extended_in_neg_plaus <- vector("list", ncol(X))
+    extended_in_pos_plaus <- vector("list", ncol(X))
+
+    for (col in 1:ncol(betas)) {
+      max_plaus <- tapply(possibilities, betas[, col], max, na.rm = TRUE)
+      beta_vals <- as.numeric(names(max_plaus))
+
+      valid_alpha_mask <- max_plaus > alpha
+
+      # Check if the valid alpha region touches the absolute edges of the grid
+      needs_lower_extension <- min(beta_vals[valid_alpha_mask]) == min(beta_vals)
+      needs_upper_extension <- max(beta_vals[valid_alpha_mask]) == max(beta_vals)
+
+      extended_in_neg_betas[[col]] <- matrix(nrow = 0, ncol = ncol(betas))
+      extended_in_pos_betas[[col]] <- matrix(nrow = 0, ncol = ncol(betas))
+      off_idx <- setdiff(1:ncol(X), col)
+
+      # essentially duplicated code below
+      if (needs_lower_extension) {
+        edge_val <- min(betas[, col], na.rm = TRUE)
+
+        # Find the specific row at this edge that has the highest possibility
+        edge_rows <- which(betas[, col] == edge_val)
+        seed_index <- edge_rows[which.max(possibilities[edge_rows])] # If ties, selects the first one
+
+        chosen_in_neg_extreme <- betas[seed_index, ]
+        plaus_of_theta_marginal_in_neg <- possibilities[seed_index]
+        new_beta <- chosen_in_neg_extreme
+
+        while (plaus_of_theta_marginal_in_neg > alpha - tolerance) {
+          # Step further in negative direction
+          cand <- new_beta
+          cand[col] <- cand[col] - generated_grid$approx_grid_resolution[col]
+          tang <- profile_tangent(family, X, new_beta, col, dispersion)
+          cand_pred <- cand
+          cand_pred[off_idx] <- cand[off_idx] - tang * generated_grid$approx_grid_resolution[col]
+          if (is.finite(compute_ll(family, y, X, cand_pred, mle_coefs))) {
+            cand <- cand_pred
+          }
+          if (!is.finite(compute_ll(family, y, X, cand, mle_coefs))) {
+            warning(sprintf(
+              "Column %d: step left the valid parameter domain; extension stopped.",
+              col
+            ))
+            break
+          }
+
+          # Now that we've had our initial gradient step, we need to newton-Rhapson to find the new mle for the other params
+          new_beta <- correct_profile_point(
+            family = family,
+            X = X,
+            y = y,
+            beta = cand,
+            col = col,
+            dispersion = dispersion,
+            mle_coefs = mle_coefs
+          )
+
+          extended_in_neg_betas[[col]] <- rbind(extended_in_neg_betas[[col]], new_beta)
+
+          plaus_val <- glim_raw(
+            X,
+            y,
+            family = family,
+            matrix(new_beta, nrow = 1),
+            mle_coefs,
+            mle_val = ll_mle_original_data,
+            m = m,
+            parallel = parallel,
+            approx = approx,
+            show_progress = FALSE,
+            base_seed = base_seed
+          )
+
+          if (length(extended_in_neg_plaus[[col]]) == 0) {
+            extended_in_neg_plaus[[col]] <- plaus_val
+          } else {
+            extended_in_neg_plaus[[col]] <- c(extended_in_neg_plaus[[col]], plaus_val)
+          }
+          plaus_of_theta_marginal_in_neg <- plaus_val # update the value for the loop
+        }
       }
-      change_in_marginal <- chosen_extreme[p] - generated_grid$approx_grid_resolution[p] # minus because right now extending the minimum direction
-      # TODO need to extend the positive direction as well
 
-      plaus_of_theta_marginal <- possibilities[which(betas[, p] == min(betas[, p]))]
-      # allow for conservatism by avoiding early termination due to randomness. Note that we are doing essentially multiple testing, although also note that plausibility is always susceptible to upwards noise
-      # Do I want to increase the number of samples here? Unsure how many steps it will take -- hold off for now
-      # This does not activate if the plausibility is low enough
-      l <- 0
-      while (plaus_of_theta_marginal > threshold_alpha - tolerance) {
-        l <- l + 1
-        extended_betas[[p]] <- matrix(ncol = length(beta))
-        extended_betas[[p]] <- c()
-        normalizing_constant <- 0
-        for (r in 1:nrow(betas)) {
-          if (r != p) {
-            # add the sums of partials together (excluding column p)
-            normalizing_constant <- normalizing_constant +
-              partial(family, X, y, chosen_extreme, r)^2
+      # The essentially duplicated code
+      if (needs_upper_extension) {
+        edge_val <- max(betas[, col], na.rm = TRUE)
+
+        # Find the specific row at this edge that has the highest possibility
+        edge_rows <- which(betas[, col] == edge_val)
+        seed_index <- edge_rows[which.max(possibilities[edge_rows])]
+
+        chosen_in_pos_extreme <- betas[seed_index, ]
+        plaus_of_theta_marginal_in_pos <- possibilities[seed_index]
+        new_beta <- chosen_in_pos_extreme
+
+        while (plaus_of_theta_marginal_in_pos > alpha - tolerance) {
+          # Step further in negative direction
+          cand <- new_beta
+          cand[col] <- cand[col] + generated_grid$approx_grid_resolution[col]
+          tang <- profile_tangent(family, X, new_beta, col, dispersion)
+          cand_pred <- cand
+          cand_pred[off_idx] <- cand[off_idx] + tang * generated_grid$approx_grid_resolution[col]
+          if (is.finite(compute_ll(family, y, X, cand_pred, mle_coefs))) {
+            cand <- cand_pred
           }
-        }
-
-        for (q in 1:nrow(betas)) {
-          if (q != p) {
-            # By lagrange multipliers, the new value is theta - L1 * Lr / norm^2
-            # TODO check if positive or negative partial
-            chosen_extreme[q] <- chosen_extreme[q] +
-              partial(
-                family = family,
-                X,
-                y,
-                beta = chosen_extreme,
-                dispersion = dispersion,
-                j = p
-              ) *
-                partial(
-                  family = family,
-                  X,
-                  y,
-                  beta = chosen_extreme,
-                  dispersion = dispersion,
-                  j = q
-                ) /
-                normalizing_constant
+          if (!is.finite(compute_ll(family, y, X, cand, mle_coefs))) {
+            warning(sprintf(
+              "Column %d: step left the valid parameter domain; extension stopped.",
+              col
+            ))
+            break
           }
+
+          # Now that we've had our initial gradient step, we need to newton-Rhapson to find the new mle for the other params
+          new_beta <- correct_profile_point(
+            family = family,
+            X = X,
+            y = y,
+            beta = cand,
+            col = col,
+            dispersion = dispersion,
+            mle_coefs = mle_coefs
+          )
+
+          extended_in_pos_betas[[col]] <- rbind(extended_in_pos_betas[[col]], new_beta)
+
+          plaus_val <- glim_raw(
+            X,
+            y,
+            family = family,
+            matrix(new_beta, nrow = 1),
+            mle_coefs,
+            mle_val = ll_mle_original_data,
+            m = m,
+            parallel = parallel,
+            approx = approx,
+            show_progress = FALSE,
+            base_seed = base_seed
+          )
+
+          if (length(extended_in_pos_plaus[[col]]) == 0) {
+            extended_in_pos_plaus[[col]] <- plaus_val
+          } else {
+            extended_in_pos_plaus[[col]] <- c(extended_in_pos_plaus[[col]], plaus_val)
+          }
+          plaus_of_theta_marginal_in_pos <- plaus_val # update the value for the loop
         }
-        chosen_extreme[p] <- change_in_marginal
-        extended_betas[[p]][l, ] <- chosen_extreme
-
-        possibility_of_extreme <- glim_raw(
-          X,
-          y,
-          family = family,
-          chosen_extreme,
-          mle_coefs,
-          mle_val = ll_mle_original_data,
-          m = m,
-          parallel = parallel,
-          approx = approx,
-          base_seed = base_seed
-        )
-
-        extended_plaus[[p]][l] <- possibility_of_extreme
       }
     }
-
+    no_extensions <- !(needs_lower_extension | needs_upper_extension)
+    #TODO Okay so I have successesfully added points without getting errors. Need to ensure it works and is in the correct location at the boundary
     obj_to_return <- list(
-      possibilities = glim_raw(
-        X,
-        y,
-        family = family,
-        betas,
-        mle_coefs,
-        mle_val = ll_mle_original_data,
-        m = m,
-        parallel = parallel,
-        approx = approx,
-        base_seed = base_seed
-      ),
+      possibilities = possibilities,
       samples = NULL,
       betas_evaluated = betas,
+      extended_in_pos_betas = if (!no_extensions) extended_in_pos_betas else NULL,
+      extended_in_neg_betas = if (!no_extensions) extended_in_neg_betas else NULL,
+      extended_in_pos_plaus = if (!no_extensions) extended_in_pos_plaus else NULL,
+      extended_in_neg_plaus = if (!no_extensions) extended_in_neg_plaus else NULL,
       family = family,
       X = X,
       y = y,
@@ -897,6 +1073,7 @@ glim <- function(
       vcov = vcov,
       dispersion = dispersion
     )
+
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
   }
@@ -1388,6 +1565,12 @@ plot.glim_object <- function(x, ...) {
       grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
     }
   } else {
+    # If x doesn't contain these names, then these will be NULL (which have length of zero)
+    extended_in_pos_plaus <- x[["extended_in_pos_plaus"]]
+    extended_in_pos_betas <- x[["extended_in_pos_betas"]]
+    extended_in_neg_plaus <- x[["extended_in_neg_plaus"]]
+    extended_in_neg_betas <- x[["extended_in_neg_betas"]]
+
     num_predictors <- ncol(betas)
     grid_cols <- ceiling(sqrt(num_predictors))
     grid_rows <- ceiling(num_predictors / grid_cols)
@@ -1406,7 +1589,18 @@ plot.glim_object <- function(x, ...) {
       # Filter out -Inf values from empty grid slices
       beta_vals <- as.numeric(names(max_plaus))
       valid <- is.finite(beta_vals) & is.finite(max_plaus)
-
+      valid_beta_vals <- betas[valid, ]
+      valid_plaus <- max_plaus[valid]
+      all_beta_vals <- valid_beta_vals
+      all_plaus_vals <- valid_plaus
+      if (length(extended_in_pos_betas[[col]]) > 0) {
+        all_beta_vals <- rbind(extended_in_pos_betas[[col]], all_beta_vals)
+        all_plaus_vals <- c(all_plaus_vals, extended_in_pos_plaus)
+      }
+      if (length(extended_in_neg_betas[[col]]) > 0) {
+        all_beta_vals <- rbind(all_beta_vals, extended_in_pos_betas[[col]])
+        all_plaus_vals <- c(extended_in_neg_plaus, all_plaus_vals)
+      }
       if (any(valid)) {
         plot.default(
           beta_vals[valid],
@@ -1490,10 +1684,8 @@ print.glim_object <- function(x, ...) {
   cat("------------------------------------------------------------------------\n")
 
   if (!is.null(betas)) {
-    # Initialize vectors to collect data for the table
     row_names <- colnames(betas)
     mle_vals <- numeric(ncol(betas))
-    # Initialize empty vectors with true NA values instead of 0
     lower_bound <- rep(NA_real_, ncol(betas))
     upper_bound <- rep(NA_real_, ncol(betas))
 
@@ -1505,24 +1697,46 @@ print.glim_object <- function(x, ...) {
       alpha_cut <- valid & (max_plaus > alpha)
       valid_betas <- beta_vals[alpha_cut]
 
-      # Save results into our vectors
       if (length(valid_betas) > 0) {
-        if (min(valid_betas) != min(betas[, col])) {
-          lower_bound[col] <- min(valid_betas)
+        # ---------- LOWER BOUND ----------
+        grid_min <- min(valid_betas)
+        if (grid_min != min(betas[, col])) {
+          lower_bound[col] <- grid_min
         } else {
-          lower_bound[col] <- NA_real_
+          # Boundary hit: Check if negative extensions exist for this parameter
+          if (
+            !is.null(x$extended_in_neg_betas) &&
+              !is.null(x$extended_in_neg_betas[[col]]) &&
+              nrow(x$extended_in_neg_betas[[col]]) > 0
+          ) {
+            # The lowest value reached in the extension
+            lower_bound[col] <- min(x$extended_in_neg_betas[[col]][, col])
+          } else {
+            lower_bound[col] <- NA_real_
+          }
         }
-      }
-      if (length(valid_betas) > 0) {
-        if (max(valid_betas) != max(betas[, col])) {
-          upper_bound[col] <- max(valid_betas)
+
+        # ---------- UPPER BOUND ----------
+        grid_max <- max(valid_betas)
+        if (grid_max != max(betas[, col])) {
+          upper_bound[col] <- grid_max
         } else {
-          upper_bound[col] <- NA_real_
+          # Boundary hit: Check if positive extensions exist for this parameter
+          if (
+            !is.null(x$extended_in_pos_betas) &&
+              !is.null(x$extended_in_pos_betas[[col]]) &&
+              nrow(x$extended_in_pos_betas[[col]]) > 0
+          ) {
+            # The highest value reached in the extension
+            upper_bound[col] <- max(x$extended_in_pos_betas[[col]][, col])
+          } else {
+            upper_bound[col] <- NA_real_
+          }
         }
       }
     }
   } else {
-    upper_bound <- mle_coefs + coordinate_marginal_bounds # marginal distances
+    upper_bound <- mle_coefs + coordinate_marginal_bounds
     lower_bound <- mle_coefs - coordinate_marginal_bounds
     row_names <- colnames(x$X)
   }
@@ -1659,7 +1873,7 @@ nobs.glim_object <- function(object, ...) {
 #' compute_ll("gamma", y, X, betas)
 #' }
 #' @export
-compute_ll <- function(family, y, X, betas) {
+compute_ll <- function(family, y, X, betas, mle_coefs = NULL) {
   if (is.matrix(betas)) {
     betas <- t(betas)
   }
@@ -1670,16 +1884,15 @@ compute_ll <- function(family, y, X, betas) {
       X %*% betas,
       sqrt(est_dispersion_normal(y, X %*% fit_gaussian_cpp(X, y), ncol(X)))
     )
+    # need to compute the dispersion, which requires the MLE
   } else if (family == "gamma") {
+    if (is.null(mle_coefs)) {
+      stop("mle_coefs must be provided when family is 'gamma'")
+    }
     ll <- compute_gamma_ll_r(
       y = y,
       exp(X %*% betas),
-      shape = 1 /
-        mle_estimate_dispersion_gamma(
-          y,
-          exp(X %*% fit_gamma_log_cpp(X = X, XtX = t(X) %*% X, y = y, rep(1, ncol(X)), FALSE)),
-          ncol(X)
-        )
+      shape = 1 / mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), ncol(X))
     )
   } else if (family == "poisson") {
     ll <- compute_poisson_ll_r(y, exp(X %*% betas))
@@ -1695,6 +1908,9 @@ compute_ll <- function(family, y, X, betas) {
     )
   } else {
     stop("family not defined")
+  }
+  if (!is.finite(ll)) {
+    return(-Inf)
   }
   return(ll)
 }

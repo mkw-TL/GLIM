@@ -11,6 +11,16 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
+// compute_ll
+double compute_ll();
+RcppExport SEXP _GLIM_compute_ll() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(compute_ll());
+    return rcpp_result_gen;
+END_RCPP
+}
 // generate_unit_matrix_r
 arma::vec generate_unit_matrix_r(int rows, int d, uint32_t base_seed, int i);
 RcppExport SEXP _GLIM_generate_unit_matrix_r(SEXP rowsSEXP, SEXP dSEXP, SEXP base_seedSEXP, SEXP iSEXP) {
@@ -26,8 +36,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // fit_glm_omp_cpp
-arma::mat fit_glm_omp_cpp(arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::mat& betas, std::string family, int num_threads, int m, bool parallel, bool approx, bool radial, uint32_t base_seed);
-RcppExport SEXP _GLIM_fit_glm_omp_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP betasSEXP, SEXP familySEXP, SEXP num_threadsSEXP, SEXP mSEXP, SEXP parallelSEXP, SEXP approxSEXP, SEXP radialSEXP, SEXP base_seedSEXP) {
+arma::mat fit_glm_omp_cpp(arma::mat& X, const arma::vec& y, const arma::vec& mle_coefs, const arma::mat& betas, std::string family, int num_threads, int m, bool parallel, bool approx, bool radial, bool show_progress, uint32_t base_seed);
+RcppExport SEXP _GLIM_fit_glm_omp_cpp(SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP betasSEXP, SEXP familySEXP, SEXP num_threadsSEXP, SEXP mSEXP, SEXP parallelSEXP, SEXP approxSEXP, SEXP radialSEXP, SEXP show_progressSEXP, SEXP base_seedSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -41,8 +51,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< bool >::type parallel(parallelSEXP);
     Rcpp::traits::input_parameter< bool >::type approx(approxSEXP);
     Rcpp::traits::input_parameter< bool >::type radial(radialSEXP);
+    Rcpp::traits::input_parameter< bool >::type show_progress(show_progressSEXP);
     Rcpp::traits::input_parameter< uint32_t >::type base_seed(base_seedSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_glm_omp_cpp(X, y, mle_coefs, betas, family, num_threads, m, parallel, approx, radial, base_seed));
+    rcpp_result_gen = Rcpp::wrap(fit_glm_omp_cpp(X, y, mle_coefs, betas, family, num_threads, m, parallel, approx, radial, show_progress, base_seed));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -279,8 +290,9 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
+    {"_GLIM_compute_ll", (DL_FUNC) &_GLIM_compute_ll, 0},
     {"_GLIM_generate_unit_matrix_r", (DL_FUNC) &_GLIM_generate_unit_matrix_r, 4},
-    {"_GLIM_fit_glm_omp_cpp", (DL_FUNC) &_GLIM_fit_glm_omp_cpp, 11},
+    {"_GLIM_fit_glm_omp_cpp", (DL_FUNC) &_GLIM_fit_glm_omp_cpp, 12},
     {"_GLIM_imvar", (DL_FUNC) &_GLIM_imvar, 18},
     {"_GLIM_radial_code", (DL_FUNC) &_GLIM_radial_code, 14},
     {"_GLIM_compute_gamma_ll", (DL_FUNC) &_GLIM_compute_gamma_ll, 3},

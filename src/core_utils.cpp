@@ -85,6 +85,9 @@ arma::vec generate_unit_matrix(int rows, int d, std::minstd_rand &gen) {
   return u / norm;
 }
 
+// [[Rcpp::export]]
+double compute_ll() { return 0; }
+
 // version for R
 // [[Rcpp::export]]
 arma::vec generate_unit_matrix_r(int rows, int d, uint32_t base_seed, int i) {
@@ -102,7 +105,8 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
                           std::string family, // Pass string from R
                           int num_threads = 1, int m = 100,
                           bool parallel = true, bool approx = false,
-                          bool radial = false, uint32_t base_seed = 31415) {
+                          bool radial = false, bool show_progress = true,
+                          uint32_t base_seed = 31415) {
 
   // Convert the string to an Enum once right here
   GlmFamily fam = string_to_family(family);
@@ -136,7 +140,8 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   int next_percentage_milestone = 0;
   int percentage_step = 2; // Update every 2%
 
-  bool show_progress = (!approx && !radial);
+  // If done via radial or approx, then the progress bar happens elsewhere
+  show_progress = (!approx && !radial && show_progress);
   StdoutProgressBar pb;
   Progress p(n_evals, show_progress, pb);
 
@@ -314,10 +319,12 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
       uint32_t seed_plus = step_stride;
       uint32_t seed_minus = step_stride + 10000;
 
-      double val1 = fit_glm_omp_cpp(X, y, mle, MPlus.t(), family, 1, m,
-                                    parallel, true, false, seed_plus)(0, 0);
-      double val2 = fit_glm_omp_cpp(X, y, mle, MMinus.t(), family, 1, m,
-                                    parallel, true, false, seed_minus)(0, 0);
+      double val1 =
+          fit_glm_omp_cpp(X, y, mle, MPlus.t(), family, 1, m, parallel, true,
+                          false, false, seed_plus)(0, 0);
+      double val2 =
+          fit_glm_omp_cpp(X, y, mle, MMinus.t(), family, 1, m, parallel, true,
+                          false, false, seed_minus)(0, 0);
       double g_xi = std::max(val1, val2) - alpha;
       if ((g_xi <= std::abs(tol)) || (it >= max_it)) {
         break;
@@ -437,7 +444,7 @@ arma::mat radial_code(int num_samps, arma::mat X, arma::vec y,
 
 // Divide the loop among the threads
 #pragma omp for schedule(static)
-    for (int j = 0; j < num_samps - 1; j++) {
+    for (int j = 0; j < num_samps; j++) {
 #ifdef _OPENMP
       if (omp_get_thread_num() == 0) {
         if (Progress::check_abort()) {
