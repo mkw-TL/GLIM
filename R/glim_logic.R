@@ -472,7 +472,7 @@ correct_profile_point <- function(
 }
 
 extending_upwards <- function(
-  needs_upper_extention,
+  ony_needs_upper_extention,
   betas,
   col,
   possibilities,
@@ -490,10 +490,11 @@ extending_upwards <- function(
   approx,
   show_progress,
   base_seed,
-  extended_in_pos_plaus
+  extended_in_pos_plaus,
+  extended_in_pos_betas
 ) {
   # The essentially duplicated code
-  if (needs_upper_extention) {
+  if (ony_needs_upper_extention) {
     edge_val <- max(betas[, col], na.rm = TRUE)
 
     # Find the specific row at this edge that has the highest possibility
@@ -562,12 +563,15 @@ extending_upwards <- function(
   } else {
     extended_in_pos_plaus[[col]] <- c(extended_in_pos_plaus[[col]], plaus_val)
   }
-  plaus_of_theta_marginal_in_pos <- plaus_val # update the value for the loop
+  return(list(
+    "extended_in_pos_betas" = extended_in_pos_betas,
+    "extended_in_pos_plaus" = extended_in_pos_plaus
+  ))
 }
 
 
 extending_downwards <- function(
-  needs_lower_extention,
+  ony_needs_lower_extention,
   betas,
   col,
   possibilities,
@@ -588,7 +592,7 @@ extending_downwards <- function(
   extended_in_neg_plaus
 ) {
   # The essentially duplicated code
-  if (needs_lower_extention) {
+  if (ony_needs_lower_extention) {
     edge_val <- min(betas[, col], na.rm = TRUE)
 
     # Find the specific row at this edge that has the highest possibility
@@ -652,6 +656,10 @@ extending_downwards <- function(
     }
     plaus_of_theta_marginal_in_neg <- plaus_val # update the value for the loop
   }
+  return(list(
+    "extended_in_neg_betas" = extended_in_neg_betas,
+    "extended_in_neg_plaus" = extended_in_neg_plaus
+  ))
 }
 
 
@@ -1117,80 +1125,63 @@ glim <- function(
       valid_alpha_mask <- max_plaus > alpha
 
       # Check if the valid alpha region touches the absolute edges of the grid
-      needs_lower_extension <- min(beta_vals[valid_alpha_mask]) == min(beta_vals)
-      needs_upper_extension <- max(beta_vals[valid_alpha_mask]) == max(beta_vals)
+      ony_needs_lower_extension <- min(beta_vals[valid_alpha_mask]) == min(beta_vals)
+      ony_needs_upper_extension <- max(beta_vals[valid_alpha_mask]) == max(beta_vals)
 
       extended_in_neg_betas[[col]] <- matrix(nrow = 0, ncol = ncol(betas))
       extended_in_pos_betas[[col]] <- matrix(nrow = 0, ncol = ncol(betas))
       off_idx <- setdiff(1:ncol(X), col)
 
-      # essentially duplicated code below
-      if (needs_lower_extension) {
-        edge_val <- min(betas[, col], na.rm = TRUE)
+      up_res <- extending_upwards(
+        ony_needs_upper_extention = ony_needs_upper_extension,
+        betas = betas,
+        col = col,
+        possibilities = possibilities,
+        alpha = alpha,
+        tolerance = tolerance,
+        generated_grid = generated_grid,
+        family = family,
+        X = X,
+        dispersion = dispersion,
+        y = y,
+        mle_coefs = mle_coefs,
+        ll_mle_orig_data = ll_mle_original_data,
+        m = m,
+        parallel = parallel,
+        approx = approx,
+        show_progress = show_progress,
+        base_seed = base_seed,
+        extended_in_pos_plaus = extended_in_pos_plaus
+      )
+      extended_in_pos_betas <- up_res$extended_in_pos_betas
+      extended_in_pos_betas <- up_res$extended_in_pos_plaus
 
-        # Find the specific row at this edge that has the highest possibility
-        edge_rows <- which(betas[, col] == edge_val)
-        seed_index <- edge_rows[which.max(possibilities[edge_rows])] # If ties, selects the first one
-
-        chosen_in_neg_extreme <- betas[seed_index, ]
-        plaus_of_theta_marginal_in_neg <- possibilities[seed_index]
-        new_beta <- chosen_in_neg_extreme
-
-        while (plaus_of_theta_marginal_in_neg > alpha - tolerance) {
-          # Step further in negative direction
-          cand <- new_beta
-          cand[col] <- cand[col] - generated_grid$approx_grid_resolution[col]
-          tang <- profile_tangent(family, X, new_beta, col, dispersion)
-          cand_pred <- cand
-          cand_pred[off_idx] <- cand[off_idx] - tang * generated_grid$approx_grid_resolution[col]
-          if (is.finite(compute_ll(family, y, X, cand_pred, mle_coefs))) {
-            cand <- cand_pred
-          }
-          if (!is.finite(compute_ll(family, y, X, cand, mle_coefs))) {
-            warning(sprintf(
-              "Column %d: step left the valid parameter domain; extension stopped.",
-              col
-            ))
-            break
-          }
-
-          # Now that we've had our initial gradient step, we need to newton-Rhapson to find the new mle for the other params
-          new_beta <- correct_profile_point(
-            family = family,
-            X = X,
-            y = y,
-            beta = cand,
-            col = col,
-            dispersion = dispersion,
-            mle_coefs = mle_coefs
-          )
-
-          extended_in_neg_betas[[col]] <- rbind(extended_in_neg_betas[[col]], new_beta)
-
-          plaus_val <- glim_raw(
-            X,
-            y,
-            family = family,
-            matrix(new_beta, nrow = 1),
-            mle_coefs,
-            mle_val = ll_mle_original_data,
-            m = m,
-            parallel = parallel,
-            approx = approx,
-            show_progress = FALSE,
-            base_seed = base_seed
-          )
-
-          if (length(extended_in_neg_plaus[[col]]) == 0) {
-            extended_in_neg_plaus[[col]] <- plaus_val
-          } else {
-            extended_in_neg_plaus[[col]] <- c(extended_in_neg_plaus[[col]], plaus_val)
-          }
-          plaus_of_theta_marginal_in_neg <- plaus_val # update the value for the loop
-        }
-      }
+      down_res <- extending_downwards(
+        ony_needs_lower_extention = ony_needs_lower_extension,
+        betas = betas,
+        col = col,
+        possibilities = possibilities,
+        alpha = alpha,
+        tolerance = tolerance,
+        generated_grid = generated_grid,
+        family = family,
+        X = X,
+        dispersion = dispersion,
+        y = y,
+        mle_coefs = mle_coefs,
+        ll_mle_orig_data = ll_mle_original_data,
+        m = m,
+        parallel = parallel,
+        approx = approx,
+        show_progress = show_progress,
+        base_seed = base_seed,
+        extended_in_neg_plaus = extended_in_neg_plaus
+      )
+      extended_in_neg_betas <- down_res$extended_in_neg_betas
+      extended_in_neg_plaus <- down_res$extended_in_neg_plaus
     }
-    no_extensions <- !(needs_lower_extension | needs_upper_extension)
+
+    no_extensions <- !(ony_needs_lower_extension | ony_needs_upper_extension)
     #TODO Okay so I have successesfully added points without getting errors. Need to ensure it works and is in the correct location at the boundary
     obj_to_return <- list(
       possibilities = possibilities,
