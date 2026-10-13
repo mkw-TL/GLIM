@@ -221,6 +221,19 @@ generate_grid <- function(
   return(list(betas = betas, approx_grid_resolution = approx_grid_resolution))
 }
 
+glim_marginal <- function(
+  X,
+  y,
+  family,
+  mle_coefs,
+  eigen_vecs,
+  dispersion,
+  ll_mle_original_data,
+  n_grid_evals,
+  m
+) {}
+
+
 #' Generate Elliptical Approximation Samples (Inner Probability)
 #'
 #' Internal function called to generate samples when the elliptical approximation is used.
@@ -456,6 +469,189 @@ correct_profile_point <- function(
   }
 
   return(beta)
+}
+
+extending_upwards <- function(
+  needs_upper_extention,
+  betas,
+  col,
+  possibilities,
+  alpha,
+  tolerance,
+  generated_grid,
+  family,
+  X,
+  dispersion,
+  y,
+  mle_coefs,
+  ll_mle_orig_data,
+  m,
+  parallel,
+  approx,
+  show_progress,
+  base_seed,
+  extended_in_pos_plaus
+) {
+  # The essentially duplicated code
+  if (needs_upper_extention) {
+    edge_val <- max(betas[, col], na.rm = TRUE)
+
+    # Find the specific row at this edge that has the highest possibility
+    edge_rows <- which(betas[, col] == edge_val)
+    seed_index <- edge_rows[which.max(possibilities[edge_rows])]
+
+    chosen_in_pos_extreme <- betas[seed_index, ]
+    plaus_of_theta_marginal_in_pos <- possibilities[seed_index]
+    new_beta <- chosen_in_pos_extreme
+  } else {
+    # this is the case where we are just doing the marginals, and don't need to have betas/possibilities already calculated
+    plaus_of_theta_marginal_in_pos <- 1
+    new_beta <- mle_coefs
+  }
+
+  while (plaus_of_theta_marginal_in_pos > alpha - tolerance) {
+    # Step further in negative direction
+    cand <- new_beta
+    cand[col] <- cand[col] + generated_grid$approx_grid_resolution[col]
+    tang <- profile_tangent(family, X, new_beta, col, dispersion)
+    cand_pred <- cand
+    cand_pred[off_idx] <- cand[off_idx] + tang * generated_grid$approx_grid_resolution[col]
+    if (is.finite(compute_ll(family, y, X, cand_pred, mle_coefs))) {
+      cand <- cand_pred
+    } else {
+      warning(sprintf("Column %d: step left the valid parameter domain; extension stopped.", col))
+      break
+    }
+
+    # Now that we've had our initial gradient step, we need to newton-Rhapson to find the new mle for the other params
+    new_beta <- correct_profile_point(
+      family = family,
+      X = X,
+      y = y,
+      beta = cand,
+      col = col,
+      dispersion = dispersion,
+      mle_coefs = mle_coefs
+    )
+
+    extended_in_pos_betas[[col]] <- rbind(extended_in_pos_betas[[col]], new_beta)
+
+    plaus_val <- glim_raw(
+      X,
+      y,
+      family = family,
+      matrix(new_beta, nrow = 1),
+      mle_coefs,
+      mle_val = ll_mle_original_data,
+      m = m,
+      parallel = parallel,
+      approx = approx,
+      show_progress = FALSE,
+      base_seed = base_seed
+    )
+
+    if (length(extended_in_pos_plaus[[col]]) == 0) {
+      extended_in_pos_plaus[[col]] <- plaus_val
+    } else {
+      extended_in_pos_plaus[[col]] <- c(extended_in_pos_plaus[[col]], plaus_val)
+    }
+    plaus_of_theta_marginal_in_pos <- plaus_val # update the value for the loop
+  }
+  if (length(extended_in_pos_plaus[[col]]) == 0) {
+    extended_in_pos_plaus[[col]] <- plaus_val
+  } else {
+    extended_in_pos_plaus[[col]] <- c(extended_in_pos_plaus[[col]], plaus_val)
+  }
+  plaus_of_theta_marginal_in_pos <- plaus_val # update the value for the loop
+}
+
+
+extending_downwards <- function(
+  needs_lower_extention,
+  betas,
+  col,
+  possibilities,
+  alpha,
+  tolerance,
+  generated_grid,
+  family,
+  X,
+  dispersion,
+  y,
+  mle_coefs,
+  ll_mle_orig_data,
+  m,
+  parallel,
+  approx,
+  show_progress,
+  base_seed,
+  extended_in_neg_plaus
+) {
+  # The essentially duplicated code
+  if (needs_lower_extention) {
+    edge_val <- min(betas[, col], na.rm = TRUE)
+
+    # Find the specific row at this edge that has the highest possibility
+    edge_rows <- which(betas[, col] == edge_val)
+    seed_index <- edge_rows[which.max(possibilities[edge_rows])]
+
+    chosen_in_neg_extreme <- betas[seed_index, ]
+    plaus_of_theta_marginal_in_neg <- possibilities[seed_index]
+    new_beta <- chosen_in_neg_extreme
+  } else {
+    # this is the case where we are just doing the marginals, and don't need to have betas/possibilities already calculated
+    plaus_of_theta_marginal_in_neg <- 1
+    new_beta <- mle_coefs
+  }
+
+  while (plaus_of_theta_marginal_in_neg > alpha - tolerance) {
+    # Step further in negative direction
+    cand <- new_beta
+    cand[col] <- cand[col] - generated_grid$approx_grid_resolution[col] # the main difference
+    tang <- profile_tangent(family, X, new_beta, col, dispersion)
+    cand_pred <- cand
+    cand_pred[off_idx] <- cand[off_idx] - tang * generated_grid$approx_grid_resolution[col]
+    if (is.finite(compute_ll(family, y, X, cand_pred, mle_coefs))) {
+      cand <- cand_pred
+    } else {
+      warning(sprintf("Column %d: step left the valid parameter domain; extension stopped.", col))
+      break
+    }
+
+    # Now that we've had our initial gradient step, we need to newton-Rhapson to find the new mle for the other params
+    new_beta <- correct_profile_point(
+      family = family,
+      X = X,
+      y = y,
+      beta = cand,
+      col = col,
+      dispersion = dispersion,
+      mle_coefs = mle_coefs
+    )
+
+    extended_in_neg_betas[[col]] <- rbind(extended_in_neg_betas[[col]], new_beta)
+
+    plaus_val <- glim_raw(
+      X,
+      y,
+      family = family,
+      matrix(new_beta, nrow = 1),
+      mle_coefs,
+      mle_val = ll_mle_original_data,
+      m = m,
+      parallel = parallel,
+      approx = approx,
+      show_progress = FALSE,
+      base_seed = base_seed
+    )
+
+    if (length(extended_in_neg_plaus[[col]]) == 0) {
+      extended_in_neg_plaus[[col]] <- plaus_val
+    } else {
+      extended_in_neg_plaus[[col]] <- c(extended_in_neg_plaus[[col]], plaus_val)
+    }
+    plaus_of_theta_marginal_in_neg <- plaus_val # update the value for the loop
+  }
 }
 
 
@@ -858,6 +1054,11 @@ glim <- function(
     stop("Internal error: 'dispersion' must be a strictly positive numeric value.")
   }
   show_progress <- FALSE
+
+  if (ncol(X) > 5 | only_marginal <- TRUE) {
+    return(glim_marginal(X, y, family, mle_coefs, eigen_vecs, dispersion, ll_mle_original_data, m))
+  }
+
   if ((approx == FALSE) & (radial == FALSE)) {
     show_progress <- TRUE
     if (is.null(betas)) {
@@ -872,7 +1073,7 @@ glim <- function(
         dispersion,
         ll_mle_original_data,
         n_grid_evals = n_grid_evals,
-        trim = TRUE,
+        trim = FALSE, # To ensure correct marginal plots. Will be slower, but only used when n <= 5
         m = m
       )
       betas <- generated_grid$betas
@@ -986,72 +1187,6 @@ glim <- function(
             extended_in_neg_plaus[[col]] <- c(extended_in_neg_plaus[[col]], plaus_val)
           }
           plaus_of_theta_marginal_in_neg <- plaus_val # update the value for the loop
-        }
-      }
-
-      # The essentially duplicated code
-      if (needs_upper_extension) {
-        edge_val <- max(betas[, col], na.rm = TRUE)
-
-        # Find the specific row at this edge that has the highest possibility
-        edge_rows <- which(betas[, col] == edge_val)
-        seed_index <- edge_rows[which.max(possibilities[edge_rows])]
-
-        chosen_in_pos_extreme <- betas[seed_index, ]
-        plaus_of_theta_marginal_in_pos <- possibilities[seed_index]
-        new_beta <- chosen_in_pos_extreme
-
-        while (plaus_of_theta_marginal_in_pos > alpha - tolerance) {
-          # Step further in negative direction
-          cand <- new_beta
-          cand[col] <- cand[col] + generated_grid$approx_grid_resolution[col]
-          tang <- profile_tangent(family, X, new_beta, col, dispersion)
-          cand_pred <- cand
-          cand_pred[off_idx] <- cand[off_idx] + tang * generated_grid$approx_grid_resolution[col]
-          if (is.finite(compute_ll(family, y, X, cand_pred, mle_coefs))) {
-            cand <- cand_pred
-          }
-          if (!is.finite(compute_ll(family, y, X, cand, mle_coefs))) {
-            warning(sprintf(
-              "Column %d: step left the valid parameter domain; extension stopped.",
-              col
-            ))
-            break
-          }
-
-          # Now that we've had our initial gradient step, we need to newton-Rhapson to find the new mle for the other params
-          new_beta <- correct_profile_point(
-            family = family,
-            X = X,
-            y = y,
-            beta = cand,
-            col = col,
-            dispersion = dispersion,
-            mle_coefs = mle_coefs
-          )
-
-          extended_in_pos_betas[[col]] <- rbind(extended_in_pos_betas[[col]], new_beta)
-
-          plaus_val <- glim_raw(
-            X,
-            y,
-            family = family,
-            matrix(new_beta, nrow = 1),
-            mle_coefs,
-            mle_val = ll_mle_original_data,
-            m = m,
-            parallel = parallel,
-            approx = approx,
-            show_progress = FALSE,
-            base_seed = base_seed
-          )
-
-          if (length(extended_in_pos_plaus[[col]]) == 0) {
-            extended_in_pos_plaus[[col]] <- plaus_val
-          } else {
-            extended_in_pos_plaus[[col]] <- c(extended_in_pos_plaus[[col]], plaus_val)
-          }
-          plaus_of_theta_marginal_in_pos <- plaus_val # update the value for the loop
         }
       }
     }
