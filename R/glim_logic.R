@@ -128,6 +128,10 @@ partial <- function(family, X, y, beta, dispersion, j) {
   }
 }
 
+generate_marginal_object <- function(X, y, family, mle_coefs, mle_vals, m, parallel, base_seed) {
+  return(TRUE)
+}
+
 
 #' Generates a grid of parameter values (cut by imvar)
 #'
@@ -471,196 +475,96 @@ correct_profile_point <- function(
   return(beta)
 }
 
-extending_upwards <- function(
-  ony_needs_upper_extention,
+extend_profile <- function(
+  direction,
+  needs_extension,
   betas,
   col,
   possibilities,
   alpha,
   tolerance,
-  generated_grid,
+  step,
   family,
   X,
-  dispersion,
   y,
+  dispersion,
   mle_coefs,
-  ll_mle_orig_data,
+  ll_mle_original_data,
   m,
   parallel,
   approx,
-  show_progress,
   base_seed,
-  extended_in_pos_plaus,
-  extended_in_pos_betas
+  max_steps = 200
 ) {
-  # The essentially duplicated code
-  if (ony_needs_upper_extention) {
-    edge_val <- max(betas[, col], na.rm = TRUE)
+  p <- length(mle_coefs)
+  off_idx <- setdiff(seq_len(p), col)
+  out_betas <- matrix(nrow = 0, ncol = p)
+  out_plaus <- numeric(0)
 
-    # Find the specific row at this edge that has the highest possibility
+  if (needs_extension) {
+    edge_val <- if (direction > 0) max(betas[, col]) else min(betas[, col])
     edge_rows <- which(betas[, col] == edge_val)
-    seed_index <- edge_rows[which.max(possibilities[edge_rows])]
-
-    chosen_in_pos_extreme <- betas[seed_index, ]
-    plaus_of_theta_marginal_in_pos <- possibilities[seed_index]
-    new_beta <- chosen_in_pos_extreme
+    seed <- edge_rows[which.max(possibilities[edge_rows])]
+    new_beta <- betas[seed, ]
+    current_plaus <- possibilities[seed]
   } else {
-    # this is the case where we are just doing the marginals, and don't need to have betas/possibilities already calculated
-    plaus_of_theta_marginal_in_pos <- 1
-    new_beta <- mle_coefs
+    return(list(betas = out_betas, plaus = out_plaus)) # nothing to extend
   }
 
-  while (plaus_of_theta_marginal_in_pos > alpha - tolerance) {
-    # Step further in negative direction
-    cand <- new_beta
-    cand[col] <- cand[col] + generated_grid$approx_grid_resolution[col]
+  for (k in seq_len(max_steps)) {
+    if (current_plaus <= alpha - tolerance) {
+      break
+    }
+
     tang <- profile_tangent(family, X, new_beta, col, dispersion)
-    cand_pred <- cand
-    cand_pred[off_idx] <- cand[off_idx] + tang * generated_grid$approx_grid_resolution[col]
-    if (is.finite(compute_ll(family, y, X, cand_pred, mle_coefs))) {
-      cand <- cand_pred
-    } else {
+    if (is.null(tang)) {
+      warning(sprintf("Column %d: profile tangent failed; extension stopped.", col))
+      break
+    }
+    cand <- new_beta
+    cand[col] <- cand[col] + direction * step
+    cand[off_idx] <- cand[off_idx] + direction * step * tang
+    if (!is.finite(compute_ll(family, y, X, cand, mle_coefs))) {
       warning(sprintf("Column %d: step left the valid parameter domain; extension stopped.", col))
       break
     }
 
-    # Now that we've had our initial gradient step, we need to newton-Rhapson to find the new mle for the other params
-    new_beta <- correct_profile_point(
-      family = family,
-      X = X,
-      y = y,
-      beta = cand,
-      col = col,
-      dispersion = dispersion,
-      mle_coefs = mle_coefs
-    )
-
-    extended_in_pos_betas[[col]] <- rbind(extended_in_pos_betas[[col]], new_beta)
-
-    plaus_val <- glim_raw(
+    new_beta <- correct_profile_point(family, X, y, cand, col, dispersion, mle_coefs)
+    current_plaus <- as.numeric(glim_raw(
       X,
       y,
       family = family,
-      matrix(new_beta, nrow = 1),
-      mle_coefs,
+      betas = matrix(new_beta, nrow = 1),
+      mle_coefs = mle_coefs,
       mle_val = ll_mle_original_data,
       m = m,
       parallel = parallel,
       approx = approx,
       show_progress = FALSE,
       base_seed = base_seed
-    )
-
-    if (length(extended_in_pos_plaus[[col]]) == 0) {
-      extended_in_pos_plaus[[col]] <- plaus_val
-    } else {
-      extended_in_pos_plaus[[col]] <- c(extended_in_pos_plaus[[col]], plaus_val)
-    }
-    plaus_of_theta_marginal_in_pos <- plaus_val # update the value for the loop
+    ))
+    out_betas <- rbind(out_betas, unname(new_beta))
+    out_plaus <- c(out_plaus, current_plaus)
   }
-  if (length(extended_in_pos_plaus[[col]]) == 0) {
-    extended_in_pos_plaus[[col]] <- plaus_val
-  } else {
-    extended_in_pos_plaus[[col]] <- c(extended_in_pos_plaus[[col]], plaus_val)
+  if (k == max_steps) {
+    warning(sprintf("Column %d: hit max_steps while extending.", col))
   }
-  return(list(
-    "extended_in_pos_betas" = extended_in_pos_betas,
-    "extended_in_pos_plaus" = extended_in_pos_plaus
-  ))
+  list(betas = out_betas, plaus = out_plaus)
 }
 
-
-extending_downwards <- function(
-  ony_needs_lower_extention,
-  betas,
-  col,
-  possibilities,
-  alpha,
-  tolerance,
-  generated_grid,
-  family,
+calculate_marginal_ftn <- function(
   X,
-  dispersion,
   y,
+  family,
+  betas,
   mle_coefs,
-  ll_mle_orig_data,
+  mle_vals,
   m,
   parallel,
   approx,
   show_progress,
-  base_seed,
-  extended_in_neg_plaus
-) {
-  # The essentially duplicated code
-  if (ony_needs_lower_extention) {
-    edge_val <- min(betas[, col], na.rm = TRUE)
-
-    # Find the specific row at this edge that has the highest possibility
-    edge_rows <- which(betas[, col] == edge_val)
-    seed_index <- edge_rows[which.max(possibilities[edge_rows])]
-
-    chosen_in_neg_extreme <- betas[seed_index, ]
-    plaus_of_theta_marginal_in_neg <- possibilities[seed_index]
-    new_beta <- chosen_in_neg_extreme
-  } else {
-    # this is the case where we are just doing the marginals, and don't need to have betas/possibilities already calculated
-    plaus_of_theta_marginal_in_neg <- 1
-    new_beta <- mle_coefs
-  }
-
-  while (plaus_of_theta_marginal_in_neg > alpha - tolerance) {
-    # Step further in negative direction
-    cand <- new_beta
-    cand[col] <- cand[col] - generated_grid$approx_grid_resolution[col] # the main difference
-    tang <- profile_tangent(family, X, new_beta, col, dispersion)
-    cand_pred <- cand
-    cand_pred[off_idx] <- cand[off_idx] - tang * generated_grid$approx_grid_resolution[col]
-    if (is.finite(compute_ll(family, y, X, cand_pred, mle_coefs))) {
-      cand <- cand_pred
-    } else {
-      warning(sprintf("Column %d: step left the valid parameter domain; extension stopped.", col))
-      break
-    }
-
-    # Now that we've had our initial gradient step, we need to newton-Rhapson to find the new mle for the other params
-    new_beta <- correct_profile_point(
-      family = family,
-      X = X,
-      y = y,
-      beta = cand,
-      col = col,
-      dispersion = dispersion,
-      mle_coefs = mle_coefs
-    )
-
-    extended_in_neg_betas[[col]] <- rbind(extended_in_neg_betas[[col]], new_beta)
-
-    plaus_val <- glim_raw(
-      X,
-      y,
-      family = family,
-      matrix(new_beta, nrow = 1),
-      mle_coefs,
-      mle_val = ll_mle_original_data,
-      m = m,
-      parallel = parallel,
-      approx = approx,
-      show_progress = FALSE,
-      base_seed = base_seed
-    )
-
-    if (length(extended_in_neg_plaus[[col]]) == 0) {
-      extended_in_neg_plaus[[col]] <- plaus_val
-    } else {
-      extended_in_neg_plaus[[col]] <- c(extended_in_neg_plaus[[col]], plaus_val)
-    }
-    plaus_of_theta_marginal_in_neg <- plaus_val # update the value for the loop
-  }
-  return(list(
-    "extended_in_neg_betas" = extended_in_neg_betas,
-    "extended_in_neg_plaus" = extended_in_neg_plaus
-  ))
-}
+  base_seed
+) {}
 
 
 #' Generalized Linear Inferential Models (GLIM) Main Function
@@ -831,12 +735,42 @@ glim <- function(
   } else {
     alpha <- .05
   }
+  directly_calc_marginals <- FALSE
+  if (ncol(X) > 5) {
+    directly_calc_marginals <- TRUE
+  }
+  if ("directly_calc_marginals" %in% names(args)) {
+    if (is.logical(args$directly_calc_marginals) & length(args$directly_calc_marginals) == 1) {
+      directly_calc_marginals <- args$directly_calc_marginals
+    } else {
+      stop("Input Error: directly_calc_marginals must be TRUE or FALSE")
+    }
+  }
+  trim <- TRUE
+  if ("trim" %in% names(args)) {
+    if (is.logical(args$trim) & length(args$trim) == 1) {
+      trim <- args$trim
+    } else {
+      stop("Input Error: trim must be TRUE or FALSE")
+    }
+  }
 
   if (!is.null(names(args))) {
     if (
       !(all(
         names(args) %in%
-          c("a_val", "b_val", "max_it", "betas", "n_grid_evals", "tol", "num_samps", "alpha")
+          c(
+            "a_val",
+            "b_val",
+            "max_it",
+            "betas",
+            "n_grid_evals",
+            "tol",
+            "num_samps",
+            "alpha",
+            "directly_calc_marginals",
+            "trim"
+          )
       ))
     ) {
       stop("Incorrect names of additional arguments passed")
@@ -891,24 +825,16 @@ glim <- function(
     }
   }
 
-  if ("m" %in% names(args)) {
-    if (is.numeric(args$m) & args$m %% 1 == 0 & length(args$m) == 1 & args$m > 0) {
-      m <- args$m
-    } else {
-      stop("Input Error: m must be a positive integer")
-    }
+  if (is.numeric(m) & m %% 1 == 0 & length(m) == 1 & m > 0) {
+    m <- m
   } else {
-    m <- 1000
+    stop("Input Error: m must be a positive integer")
   }
 
-  if ("tol" %in% names(args)) {
-    if (is.numeric(args$tol) & length(args$tol) == 1 & args$tol > 0 & args$tol < 1) {
-      m <- args$m
-    } else {
-      stop("Input Error: tol must be between 0 and 1")
-    }
+  if (is.numeric(tol) & length(tol) == 1 & tol > 0 & tol < 1) {
+    tol <- tol
   } else {
-    tol <- .02
+    stop("Input Error: tol must be between 0 and 1")
   }
 
   J <- NULL
@@ -1063,145 +989,175 @@ glim <- function(
   }
   show_progress <- FALSE
 
-  if (ncol(X) > 5 | only_marginal <- TRUE) {
-    return(glim_marginal(X, y, family, mle_coefs, eigen_vecs, dispersion, ll_mle_original_data, m))
-  }
-
+  message("Our MLE is: ", paste(round(mle_coefs, 4), collapse = ", "))
+  base_seed <- sample.int(.Machine$integer.max, 1)
   if ((approx == FALSE) & (radial == FALSE)) {
     show_progress <- TRUE
     if (is.null(betas)) {
-      message("generating grid of betas")
-      generated_grid <- generate_grid(
+      if (directly_calc_marginals == FALSE) {
+        message("generating grid of betas")
+        generated_grid <- generate_grid(
+          X,
+          y,
+          family,
+          mle_coefs,
+          eigen_vecs = eJ$vectors,
+          eigen_vals = eJ$values,
+          dispersion,
+          ll_mle_original_data,
+          n_grid_evals = n_grid_evals,
+          trim = trim,
+          m = m
+        )
+        betas <- generated_grid$betas
+        message(sprintf(
+          "There are (up to) %d grid points to evaluate. Each grid point requires %d glm fits\n",
+          n_grid_evals^length(mle_coefs),
+          m
+        ))
+        if (n_grid_evals^length(mle_coefs) > 100000) {
+          message(sprintf(
+            "Be warned of crashes due to lack of memory For 5+ predictors, use approx = TRUE"
+          ))
+        }
+        colnames(betas) <- colnames(X)
+        possibilis <- glim_raw(
+          X,
+          y,
+          family,
+          betas,
+          mle_coefs,
+          mle_vals,
+          m,
+          parallel,
+          approx,
+          show_progress,
+          base_seed
+        )
+
+        ## Now we need to see if we extend out this automatically generated set of betas
+        tolerance <- .01
+        extended_in_neg_betas <- vector("list", ncol(X))
+        extended_in_pos_betas <- vector("list", ncol(X))
+        extended_in_neg_plaus <- vector("list", ncol(X))
+        extended_in_pos_plaus <- vector("list", ncol(X))
+
+        for (col in seq_len(ncol(X))) {
+          needs_upper <- FALSE
+          needs_lower <- FALSE
+
+          max_plaus <- tapply(possibilities, betas[, col], max, na.rm = TRUE)
+          beta_vals <- as.numeric(names(max_plaus)) # might be some loss in precision here, but within the monte carlo error anyways
+          if (TRUE) {
+            #max(plaus(minimum_value(s)_of_beta_col)) > alpha
+            needs_lower <- TRUE
+          }
+          if (TRUE) {
+            #max(plaus(maximum_value(s)_of_beta_col) > alpha
+            needs_upper <- TRUE
+          }
+
+          up <- extend_profile(
+            +1,
+            needs_upper,
+            betas,
+            col,
+            possibilities,
+            alpha,
+            tolerance,
+            step[col],
+            family,
+            X,
+            y,
+            dispersion,
+            mle_coefs,
+            ll_mle_original_data,
+            m,
+            parallel,
+            approx,
+            base_seed
+          )
+          dn <- extend_profile(
+            -1,
+            needs_lower[col],
+            betas,
+            col,
+            possibilities,
+            alpha,
+            tolerance,
+            step[col],
+            family,
+            X,
+            y,
+            dispersion,
+            mle_coefs,
+            ll_mle_original_data,
+            m,
+            parallel,
+            approx,
+            base_seed
+          )
+          extended_in_pos_betas[[col]] <- up$betas
+          extended_in_pos_plaus[[col]] <- up$plaus
+          extended_in_neg_betas[[col]] <- dn$betas
+          extended_in_neg_plaus[[col]] <- dn$plaus
+        }
+      } else {
+        marginals <- generate_marginal_object(
+          X,
+          y,
+          family,
+          mle_coefs,
+          mle_vals,
+          m,
+          parallel,
+          base_seed
+        )
+        return(list("marginals" = marginals))
+      }
+    } else {
+      # user supplied their own set of betas. Don't want to auto-extend to alpha, and if calc_marginals is TRUE, then want to evaluate both user betas and marginal
+      if (directly_calc_marginals == FALSE) {
+        glim_object <- glim_raw(
+          X,
+          y,
+          family,
+          betas,
+          mle_coefs,
+          mle_vals,
+          m,
+          parallel,
+          approx,
+          show_progress,
+          base_seed
+        )
+        return(list("glim_object" = glim_object))
+      }
+      glim_object <- glim_raw(
+        X,
+        y,
+        family,
+        betas,
+        mle_coefs,
+        mle_vals,
+        m,
+        parallel,
+        approx,
+        show_progress,
+        base_seed
+      )
+      marginals <- generate_marginal_object(
         X,
         y,
         family,
         mle_coefs,
-        eigen_vecs = eJ$vectors,
-        eigen_vals = eJ$values,
-        dispersion,
-        ll_mle_original_data,
-        n_grid_evals = n_grid_evals,
-        trim = FALSE, # To ensure correct marginal plots. Will be slower, but only used when n <= 5
-        m = m
+        mle_vals,
+        m,
+        parallel,
+        base_seed
       )
-      betas <- generated_grid$betas
-      message(sprintf(
-        "There are (up to) %d grid points to evaluate. Each grid point requires %d glm fits\n",
-        n_grid_evals^length(mle_coefs),
-        m
-      ))
-      if (n_grid_evals^length(mle_coefs) > 100000) {
-        message(sprintf(
-          "Be warned of crashes due to lack of memory For 5+ predictors, use approx = TRUE"
-        ))
-      }
-      colnames(betas) <- colnames(X)
+      return(list("glim_object" = glim_object, "marginals" = marginals))
     }
-    message("Our MLE is: ", paste(round(mle_coefs, 4), collapse = ", "))
-    base_seed <- sample.int(.Machine$integer.max, 1)
-    possibilities <- glim_raw(
-      X,
-      y,
-      family = family,
-      betas,
-      mle_coefs,
-      mle_val = ll_mle_original_data,
-      m = m,
-      parallel = parallel,
-      approx = approx,
-      show_progress = show_progress,
-      base_seed = base_seed
-    )
-    tolerance <- .01
-    extended_in_neg_betas <- vector("list", ncol(X))
-    extended_in_pos_betas <- vector("list", ncol(X))
-    extended_in_neg_plaus <- vector("list", ncol(X))
-    extended_in_pos_plaus <- vector("list", ncol(X))
-
-    for (col in 1:ncol(betas)) {
-      max_plaus <- tapply(possibilities, betas[, col], max, na.rm = TRUE)
-      beta_vals <- as.numeric(names(max_plaus))
-
-      valid_alpha_mask <- max_plaus > alpha
-
-      # Check if the valid alpha region touches the absolute edges of the grid
-      ony_needs_lower_extension <- min(beta_vals[valid_alpha_mask]) == min(beta_vals)
-      ony_needs_upper_extension <- max(beta_vals[valid_alpha_mask]) == max(beta_vals)
-
-      extended_in_neg_betas[[col]] <- matrix(nrow = 0, ncol = ncol(betas))
-      extended_in_pos_betas[[col]] <- matrix(nrow = 0, ncol = ncol(betas))
-      off_idx <- setdiff(1:ncol(X), col)
-
-      up_res <- extending_upwards(
-        ony_needs_upper_extention = ony_needs_upper_extension,
-        betas = betas,
-        col = col,
-        possibilities = possibilities,
-        alpha = alpha,
-        tolerance = tolerance,
-        generated_grid = generated_grid,
-        family = family,
-        X = X,
-        dispersion = dispersion,
-        y = y,
-        mle_coefs = mle_coefs,
-        ll_mle_orig_data = ll_mle_original_data,
-        m = m,
-        parallel = parallel,
-        approx = approx,
-        show_progress = show_progress,
-        base_seed = base_seed,
-        extended_in_pos_plaus = extended_in_pos_plaus
-      )
-      extended_in_pos_betas <- up_res$extended_in_pos_betas
-      extended_in_pos_betas <- up_res$extended_in_pos_plaus
-
-      down_res <- extending_downwards(
-        ony_needs_lower_extention = ony_needs_lower_extension,
-        betas = betas,
-        col = col,
-        possibilities = possibilities,
-        alpha = alpha,
-        tolerance = tolerance,
-        generated_grid = generated_grid,
-        family = family,
-        X = X,
-        dispersion = dispersion,
-        y = y,
-        mle_coefs = mle_coefs,
-        ll_mle_orig_data = ll_mle_original_data,
-        m = m,
-        parallel = parallel,
-        approx = approx,
-        show_progress = show_progress,
-        base_seed = base_seed,
-        extended_in_neg_plaus = extended_in_neg_plaus
-      )
-      extended_in_neg_betas <- down_res$extended_in_neg_betas
-      extended_in_neg_plaus <- down_res$extended_in_neg_plaus
-    }
-
-    no_extensions <- !(ony_needs_lower_extension | ony_needs_upper_extension)
-    #TODO Okay so I have successesfully added points without getting errors. Need to ensure it works and is in the correct location at the boundary
-    obj_to_return <- list(
-      possibilities = possibilities,
-      samples = NULL,
-      betas_evaluated = betas,
-      extended_in_pos_betas = if (!no_extensions) extended_in_pos_betas else NULL,
-      extended_in_neg_betas = if (!no_extensions) extended_in_neg_betas else NULL,
-      extended_in_pos_plaus = if (!no_extensions) extended_in_pos_plaus else NULL,
-      extended_in_neg_plaus = if (!no_extensions) extended_in_neg_plaus else NULL,
-      family = family,
-      X = X,
-      y = y,
-      mle_coefs = mle_coefs,
-      logLik = ll_mle_original_data,
-      vcov = vcov,
-      dispersion = dispersion
-    )
-
-    class(obj_to_return) <- "glim_object"
-    return(obj_to_return)
   }
 
   if ((approx == TRUE) & (radial == FALSE)) {

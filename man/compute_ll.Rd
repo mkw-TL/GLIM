@@ -4,7 +4,7 @@
 \alias{compute_ll}
 \title{Evaluate log-likelihoods}
 \usage{
-compute_ll(family, y, X, betas, ...)
+compute_ll(family, y, X, betas, mle_coefs = NULL)
 }
 \arguments{
 \item{family}{"gaussian", "binomial", "gamma", "inverse.gaussian", "poisson"}
