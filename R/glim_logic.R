@@ -1149,6 +1149,19 @@ glim <- function(
     stop("Internal error: 'dispersion' must be a strictly positive numeric value.")
   }
   show_progress <- FALSE
+  eigen_vecs <- eJ$vectors
+  eigen_vals <- eJ$values
+  q_val <- qchisq(1 - alpha, df = length(mle_coefs)) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
+  base_scale <- sqrt(dispersion * q_val * (1 / eigen_vals))
+  semi_axes <- base_scale * 1 # Base ellipse only somewhat needs to be elliptical. Marginals will extend to compensate
+  transformed_mat <- eigen_vecs %*% diag(as.vector(semi_axes)) # Takes the principle axes (through diag) and scales them (by semi_axes), then rotate to eigen_vector span
+
+  # To make the beta coordinate the largest, we have our transformation matrix (times u, where u is a unit sphere).
+  # Then, for a particular coordinate, we have b1 = row_1 * u, where this is maximized if u is in the direction of row_1.
+  # Is component-wise squaring
+  H <- sqrt(rowSums(transformed_mat^2))
+  step <- 2 * H / n_grid_evals
+  # bringing them out, because most all need access to this variable
 
   message("Our MLE is: ", paste(round(mle_coefs, 4), collapse = ", "))
   base_seed <- sample.int(.Machine$integer.max, 1)
@@ -1161,8 +1174,8 @@ glim <- function(
         y,
         family,
         mle_coefs,
-        eigen_vecs = eJ$vectors,
-        eigen_vals = eJ$values,
+        eigen_vecs = eigen_vecs,
+        eigen_vals = eigen_vals,
         dispersion,
         ll_mle_original_data,
         n_grid_evals = n_grid_evals,
@@ -1195,7 +1208,7 @@ glim <- function(
         show_progress,
         base_seed
       )
-      glim_object <- list(
+      grid_data <- list(
         possibilities = possibils,
         samples = NULL,
         xi = NULL,
@@ -1232,7 +1245,6 @@ glim <- function(
             #max(plaus(maximum_value(s)_of_beta_col) > alpha
             needs_upper <- TRUE
           }
-          # TODO define step
           up <- extend_profile(
             +1,
             needs_upper,
@@ -1278,12 +1290,13 @@ glim <- function(
           extended_in_neg_betas[[col]] <- dn$betas
           extended_in_neg_plaus[[col]] <- dn$plaus
         }
-        glim_object[["extended_in_neg_plaus"]] <- extended_in_neg_plaus
-        glim_object[["extended_in_neg_betas"]] <- extended_in_neg_betas
-        glim_object[["extended_in_pos_plaus"]] <- extended_in_pos_plaus
-        glim_object[["extended_in_pos_betas"]] <- extended_in_pos_betas
-        class(glim_object) <- "glim_object"
-        return(glim_object)
+        grid_data[["extended_in_neg_plaus"]] <- extended_in_neg_plaus
+        grid_data[["extended_in_neg_betas"]] <- extended_in_neg_betas
+        grid_data[["extended_in_pos_plaus"]] <- extended_in_pos_plaus
+        grid_data[["extended_in_pos_betas"]] <- extended_in_pos_betas
+        obj_to_return <- list(grid_data = grid_data)
+        class(obj_to_return) <- "glim_object"
+        return(obj_to_return)
       } else {
         marginals <- generate_marginal_object(
           X,
@@ -1299,28 +1312,15 @@ glim <- function(
           parallel,
           base_seed
         )
-        obj_to_return <- list(marginals = marginals, glim_object = glim_object)
+        obj_to_return <- list(marginals = marginals, grid_data = grid_data)
         class(obj_to_return) <- "glim_object"
         return(obj_to_return)
       }
     }
-    eigen_vecs <- eJ$vectors
-    eigen_vals <- eJ$values
     if (is.null(betas) & ncol(X) > 5) {
       message(
-        "Since the number of predictors is more than 5, default behavior is to display marginal curves. Extra control can be given by passing in beta values: betas = matrix(c(beta_eval1, beta_eval2), byrow = TRUE)"
+        "\n Since the number of predictors > 5, only margins are calculated. Extra control can be given by passing in beta values: \n betas = matrix(c(beta_eval1, beta_eval2), byrow = TRUE)"
       )
-      q_val <- qchisq(1 - alpha, df = length(mle_coefs)) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
-      base_scale <- sqrt(dispersion * q_val * (1 / eigen_vals))
-      semi_axes <- base_scale * 1 # Base ellipse only somewhat needs to be elliptical. Marginals will extend to compensate
-      transformed_mat <- eigen_vecs %*% diag(as.vector(semi_axes)) # Takes the principle axes (through diag) and scales them (by semi_axes), then rotate to eigen_vector span
-
-      # To make the beta coordinate the largest, we have our transformation matrix (times u, where u is a unit sphere).
-      # Then, for a particular coordinate, we have b1 = row_1 * u, where this is maximized if u is in the direction of row_1.
-      # Is component-wise squaring
-      H <- sqrt(rowSums(transformed_mat^2))
-      step <- 2 * H / n_grid_evals
-
       marginals <- generate_marginal_object(
         X,
         y,
@@ -1425,25 +1425,23 @@ glim <- function(
       vcov = vcov,
       dispersion = dispersion
     )
-    if (directly_calc_marginals == TRUE) {
-      margin <- generate_marginal_object(
-        X,
-        y,
-        family,
-        mle_coefs,
-        ll_mle_original_data,
-        n_grid_evals,
-        dispersion,
-        alpha,
-        step,
-        m,
-        parallel,
-        base_seed
-      )
-      obj_to_return <- list(margin = margin, elliptical_data = elliptical_data)
-      class(obj_to_return) <- "glim_object"
-      return(obj_to_return)
-    }
+    margin <- generate_marginal_object(
+      X,
+      y,
+      family,
+      mle_coefs,
+      ll_mle_original_data,
+      n_grid_evals,
+      dispersion,
+      alpha,
+      step,
+      m,
+      parallel,
+      base_seed
+    )
+    obj_to_return <- list(margin = margin, elliptical_data = elliptical_data)
+    class(obj_to_return) <- "glim_object"
+    return(obj_to_return)
   }
 
   if (radial == TRUE & approx == TRUE) {
@@ -1863,8 +1861,18 @@ plot.glim_object <- function(x, ...) {
     grid_rows <- ceiling(num_predictors / grid_cols)
 
     old_par <- par(no.readonly = TRUE)
-    par(mfrow = c(grid_rows, grid_cols), mar = c(4, 4, 3, 1), oma = c(0, 0, 3, 0))
     on.exit(par(old_par))
+
+    # Scale text size for grid density
+    cex_val <- max(0.6, 1 - 0.08 * max(grid_rows, grid_cols))
+    par(
+      mfrow = c(grid_rows, grid_cols),
+      mar = c(3.5, 3.5, 2, 1),
+      oma = c(1, 1, 3, 0),
+      mgp = c(2, 0.7, 0),
+      cex.lab = cex_val,
+      cex.axis = cex_val
+    )
 
     for (col in 1:ncol(margins[[1]]$beta_for_margin)) {
       xs <- margins[[col]][["beta_for_margin"]][, col]
@@ -1888,24 +1896,29 @@ plot.glim_object <- function(x, ...) {
       }
       plot.default(xs, ys, type = "l", xlab = xlab, ylab = "Possibility")
 
-      mtext(
-        text = paste0(
-          toupper(substr(family, 1, 1)),
-          substr(family, 2, nchar(family)),
-          " Possibility contours (marginalized)"
-        ),
-        side = 3,
-        outer = TRUE,
-        line = -0.3,
-        cex = 1.3,
-        font = 2
-      )
       if (alpha != -1) {
         abline(h = alpha, col = "red", lty = 3)
       }
       grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
     }
-  } else {
+
+    fam_title <- if (!is.null(family) && nchar(family) > 0) {
+      paste0(toupper(substr(family, 1, 1)), substr(family, 2, nchar(family)))
+    } else {
+      ""
+    }
+    mtext(
+      text = paste0(fam_title, " Possibility contours (marginalized)"),
+      side = 3,
+      outer = TRUE,
+      line = 1, # Centered in the top outer margin
+      cex = 1.2,
+      font = 2
+    )
+  }
+
+  if ("radial_data" %in% names(x)) {
+    x <- x$radial_data
     betas <- x$betas_evaluated
     poss <- x$possibilities
     family <- x$family
@@ -1914,154 +1927,183 @@ plot.glim_object <- function(x, ...) {
     if ("alphas" %in% names(x)) {
       alphas <- x$alphas
     }
+    # Evaluated betas grid case (Pairs Matrix Layout)
+    num_predictors <- ncol(betas)
+    col_names <- colnames(betas)
+    if (is.null(col_names)) {
+      col_names <- paste0("Beta_", 1:num_predictors)
+    }
 
-    if (is.null(betas)) {
-      # Elliptical case logic
-      num_predictors <- length(x$mle_coefs)
-      grid_cols <- ceiling(sqrt(num_predictors))
-      grid_rows <- ceiling(num_predictors / grid_cols)
+    old_par <- par(no.readonly = TRUE)
+    on.exit(par(old_par))
 
-      old_par <- par(no.readonly = TRUE)
-      par(mfrow = c(grid_rows, grid_cols), mar = c(4, 4, 3, 1), oma = c(0, 0, 3, 0))
-      on.exit(par(old_par))
+    # Dynamically scale font size according to matrix size
+    cex_val <- max(0.6, 1.15 - 0.08 * num_predictors)
 
-      xs <- c()
-      ys <- c()
-      for (col in 1:length(x$mle_coefs)) {
-        for (a in 1:length(alphas)) {
-          xs[a] <- x$mle_coefs[col] - x$coordinate_marginal_bounds[[a]][col]
-          ys[a] <- alphas[a]
-        }
-        xs[length(alphas) + 1] <- x$mle_coefs[col]
-        ys[length(alphas) + 1] <- 1
-        for (a in 1:length(alphas)) {
-          xs[length(alphas) + 1 + a] <- x$mle_coefs[col] + x$coordinate_marginal_bounds[[a]][col]
-          ys[length(alphas) + 1 + a] <- alphas[a]
-        }
-        ord <- order(xs)
-        xs <- xs[ord]
-        ys <- ys[ord]
+    par(
+      mfrow = c(num_predictors, num_predictors),
+      mar = c(3, 3, 1.5, 0.8), # Tightened per panel
+      oma = c(1, 1, 3.5, 0), # Outer margin space for title and exterior axis labels
+      mgp = c(1.8, 0.5, 0), # Moves axis titles & tick labels closer to the axis
+      cex.lab = cex_val * 1.2,
+      cex.axis = cex_val * 1.2
+    )
 
-        plot.default(xs, ys, type = "l")
-        mtext(
-          text = paste0(
-            toupper(substr(family, 1, 1)),
-            substr(family, 2, nchar(family)),
-            " Possibility contours (marginalized)"
-          ),
-          side = 3,
-          outer = TRUE,
-          line = -0.3,
-          cex = 1.3,
-          font = 2
-        )
-        if (alpha != -1) {
-          abline(h = alpha, col = "red", lty = 3)
-        }
-        grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
-      }
-    } else {
-      # Evaluated betas grid case (Pairs Matrix Layout)
-      num_predictors <- ncol(betas)
-      col_names <- colnames(betas)
-      if (is.null(col_names)) {
-        col_names <- paste0("Beta_", 1:num_predictors)
-      }
+    # Helper function for max handling empty NA slices
+    max_or_na <- function(v) {
+      v <- v[!is.na(v)]
+      if (length(v) == 0) NA_real_ else max(v)
+    }
 
-      old_par <- par(no.readonly = TRUE)
-      par(mfrow = c(num_predictors, num_predictors), mar = c(3.5, 3.5, 2, 1), oma = c(0, 0, 3, 0))
-      on.exit(par(old_par))
+    for (row in 1:num_predictors) {
+      for (col in 1:num_predictors) {
+        if (row == col) {
+          # --- DIAGONAL: 1D Profile Plot ---
+          max_plaus <- tapply(poss, betas[, col], max_or_na)
+          beta_vals <- as.numeric(names(max_plaus))
+          valid <- is.finite(beta_vals) & is.finite(max_plaus)
 
-      # Helper function for max handling empty NA slices
-      max_or_na <- function(v) {
-        v <- v[!is.na(v)]
-        if (length(v) == 0) NA_real_ else max(v)
-      }
-
-      for (row in 1:num_predictors) {
-        for (col in 1:num_predictors) {
-          if (row == col) {
-            # --- DIAGONAL: 1D Profile Plot ---
-            max_plaus <- tapply(poss, betas[, col], max_or_na)
-            beta_vals <- as.numeric(names(max_plaus))
-            valid <- is.finite(beta_vals) & is.finite(max_plaus)
-
-            if (any(valid)) {
-              ord <- order(beta_vals[valid])
-              plot.default(
-                beta_vals[valid][ord],
-                max_plaus[valid][ord],
-                type = 'l',
-                xlab = col_names[col],
-                ylab = "Profile Plausibility",
-                ylim = c(0, 1)
-              )
-              if (alpha != -1) {
-                abline(h = alpha, col = "red", lty = 3)
-              }
-              grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
-            } else {
-              plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
+          if (any(valid)) {
+            ord <- order(beta_vals[valid])
+            plot.default(
+              beta_vals[valid][ord],
+              max_plaus[valid][ord],
+              type = 'l',
+              xlab = col_names[col],
+              ylab = "Profile Plausibility",
+              ylim = c(0, 1)
+            )
+            if (alpha != -1) {
+              abline(h = alpha, col = "red", lty = 3)
             }
+            grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
           } else {
-            # --- OFF-DIAGONAL: 2D Marginal Profile (Contour Plot) ---
-            z_mat <- tapply(poss, list(betas[, col], betas[, row]), max_or_na)
+            plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
+          }
+        } else {
+          # --- OFF-DIAGONAL: 2D Marginal Profile (Contour Plot) ---
+          z_mat <- tapply(poss, list(betas[, col], betas[, row]), max_or_na)
 
-            x_vals <- as.numeric(rownames(z_mat))
-            y_vals <- as.numeric(colnames(z_mat))
+          x_vals <- as.numeric(rownames(z_mat))
+          y_vals <- as.numeric(colnames(z_mat))
 
-            x_ord <- order(x_vals)
-            y_ord <- order(y_vals)
+          x_ord <- order(x_vals)
+          y_ord <- order(y_vals)
 
-            x_vals <- x_vals[x_ord]
-            y_vals <- y_vals[y_ord]
-            z_mat <- z_mat[x_ord, y_ord, drop = FALSE]
+          x_vals <- x_vals[x_ord]
+          y_vals <- y_vals[y_ord]
+          z_mat <- z_mat[x_ord, y_ord, drop = FALSE]
 
-            if (length(x_vals) >= 2 && length(y_vals) >= 2 && any(is.finite(z_mat))) {
+          if (length(x_vals) >= 2 && length(y_vals) >= 2 && any(is.finite(z_mat))) {
+            contour(
+              x = x_vals,
+              y = y_vals,
+              z = z_mat,
+              xlab = col_names[col],
+              ylab = col_names[row],
+              main = "",
+              drawlabels = TRUE,
+              labcex = cex_val
+            )
+            if (alpha != -1) {
               contour(
                 x = x_vals,
                 y = y_vals,
                 z = z_mat,
-                xlab = col_names[col],
-                ylab = col_names[row],
-                main = "",
-                drawlabels = TRUE
+                levels = c(alpha),
+                col = "red",
+                lty = 3,
+                add = TRUE,
+                drawlabels = FALSE
               )
-              if (alpha != -1) {
-                contour(
-                  x = x_vals,
-                  y = y_vals,
-                  z = z_mat,
-                  levels = c(alpha),
-                  col = "red",
-                  lty = 3,
-                  add = TRUE,
-                  drawlabels = FALSE
-                )
-              }
-              grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
-            } else {
-              plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
             }
+            grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
+          } else {
+            plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
           }
         }
       }
-
-      # Main title over the plot matrix
-      fam_title <- if (!is.null(family) && nchar(family) > 0) {
-        paste0(toupper(substr(family, 1, 1)), substr(family, 2, nchar(family)))
-      } else {
-        ""
-      }
-      mtext(
-        text = paste0(fam_title, " Possibility contours (marginalized)"),
-        side = 3,
-        outer = TRUE,
-        line = -0.3,
-        cex = 1.3,
-        font = 2
-      )
     }
+
+    # Outer Title
+    fam_title <- if (!is.null(family) && nchar(family) > 0) {
+      paste0(toupper(substr(family, 1, 1)), substr(family, 2, nchar(family)))
+    } else {
+      ""
+    }
+    mtext(
+      text = paste0(fam_title, " Possibility contours (marginalized)"),
+      side = 3,
+      outer = TRUE,
+      line = 1, # Fits cleanly inside top outer margin
+      cex = 1.2,
+      font = 2
+    )
+  }
+  if ("elliptical_data" %in% names(x)) {
+    x <- x$elliptical_data
+    betas <- x$betas_evaluated
+    poss <- x$possibilities
+    family <- x$family
+    alphas <- NULL
+
+    if ("alphas" %in% names(x)) {
+      alphas <- x$alphas
+    }
+    num_predictors <- length(x$mle_coefs)
+    grid_cols <- ceiling(sqrt(num_predictors))
+    grid_rows <- ceiling(num_predictors / grid_cols)
+
+    old_par <- par(no.readonly = TRUE)
+    on.exit(par(old_par))
+
+    cex_val <- max(0.6, 1 - 0.08 * max(grid_rows, grid_cols))
+    par(
+      mfrow = c(grid_rows, grid_cols),
+      mar = c(3.5, 3.5, 2, 1),
+      oma = c(1, 1, 3, 0),
+      mgp = c(2, 0.7, 0),
+      cex.lab = cex_val,
+      cex.axis = cex_val
+    )
+
+    xs <- c()
+    ys <- c()
+    for (col in 1:length(x$mle_coefs)) {
+      for (a in 1:length(alphas)) {
+        xs[a] <- x$mle_coefs[col] - x$coordinate_marginal_bounds[[a]][col]
+        ys[a] <- alphas[a]
+      }
+      xs[length(alphas) + 1] <- x$mle_coefs[col]
+      ys[length(alphas) + 1] <- 1
+      for (a in 1:length(alphas)) {
+        xs[length(alphas) + 1 + a] <- x$mle_coefs[col] + x$coordinate_marginal_bounds[[a]][col]
+        ys[length(alphas) + 1 + a] <- alphas[a]
+      }
+      ord <- order(xs)
+      xs <- xs[ord]
+      ys <- ys[ord]
+
+      plot.default(xs, ys, type = "l", xlab = paste0("Beta_", col), ylab = "Possibility")
+      if (alpha != -1) {
+        abline(h = alpha, col = "red", lty = 3)
+      }
+      grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
+    }
+
+    fam_title <- if (!is.null(family) && nchar(family) > 0) {
+      paste0(toupper(substr(family, 1, 1)), substr(family, 2, nchar(family)))
+    } else {
+      ""
+    }
+    mtext(
+      text = paste0(fam_title, " Possibility contours (marginalized)"),
+      side = 3,
+      outer = TRUE,
+      line = 1,
+      cex = 1.2,
+      font = 2
+    )
   }
 }
 
@@ -2092,104 +2134,134 @@ print.glim_object <- function(x, ...) {
   if (length(args) == 1 & is.numeric(args$alpha)) {
     alpha <- args$alpha
   }
-  betas <- x$betas_evaluated
-  poss <- x$possibilities
-  family <- x$family
-  mle_coefs <- as.numeric(x$mle_coefs)
-  xis <- NULL
-  coordinate_marginal_bounds <- NULL
-  if ("xi" %in% names(x)) {
-    xis <- x$xi
-  }
-  if ("alphas" %in% names(x)) {
-    alphas <- x$alphas
-  }
-  if ("coordinate_marginal_bounds" %in% names(x)) {
-    coordinate_marginal_bounds <- x$coordinate_marginal_bounds[[sum(alphas > 1 - alpha)]] # Need to get the opposite. coordinate_marginal_bounds[[1]] corresponds to alpha = .01, CI of 99%
-  }
-
-  dispersion <- x$dispersion
 
   cat(sprintf("%.0f%% (marginal) confidence and credible region:\n", (1 - alpha) * 100))
   cat("------------------------------------------------------------------------\n")
-
-  if (!is.null(betas)) {
-    row_names <- colnames(betas)
-    ll_mle_original_data <- numeric(ncol(betas))
-    lower_bound <- rep(NA_real_, ncol(betas))
-    upper_bound <- rep(NA_real_, ncol(betas))
-
+  if ("margins" %in% names(x)) {
+    lower_bound <- rep(NA_real_, ncol(x[["extra_info"]]$X))
+    upper_bound <- rep(NA_real_, ncol(x[["extra_info"]]$X))
+    mle_coefs <- x[["extra_info"]]$mle_coefs
     for (col in 1:ncol(betas)) {
-      max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
+      beta_vals <- x[["margins"]][[col]]
+      lower_bound[col] <- min(beta_vals)
+      upper_bound[col] <- max(beta_vals)
+    }
+    # Build the structured data frame
+    summary_table <- data.frame(
+      Estimate = sprintf("%.4f", mle_coefs),
+      Lower = sprintf("%.4f", lower_bound),
+      Upper = sprintf("%.4f", upper_bound),
+      row.names = row_names
+    )
 
-      beta_vals <- as.numeric(names(max_plaus))
-      valid <- is.finite(beta_vals) & is.finite(max_plaus)
-      alpha_cut <- valid & (max_plaus > alpha)
-      valid_betas <- beta_vals[alpha_cut]
+    # Rename columns to show the interval width dynamically
+    colnames(summary_table) <- c(
+      "MLE",
+      paste0("Lower ", (1 - alpha) * 100, "%"),
+      paste0("Upper ", (1 - alpha) * 100, "%")
+    )
 
-      if (length(valid_betas) > 0) {
-        # ---------- LOWER BOUND ----------
-        grid_min <- min(valid_betas)
-        if (grid_min != min(betas[, col])) {
-          lower_bound[col] <- grid_min
-        } else {
-          # Boundary hit: Check if negative extensions exist for this parameter
-          if (
-            !is.null(x$extended_in_neg_betas) &&
-              !is.null(x$extended_in_neg_betas[[col]]) &&
-              nrow(x$extended_in_neg_betas[[col]]) > 0
-          ) {
-            # The lowest value reached in the extension
-            lower_bound[col] <- min(x$extended_in_neg_betas[[col]][, col])
+    # Print the formatted table cleanly
+    print(summary_table, quote = FALSE)
+    cat("------------------------------------------------------------------------\n")
+    invisible(x)
+  } else {
+    # margins not found, so either in elliptical_data or radial_data or grid_data
+    if ("grid_data" %in% names(x)) {
+      grid_object <- x[["grid_data"]]
+      betas <- grid_object$betas_evaluated
+      poss <- grid_object$possibilities
+      family <- grid_object$family
+      mle_coefs <- as.numeric(x$mle_coefs)
+
+      row_names <- colnames(betas)
+      ll_mle_original_data <- numeric(ncol(betas))
+      lower_bound <- rep(NA_real_, ncol(betas))
+      upper_bound <- rep(NA_real_, ncol(betas))
+
+      for (col in 1:ncol(betas)) {
+        max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
+
+        beta_vals <- as.numeric(names(max_plaus))
+        valid <- is.finite(beta_vals) & is.finite(max_plaus)
+        alpha_cut <- valid & (max_plaus > alpha)
+        valid_betas <- beta_vals[alpha_cut]
+
+        if (length(valid_betas) > 0) {
+          # ---------- LOWER BOUND ----------
+          grid_min <- min(valid_betas)
+          if (grid_min != min(betas[, col])) {
+            lower_bound[col] <- grid_min
           } else {
-            lower_bound[col] <- NA_real_
+            # Boundary hit: Check if negative extensions exist for this parameter
+            if (
+              !is.null(x$extended_in_neg_betas) &&
+                !is.null(x$extended_in_neg_betas[[col]]) &&
+                nrow(x$extended_in_neg_betas[[col]]) > 0
+            ) {
+              # The lowest value reached in the extension
+              lower_bound[col] <- min(x$extended_in_neg_betas[[col]][, col])
+            } else {
+              lower_bound[col] <- NA_real_
+            }
           }
-        }
 
-        # ---------- UPPER BOUND ----------
-        grid_max <- max(valid_betas)
-        if (grid_max != max(betas[, col])) {
-          upper_bound[col] <- grid_max
-        } else {
-          # Boundary hit: Check if positive extensions exist for this parameter
-          if (
-            !is.null(x$extended_in_pos_betas) &&
-              !is.null(x$extended_in_pos_betas[[col]]) &&
-              nrow(x$extended_in_pos_betas[[col]]) > 0
-          ) {
-            # The highest value reached in the extension
-            upper_bound[col] <- max(x$extended_in_pos_betas[[col]][, col])
+          # ---------- UPPER BOUND ----------
+          grid_max <- max(valid_betas)
+          if (grid_max != max(betas[, col])) {
+            upper_bound[col] <- grid_max
           } else {
-            upper_bound[col] <- NA_real_
+            # Boundary hit: Check if positive extensions exist for this parameter
+            if (
+              !is.null(x$extended_in_pos_betas) &&
+                !is.null(x$extended_in_pos_betas[[col]]) &&
+                nrow(x$extended_in_pos_betas[[col]]) > 0
+            ) {
+              # The highest value reached in the extension
+              upper_bound[col] <- max(x$extended_in_pos_betas[[col]][, col])
+            } else {
+              upper_bound[col] <- NA_real_
+            }
           }
         }
       }
     }
-  } else {
-    upper_bound <- mle_coefs + coordinate_marginal_bounds
+    y <- list()
+    if ("radial_data" %in% names(x)) {
+      y <- x[["radial_data"]]
+    }
+    if ("elliptical_data" %in% names(x)) {
+      y <- x[["elliptical_data"]]
+    } else {
+      warning("Logic parsing has gone wrong internally")
+    }
+    mle_coefs <- y$mle_coefs
+    coordinate_marginal_bounds <- y$coordinate_marginal_bounds
+
+    upper_bound <- y$mle_coefs + coordinate_marginal_bounds
     lower_bound <- mle_coefs - coordinate_marginal_bounds
-    row_names <- colnames(x$X)
+    row_names <- colnames(y$X)
+
+    # Build the structured data frame
+    summary_table <- data.frame(
+      Estimate = sprintf("%.4f", mle_coefs),
+      Lower = sprintf("%.4f", lower_bound),
+      Upper = sprintf("%.4f", upper_bound),
+      row.names = row_names
+    )
+
+    # Rename columns to show the interval width dynamically
+    colnames(summary_table) <- c(
+      "MLE",
+      paste0("Lower ", (1 - alpha) * 100, "%"),
+      paste0("Upper ", (1 - alpha) * 100, "%")
+    )
+
+    # Print the formatted table cleanly
+    print(summary_table, quote = FALSE)
+    cat("------------------------------------------------------------------------\n")
+    invisible(x)
   }
-
-  # Build the structured data frame
-  summary_table <- data.frame(
-    Estimate = sprintf("%.4f", mle_coefs),
-    Lower = sprintf("%.4f", lower_bound),
-    Upper = sprintf("%.4f", upper_bound),
-    row.names = row_names
-  )
-
-  # Rename columns to show the interval width dynamically
-  colnames(summary_table) <- c(
-    "MLE",
-    paste0("Lower ", (1 - alpha) * 100, "%"),
-    paste0("Upper ", (1 - alpha) * 100, "%")
-  )
-
-  # Print the formatted table cleanly
-  print(summary_table, quote = FALSE)
-  cat("------------------------------------------------------------------------\n")
-  invisible(x)
 }
 
 
