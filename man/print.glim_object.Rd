@@ -4,7 +4,7 @@
 \alias{print.glim_object}
 \title{Print}
 \usage{
-\method{print}{glim_object}(x, ...)
+\method{print}{glim_object}(x, alpha = 0.05, ...)
 }
 \arguments{
 \item{x}{A 'glim_object' from 'glim()'}

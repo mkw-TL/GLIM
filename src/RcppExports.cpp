@@ -86,7 +86,7 @@ BEGIN_RCPP
 END_RCPP
 }
 // radial_code
-arma::mat radial_code(int num_samps, arma::mat X, arma::vec y, arma::vec mle_coefs, arma::mat eig_vecs, arma::vec eig_vals, std::string family, double dispersion, int m, double tol, int max_it, int a_val, int b_val, uint32_t base_seed);
+arma::mat radial_code(int num_samps, arma::mat X, arma::vec y, arma::vec mle_coefs, arma::mat eig_vecs, arma::vec eig_vals, std::string family, double dispersion, int m, double tol, int max_it, double a_val, double b_val, uint32_t base_seed);
 RcppExport SEXP _GLIM_radial_code(SEXP num_sampsSEXP, SEXP XSEXP, SEXP ySEXP, SEXP mle_coefsSEXP, SEXP eig_vecsSEXP, SEXP eig_valsSEXP, SEXP familySEXP, SEXP dispersionSEXP, SEXP mSEXP, SEXP tolSEXP, SEXP max_itSEXP, SEXP a_valSEXP, SEXP b_valSEXP, SEXP base_seedSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
@@ -102,8 +102,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type m(mSEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
     Rcpp::traits::input_parameter< int >::type max_it(max_itSEXP);
-    Rcpp::traits::input_parameter< int >::type a_val(a_valSEXP);
-    Rcpp::traits::input_parameter< int >::type b_val(b_valSEXP);
+    Rcpp::traits::input_parameter< double >::type a_val(a_valSEXP);
+    Rcpp::traits::input_parameter< double >::type b_val(b_valSEXP);
     Rcpp::traits::input_parameter< uint32_t >::type base_seed(base_seedSEXP);
     rcpp_result_gen = Rcpp::wrap(radial_code(num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val, base_seed));
     return rcpp_result_gen;

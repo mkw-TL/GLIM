@@ -354,7 +354,7 @@ inline double sum_softplus(const arma::vec &eta) {
 arma::mat radial_code(int num_samps, arma::mat X, arma::vec y,
                       arma::vec mle_coefs, arma::mat eig_vecs,
                       arma::vec eig_vals, std::string family, double dispersion,
-                      int m, double tol, int max_it, int a_val, int b_val,
+                      int m, double tol, int max_it, double a_val, double b_val,
                       uint32_t base_seed = 0) {
   int d = X.n_cols;
   arma::mat sampled_betas(mle_coefs.n_elem, num_samps);
@@ -469,6 +469,7 @@ arma::mat radial_code(int num_samps, arma::mat X, arma::vec y,
       std::uniform_real_distribution<double> runif(0.0, 1.0);
 
       double unif_alphas = runif(gen);
+      unif_alphas = std::min(std::max(unif_alphas, 1e-12), 1.0 - 1e-12);
 
       // Note: Ensure `generate_unit_matrix` is entirely thread-safe!
       // If it relies on random numbers, you may need to pass `gen` or
@@ -480,8 +481,14 @@ arma::mat radial_code(int num_samps, arma::mat X, arma::vec y,
       // Rotate by eigenvectors to match the tilt of the data
       arma::vec elliptical_dir = eig_vecs * scaled_u;
       arma::vec dir = arma::normalise(elliptical_dir);
+      double dir_norm = arma::norm(elliptical_dir);
 
-      double starting_xi = 1.0;
+      boost::math::chi_squared dist(d);
+      double q_val = boost::math::quantile(dist, 1.0 - unif_alphas);
+
+      double r0 = std::sqrt(dispersion * q_val) *
+                  dir_norm; // compute BEFORE normalising
+      double starting_xi = 2.0 * std::log(r0);
       int it = 1;
       bool approx = false;
 
@@ -491,7 +498,7 @@ arma::mat radial_code(int num_samps, arma::mat X, arma::vec y,
         thread_is_primary = (omp_get_thread_num() == 0);
 #endif
         if (thread_is_primary) {
-          if (p.check_abort() & (it % 5 == 0)) {
+          if ((it % 5 == 0) && (p.check_abort())) {
             interrupted = true;
           }
         }

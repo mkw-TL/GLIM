@@ -128,7 +128,6 @@ partial <- function(family, X, y, beta, dispersion, j) {
   }
 }
 
-# TODO update signiture for other places that call this ftn
 generate_marginal_object <- function(
   X,
   y,
@@ -257,7 +256,6 @@ generate_grid <- function(
   initial_xi <- rep(1, length(mle_coefs))
 
   alpha_target <- 0.01
-  Sys.sleep(1)
 
   imvar_xi <- imvar(
     X,
@@ -1411,19 +1409,10 @@ glim <- function(
       base_seed = base_seed
     )
     elliptical_data <- list(
-      possibilities = NULL,
       samples = inner_prob$samples,
       xi = inner_prob$xi,
       alphas = inner_prob$alphas,
-      coordinate_marginal_bounds = inner_prob$coordinate_marginal_bounds,
-      betas_evaluated = NULL,
-      family = family,
-      X = X,
-      y = y,
-      mle_coefs = mle_coefs,
-      logLik = ll_mle_original_data,
-      vcov = vcov,
-      dispersion = dispersion
+      coordinate_marginal_bounds = inner_prob$coordinate_marginal_bounds
     )
     margin <- generate_marginal_object(
       X,
@@ -1449,6 +1438,18 @@ glim <- function(
   }
   # radial and elliptical ALWAYS calculate actual marginals
   if (radial == TRUE & approx == FALSE) {
+    num_omp_threads <- max(1, parallel::detectCores() - 1)
+
+    # We change the number of blas threads down to 1 so that the parallelization doesn't
+    # request even more threads.
+    if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+      original_blas_threads <- RhpcBLASctl::blas_get_num_procs()
+      RhpcBLASctl::blas_set_num_threads(1)
+      # If we get a function crash (or not!), reset the threads back to what it originally was
+      on.exit(RhpcBLASctl::blas_set_num_threads(original_blas_threads), add = TRUE)
+    } else {
+      num_omp_threads <- 1
+    }
     radial_list <- radial(
       num_samps,
       X,
@@ -1481,9 +1482,7 @@ glim <- function(
     )
     samples <- radial_list$output_samples
     betas_evaluated <- radial_list$betas_evaluated
-    poss <- prob2poss(family, X, y, samples, betas_evaluated)
     radial_data <- list(
-      possibilities = poss,
       samples = samples,
       betas_evaluated = betas_evaluated,
       family = family,
@@ -1503,7 +1502,7 @@ glim <- function(
 #' Probability to Possibility Mapping for Logistic Regression
 #'
 #' @noRd
-prob2poss_logis <- function(X, y, samples, the_compared_theta) {
+prob2poss_logis <- function(X, y, mle, samples, the_compared_theta) {
   if (any(!(y == 0 | y == 1))) {
     stop("y must only comprise of zeros or ones")
   }
@@ -1557,7 +1556,7 @@ prob2poss_logis <- function(X, y, samples, the_compared_theta) {
 #' Will throw an error if \code{the_compared_theta} is a scalar.
 #'
 #' @noRd
-prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
+prob2poss_gamma <- function(X, y, mle, samples, the_compared_theta) {
   if (any(y < 0)) {
     stop("y must be non-negative")
   }
@@ -1566,8 +1565,7 @@ prob2poss_gamma <- function(X, y, samples, the_compared_theta) {
   }
   eta <- X %*% samples
   initial_coefs <- coef(lm(log(y) ~ X - 1))
-  mle_coefs <- fit_gamma_log_cpp(X, t(X) %*% X, y, initial_coefs, FALSE)
-  est_shape <- 1 / mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), length(mle_coefs))
+  est_shape <- 1 / mle_estimate_dispersion_gamma(y, exp(X %*% mle), length(mle))
 
   ll_val_samps <- as.vector(compute_gamma_ll_r(y, eta, shape = est_shape))
   ll_val <- as.vector(compute_gamma_ll_r(y, X %*% the_compared_theta, shape = est_shape))
@@ -1634,7 +1632,7 @@ compute_logistic_ll_r <- function(X, y, beta_vals) {
 #' Probability to Possibility Mapping for Gaussian Regression
 #'
 #' @noRd
-prob2poss_gaussian <- function(X, y, samples, the_compared_theta) {
+prob2poss_gaussian <- function(X, y, mle, samples, the_compared_theta) {
   if (is.data.frame(X) | is.vector(X)) {
     X <- as.matrix(X)
   }
@@ -1642,7 +1640,7 @@ prob2poss_gaussian <- function(X, y, samples, the_compared_theta) {
   eta <- X %*% samples
 
   # Assuming identity link for Gaussian by default
-  mle_coefs <- fit_gaussian_cpp(X, y)
+  mle_coefs <- mle
   est_sd <- est_dispersion_normal(y, X %*% mle_coefs, ncol(X)) # mle
   ll_val_samps <- as.vector(compute_gaussian_ll_r(y, eta, sigma = est_sd))
   ll_val <- as.vector(compute_gaussian_ll_r(y, X %*% the_compared_theta, sigma = est_sd))
@@ -1656,7 +1654,7 @@ prob2poss_gaussian <- function(X, y, samples, the_compared_theta) {
 #' Will throw an error if \code{the_compared_theta} is a scalar.
 #'
 #' @noRd
-prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
+prob2poss_invgauss <- function(X, y, mle, samples, the_compared_theta) {
   if (any(y <= 0)) {
     stop("y cannot be negative or zero")
   }
@@ -1668,7 +1666,7 @@ prob2poss_invgauss <- function(X, y, samples, the_compared_theta) {
   # Providing initial coefficients using a rough approximation
   initial_coefs <- coef(lm(1 / (y^2) ~ X - 1))
 
-  mle_coefs <- fit_invgauss_cpp(X, y, initial_coefs, FALSE)
+  mle_coefs <- mle
 
   est_dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
 
@@ -1753,7 +1751,7 @@ radial <- function(
 #' Probability to Possibility Mapping for Poisson Regression
 #'
 #' @noRd
-prob2poss_poisson <- function(X, y, samples, the_compared_theta) {
+prob2poss_poisson <- function(X, y, mle, samples, the_compared_theta) {
   if (any(!(is.integer(y) & y >= 0))) {
     stop("y must be positive integers")
   }
@@ -1761,7 +1759,7 @@ prob2poss_poisson <- function(X, y, samples, the_compared_theta) {
     X <- as.matrix(X)
   }
   eta <- X %*% samples
-  mle_coefs <- coef(glm(y ~ X - 1, family = poisson("log")))
+  mle_coefs <- mle
   ll_val_samps <- as.vector(compute_poisson_ll_r(y, eta))
   ll_val <- as.vector(compute_poisson_ll_r(y, X %*% the_compared_theta))
   sapply(ll_val, function(x) sum(ll_val_samps <= x) / length(ll_val_samps))
@@ -1824,7 +1822,7 @@ get_CI <- function(glim_object, ...) {
   return(glim_object$betas[glim_object$possibilities > alpha, ])
 }
 
-# TODO
+# TODO figure out 2d marginalization for the elliptical case
 #' Plot
 #'
 #' Plotting for glim objects
@@ -1844,6 +1842,7 @@ get_CI <- function(glim_object, ...) {
 #' }
 #' @export
 plot.glim_object <- function(x, ...) {
+  # Radial and elliptical methods will always return margin
   args <- list(...)
   alpha <- -1
   if ("alpha" %in% names(args)) {
@@ -1854,9 +1853,10 @@ plot.glim_object <- function(x, ...) {
     }
   }
 
-  if ("margins" %in% names(x)) {
-    margins <- x$margins
-    num_predictors <- ncol(margins[[1]]$beta_for_margin)
+  if ("margin" %in% names(x)) {
+    data <- x$margin
+
+    num_predictors <- ncol(data[["margins"]][[1]]$beta_for_margin)
     grid_cols <- ceiling(sqrt(num_predictors))
     grid_rows <- ceiling(num_predictors / grid_cols)
 
@@ -1874,9 +1874,9 @@ plot.glim_object <- function(x, ...) {
       cex.axis = cex_val
     )
 
-    for (col in 1:ncol(margins[[1]]$beta_for_margin)) {
-      xs <- margins[[col]][["beta_for_margin"]][, col]
-      ys <- margins[[col]][["plaus_for_margin"]]
+    for (col in 1:num_predictors) {
+      xs <- data[["margins"]][[col]][["beta_for_margin"]][, col]
+      ys <- data[["margins"]][[col]][["plaus_for_margin"]]
       ord <- order(xs)
       xs <- xs[ord]
       ys <- ys[ord]
@@ -1886,11 +1886,11 @@ plot.glim_object <- function(x, ...) {
         xlab <- colnames(x[["extra_info"]]$X)[col]
         family <- x[["extra_info"]]$family
       } else if ("elliptical_data" %in% names(x)) {
-        xlab <- colnames(x[["elliptical_data"]]$X)[col]
-        family <- x[["elliptical_data"]]$family
+        xlab <- colnames(x[["margin"]][["extra_info"]]$X)[col]
+        family <- x[["margin"]][["extra_info"]]$family
       } else if ("radial_data" %in% names(x)) {
-        xlab <- colnames(x[["radial_data"]]$X)[col]
-        family <- x[["radial_data"]]$family
+        xlab <- colnames(x[["margin"]][["extra_info"]]$X)[col]
+        family <- x[["margin"]][["extra_info"]]$family
       } else {
         warning("Something messed up")
       }
@@ -1915,10 +1915,8 @@ plot.glim_object <- function(x, ...) {
       cex = 1.2,
       font = 2
     )
-  }
-
-  if ("radial_data" %in% names(x)) {
-    x <- x$radial_data
+  } else if ("grid_data" %in% names(x)) {
+    x <- x$grid_data
     betas <- x$betas_evaluated
     poss <- x$possibilities
     family <- x$family
@@ -2039,71 +2037,250 @@ plot.glim_object <- function(x, ...) {
       cex = 1.2,
       font = 2
     )
-  }
-  if ("elliptical_data" %in% names(x)) {
-    x <- x$elliptical_data
-    betas <- x$betas_evaluated
-    poss <- x$possibilities
-    family <- x$family
-    alphas <- NULL
+    # } else if ("radial_data" %in% names(x)) {
+    #   x <- x$radial_data
+    #   betas <- x$betas_evaluated
+    #   poss <- x$possibilities
+    #   family <- x$family
+    #   alphas <- NULL
 
-    if ("alphas" %in% names(x)) {
-      alphas <- x$alphas
-    }
-    num_predictors <- length(x$mle_coefs)
-    grid_cols <- ceiling(sqrt(num_predictors))
-    grid_rows <- ceiling(num_predictors / grid_cols)
+    #   if ("alphas" %in% names(x)) {
+    #     alphas <- x$alphas
+    #   }
+    #   # Evaluated betas grid case (Pairs Matrix Layout)
+    #   num_predictors <- ncol(betas)
+    #   col_names <- colnames(betas)
+    #   if (is.null(col_names)) {
+    #     col_names <- paste0("Beta_", 1:num_predictors)
+    #   }
 
-    old_par <- par(no.readonly = TRUE)
-    on.exit(par(old_par))
+    #   old_par <- par(no.readonly = TRUE)
+    #   on.exit(par(old_par))
 
-    cex_val <- max(0.6, 1 - 0.08 * max(grid_rows, grid_cols))
-    par(
-      mfrow = c(grid_rows, grid_cols),
-      mar = c(3.5, 3.5, 2, 1),
-      oma = c(1, 1, 3, 0),
-      mgp = c(2, 0.7, 0),
-      cex.lab = cex_val,
-      cex.axis = cex_val
-    )
+    #   # Dynamically scale font size according to matrix size
+    #   cex_val <- max(0.6, 1.15 - 0.08 * num_predictors)
 
-    xs <- c()
-    ys <- c()
-    for (col in 1:length(x$mle_coefs)) {
-      for (a in 1:length(alphas)) {
-        xs[a] <- x$mle_coefs[col] - x$coordinate_marginal_bounds[[a]][col]
-        ys[a] <- alphas[a]
-      }
-      xs[length(alphas) + 1] <- x$mle_coefs[col]
-      ys[length(alphas) + 1] <- 1
-      for (a in 1:length(alphas)) {
-        xs[length(alphas) + 1 + a] <- x$mle_coefs[col] + x$coordinate_marginal_bounds[[a]][col]
-        ys[length(alphas) + 1 + a] <- alphas[a]
-      }
-      ord <- order(xs)
-      xs <- xs[ord]
-      ys <- ys[ord]
+    #   par(
+    #     mfrow = c(num_predictors, num_predictors),
+    #     mar = c(3, 3, 1.5, 0.8), # Tightened per panel
+    #     oma = c(1, 1, 3.5, 0), # Outer margin space for title and exterior axis labels
+    #     mgp = c(1.8, 0.5, 0), # Moves axis titles & tick labels closer to the axis
+    #     cex.lab = cex_val * 1.2,
+    #     cex.axis = cex_val * 1.2
+    #   )
 
-      plot.default(xs, ys, type = "l", xlab = paste0("Beta_", col), ylab = "Possibility")
-      if (alpha != -1) {
-        abline(h = alpha, col = "red", lty = 3)
-      }
-      grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
-    }
+    #   # Helper function for max handling empty NA slices
+    #   max_or_na <- function(v) {
+    #     v <- v[!is.na(v)]
+    #     if (length(v) == 0) NA_real_ else max(v)
+    #   }
 
-    fam_title <- if (!is.null(family) && nchar(family) > 0) {
-      paste0(toupper(substr(family, 1, 1)), substr(family, 2, nchar(family)))
-    } else {
-      ""
-    }
-    mtext(
-      text = paste0(fam_title, " Possibility contours (marginalized)"),
-      side = 3,
-      outer = TRUE,
-      line = 1,
-      cex = 1.2,
-      font = 2
-    )
+    #   for (row in 1:num_predictors) {
+    #     for (col in 1:num_predictors) {
+    #       if (row == col) {
+    #         # --- DIAGONAL: 1D Profile Plot ---
+    #         max_plaus <- tapply(poss, betas[, col], max_or_na)
+    #         beta_vals <- as.numeric(names(max_plaus))
+    #         valid <- is.finite(beta_vals) & is.finite(max_plaus)
+
+    #         if (any(valid)) {
+    #           ord <- order(beta_vals[valid])
+    #           plot.default(
+    #             beta_vals[valid][ord],
+    #             max_plaus[valid][ord],
+    #             type = 'l',
+    #             xlab = col_names[col],
+    #             ylab = "Profile Plausibility",
+    #             ylim = c(0, 1)
+    #           )
+    #           if (alpha != -1) {
+    #             abline(h = alpha, col = "red", lty = 3)
+    #           }
+    #           grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
+    #         } else {
+    #           plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
+    #         }
+    #       } else {
+    #         # --- OFF-DIAGONAL: 2D Marginal Profile (Contour Plot) ---
+    #         z_mat <- tapply(poss, list(betas[, col], betas[, row]), max_or_na)
+
+    #         x_vals <- as.numeric(rownames(z_mat))
+    #         y_vals <- as.numeric(colnames(z_mat))
+
+    #         x_ord <- order(x_vals)
+    #         y_ord <- order(y_vals)
+
+    #         x_vals <- x_vals[x_ord]
+    #         y_vals <- y_vals[y_ord]
+    #         z_mat <- z_mat[x_ord, y_ord, drop = FALSE]
+
+    #         if (length(x_vals) >= 2 && length(y_vals) >= 2 && any(is.finite(z_mat))) {
+    #           contour(
+    #             x = x_vals,
+    #             y = y_vals,
+    #             z = z_mat,
+    #             xlab = col_names[col],
+    #             ylab = col_names[row],
+    #             main = "",
+    #             drawlabels = TRUE,
+    #             labcex = cex_val
+    #           )
+    #           if (alpha != -1) {
+    #             contour(
+    #               x = x_vals,
+    #               y = y_vals,
+    #               z = z_mat,
+    #               levels = c(alpha),
+    #               col = "red",
+    #               lty = 3,
+    #               add = TRUE,
+    #               drawlabels = FALSE
+    #             )
+    #           }
+    #           grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
+    #         } else {
+    #           plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
+    #         }
+    #       }
+    #     }
+    #   }
+
+    #   # Outer Title
+    #   fam_title <- if (!is.null(family) && nchar(family) > 0) {
+    #     paste0(toupper(substr(family, 1, 1)), substr(family, 2, nchar(family)))
+    #   } else {
+    #     ""
+    #   }
+    #   mtext(
+    #     text = paste0(fam_title, " Possibility contours (marginalized)"),
+    #     side = 3,
+    #     outer = TRUE,
+    #     line = 1, # Fits cleanly inside top outer margin
+    #     cex = 1.2,
+    #     font = 2
+    #   )
+    # } else if ("elliptical_data" %in% names(x)) {
+    #   x <- x$elliptical_data
+    #   betas <- x$betas_evaluated
+    #   poss <- x$possibilities
+    #   family <- x$family
+    #   alphas <- NULL
+
+    #   if ("alphas" %in% names(x)) {
+    #     alphas <- x$alphas
+    #   }
+    #   # Evaluated betas grid case (Pairs Matrix Layout)
+    #   num_predictors <- ncol(betas)
+    #   col_names <- colnames(betas)
+    #   if (is.null(col_names)) {
+    #     col_names <- paste0("Beta_", 1:num_predictors)
+    #   }
+
+    #   old_par <- par(no.readonly = TRUE)
+    #   on.exit(par(old_par))
+
+    #   # Dynamically scale font size according to matrix size
+    #   cex_val <- max(0.6, 1.15 - 0.08 * num_predictors)
+
+    #   par(
+    #     mfrow = c(num_predictors, num_predictors),
+    #     mar = c(3, 3, 1.5, 0.8), # Tightened per panel
+    #     oma = c(1, 1, 3.5, 0), # Outer margin space for title and exterior axis labels
+    #     mgp = c(1.8, 0.5, 0), # Moves axis titles & tick labels closer to the axis
+    #     cex.lab = cex_val * 1.2,
+    #     cex.axis = cex_val * 1.2
+    #   )
+
+    #   # Helper function for max handling empty NA slices
+    #   max_or_na <- function(v) {
+    #     v <- v[!is.na(v)]
+    #     if (length(v) == 0) NA_real_ else max(v)
+    #   }
+
+    #   for (row in 1:num_predictors) {
+    #     for (col in 1:num_predictors) {
+    #       if (row == col) {
+    #         # --- DIAGONAL: 1D Profile Plot ---
+    #         max_plaus <- tapply(poss, betas[, col], max_or_na)
+    #         beta_vals <- as.numeric(names(max_plaus))
+    #         valid <- is.finite(beta_vals) & is.finite(max_plaus)
+
+    #         if (any(valid)) {
+    #           ord <- order(beta_vals[valid])
+    #           plot.default(
+    #             beta_vals[valid][ord],
+    #             max_plaus[valid][ord],
+    #             type = 'l',
+    #             xlab = col_names[col],
+    #             ylab = "Profile Plausibility",
+    #             ylim = c(0, 1)
+    #           )
+    #           if (alpha != -1) {
+    #             abline(h = alpha, col = "red", lty = 3)
+    #           }
+    #           grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
+    #         } else {
+    #           plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
+    #         }
+    #       } else {
+    #         # --- OFF-DIAGONAL: 2D Marginal Profile (Contour Plot) ---
+    #         z_mat <- tapply(poss, list(betas[, col], betas[, row]), max_or_na)
+
+    #         x_vals <- as.numeric(rownames(z_mat))
+    #         y_vals <- as.numeric(colnames(z_mat))
+
+    #         x_ord <- order(x_vals)
+    #         y_ord <- order(y_vals)
+
+    #         x_vals <- x_vals[x_ord]
+    #         y_vals <- y_vals[y_ord]
+    #         z_mat <- z_mat[x_ord, y_ord, drop = FALSE]
+
+    #         if (length(x_vals) >= 2 && length(y_vals) >= 2 && any(is.finite(z_mat))) {
+    #           contour(
+    #             x = x_vals,
+    #             y = y_vals,
+    #             z = z_mat,
+    #             xlab = col_names[col],
+    #             ylab = col_names[row],
+    #             main = "",
+    #             drawlabels = TRUE,
+    #             labcex = cex_val
+    #           )
+    #           if (alpha != -1) {
+    #             contour(
+    #               x = x_vals,
+    #               y = y_vals,
+    #               z = z_mat,
+    #               levels = c(alpha),
+    #               col = "red",
+    #               lty = 3,
+    #               add = TRUE,
+    #               drawlabels = FALSE
+    #             )
+    #           }
+    #           grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
+    #         } else {
+    #           plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
+    #         }
+    #       }
+    #     }
+    #   }
+
+    #   # Outer Title
+    #   fam_title <- if (!is.null(family) && nchar(family) > 0) {
+    #     paste0(toupper(substr(family, 1, 1)), substr(family, 2, nchar(family)))
+    #   } else {
+    #     ""
+    #   }
+    #   mtext(
+    #     text = paste0(fam_title, " Possibility contours (marginalized)"),
+    #     side = 3,
+    #     outer = TRUE,
+    #     line = 1, # Fits cleanly inside top outer margin
+    #     cex = 1.2,
+    #     font = 2
+    #   )
   }
 }
 
@@ -2128,23 +2305,98 @@ plot.glim_object <- function(x, ...) {
 #' print(fit, alpha = .10)
 #' }
 #' @export
-print.glim_object <- function(x, ...) {
+print.glim_object <- function(x, alpha = .05, ...) {
   args <- list(...)
-  alpha <- .05
-  if (length(args) == 1 & is.numeric(args$alpha)) {
-    alpha <- args$alpha
-  }
 
   cat(sprintf("%.0f%% (marginal) confidence and credible region:\n", (1 - alpha) * 100))
   cat("------------------------------------------------------------------------\n")
-  if ("margins" %in% names(x)) {
-    lower_bound <- rep(NA_real_, ncol(x[["extra_info"]]$X))
-    upper_bound <- rep(NA_real_, ncol(x[["extra_info"]]$X))
-    mle_coefs <- x[["extra_info"]]$mle_coefs
+  if ("margin" %in% names(x)) {
+    data <- x[["margin"]]
+    lower_bound <- rep(NA_real_, ncol(data[["extra_info"]]$X))
+    upper_bound <- rep(NA_real_, ncol(data[["extra_info"]]$X))
+    mle_coefs <- data[["extra_info"]]$mle_coefs
+    for (col in 1:ncol(data[["extra_info"]]$X)) {
+      beta_vals <- data[["margins"]][[col]]$beta_for_margin
+      lower_bound[col] <- min(beta_vals[, col])
+      upper_bound[col] <- max(beta_vals[, col])
+    }
+    # Build the structured data frame
+    summary_table <- data.frame(
+      Estimate = sprintf("%.4f", mle_coefs),
+      Lower = sprintf("%.4f", lower_bound),
+      Upper = sprintf("%.4f", upper_bound),
+      row.names = colnames(data[["extra_info"]]$X)
+    )
+
+    # Rename columns to show the interval width dynamically
+    colnames(summary_table) <- c(
+      "MLE",
+      paste0("Lower ", (1 - alpha) * 100, "%"),
+      paste0("Upper ", (1 - alpha) * 100, "%")
+    )
+
+    # Print the formatted table cleanly
+    print(summary_table, quote = FALSE)
+    cat("------------------------------------------------------------------------\n")
+    invisible(x)
+  } else if ("grid_data" %in% names(x)) {
+    # margins not found, so either in elliptical_data, radial_data, grid_data
+    grid_object <- x[["grid_data"]]
+    betas <- grid_object$betas_evaluated
+    poss <- grid_object$possibilities
+    family <- grid_object$family
+    mle_coefs <- grid_object$mle_coefs
+
+    row_names <- colnames(betas)
+    ll_mle_original_data <- numeric(ncol(betas))
+    lower_bound <- rep(NA_real_, ncol(betas))
+    upper_bound <- rep(NA_real_, ncol(betas))
+
     for (col in 1:ncol(betas)) {
-      beta_vals <- x[["margins"]][[col]]
-      lower_bound[col] <- min(beta_vals)
-      upper_bound[col] <- max(beta_vals)
+      max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
+
+      beta_vals <- as.numeric(names(max_plaus))
+      valid <- is.finite(beta_vals) & is.finite(max_plaus)
+      alpha_cut <- valid & (max_plaus > alpha)
+      valid_betas <- beta_vals[alpha_cut]
+
+      if (length(valid_betas) > 0) {
+        # ---------- LOWER BOUND ----------
+        grid_min <- min(valid_betas)
+        if (grid_min != min(betas[, col])) {
+          lower_bound[col] <- grid_min
+        } else {
+          # Boundary hit: Check if negative extensions exist for this parameter
+          if (
+            !is.null(x$extended_in_neg_betas) &&
+              !is.null(x$extended_in_neg_betas[[col]]) &&
+              nrow(x$extended_in_neg_betas[[col]]) > 0
+          ) {
+            # The lowest value reached in the extension
+            lower_bound[col] <- min(x$extended_in_neg_betas[[col]][, col])
+          } else {
+            lower_bound[col] <- NA_real_
+          }
+        }
+
+        # ---------- UPPER BOUND ----------
+        grid_max <- max(valid_betas)
+        if (grid_max != max(betas[, col])) {
+          upper_bound[col] <- grid_max
+        } else {
+          # Boundary hit: Check if positive extensions exist for this parameter
+          if (
+            !is.null(x$extended_in_pos_betas) &&
+              !is.null(x$extended_in_pos_betas[[col]]) &&
+              nrow(x$extended_in_pos_betas[[col]]) > 0
+          ) {
+            # The highest value reached in the extension
+            upper_bound[col] <- max(x$extended_in_pos_betas[[col]][, col])
+          } else {
+            upper_bound[col] <- NA_real_
+          }
+        }
+      }
     }
     # Build the structured data frame
     summary_table <- data.frame(
@@ -2166,104 +2418,9 @@ print.glim_object <- function(x, ...) {
     cat("------------------------------------------------------------------------\n")
     invisible(x)
   } else {
-    # margins not found, so either in elliptical_data or radial_data or grid_data
-    if ("grid_data" %in% names(x)) {
-      grid_object <- x[["grid_data"]]
-      betas <- grid_object$betas_evaluated
-      poss <- grid_object$possibilities
-      family <- grid_object$family
-      mle_coefs <- as.numeric(x$mle_coefs)
-
-      row_names <- colnames(betas)
-      ll_mle_original_data <- numeric(ncol(betas))
-      lower_bound <- rep(NA_real_, ncol(betas))
-      upper_bound <- rep(NA_real_, ncol(betas))
-
-      for (col in 1:ncol(betas)) {
-        max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
-
-        beta_vals <- as.numeric(names(max_plaus))
-        valid <- is.finite(beta_vals) & is.finite(max_plaus)
-        alpha_cut <- valid & (max_plaus > alpha)
-        valid_betas <- beta_vals[alpha_cut]
-
-        if (length(valid_betas) > 0) {
-          # ---------- LOWER BOUND ----------
-          grid_min <- min(valid_betas)
-          if (grid_min != min(betas[, col])) {
-            lower_bound[col] <- grid_min
-          } else {
-            # Boundary hit: Check if negative extensions exist for this parameter
-            if (
-              !is.null(x$extended_in_neg_betas) &&
-                !is.null(x$extended_in_neg_betas[[col]]) &&
-                nrow(x$extended_in_neg_betas[[col]]) > 0
-            ) {
-              # The lowest value reached in the extension
-              lower_bound[col] <- min(x$extended_in_neg_betas[[col]][, col])
-            } else {
-              lower_bound[col] <- NA_real_
-            }
-          }
-
-          # ---------- UPPER BOUND ----------
-          grid_max <- max(valid_betas)
-          if (grid_max != max(betas[, col])) {
-            upper_bound[col] <- grid_max
-          } else {
-            # Boundary hit: Check if positive extensions exist for this parameter
-            if (
-              !is.null(x$extended_in_pos_betas) &&
-                !is.null(x$extended_in_pos_betas[[col]]) &&
-                nrow(x$extended_in_pos_betas[[col]]) > 0
-            ) {
-              # The highest value reached in the extension
-              upper_bound[col] <- max(x$extended_in_pos_betas[[col]][, col])
-            } else {
-              upper_bound[col] <- NA_real_
-            }
-          }
-        }
-      }
-    }
-    y <- list()
-    if ("radial_data" %in% names(x)) {
-      y <- x[["radial_data"]]
-    }
-    if ("elliptical_data" %in% names(x)) {
-      y <- x[["elliptical_data"]]
-    } else {
-      warning("Logic parsing has gone wrong internally")
-    }
-    mle_coefs <- y$mle_coefs
-    coordinate_marginal_bounds <- y$coordinate_marginal_bounds
-
-    upper_bound <- y$mle_coefs + coordinate_marginal_bounds
-    lower_bound <- mle_coefs - coordinate_marginal_bounds
-    row_names <- colnames(y$X)
-
-    # Build the structured data frame
-    summary_table <- data.frame(
-      Estimate = sprintf("%.4f", mle_coefs),
-      Lower = sprintf("%.4f", lower_bound),
-      Upper = sprintf("%.4f", upper_bound),
-      row.names = row_names
-    )
-
-    # Rename columns to show the interval width dynamically
-    colnames(summary_table) <- c(
-      "MLE",
-      paste0("Lower ", (1 - alpha) * 100, "%"),
-      paste0("Upper ", (1 - alpha) * 100, "%")
-    )
-
-    # Print the formatted table cleanly
-    print(summary_table, quote = FALSE)
-    cat("------------------------------------------------------------------------\n")
-    invisible(x)
+    warning("Object does not seem to have a valid structure")
   }
 }
-
 
 #' Extract the log likelihood at the MLE
 #'
@@ -2381,10 +2538,13 @@ compute_ll <- function(family, y, X, betas, mle_coefs = NULL) {
   }
   ll <- NULL
   if (family == "gaussian") {
+    if (is.null(mle_coefs)) {
+      stop("mle_coefs must be provided when family is 'gamma'")
+    }
     ll <- compute_gaussian_ll_r(
       y,
       X %*% betas,
-      sqrt(est_dispersion_normal(y, X %*% fit_gaussian_cpp(X, y), ncol(X)))
+      sqrt(est_dispersion_normal(y, X %*% mle_coefs, ncol(X)))
     )
     # need to compute the dispersion, which requires the MLE
   } else if (family == "gamma") {
@@ -2423,6 +2583,7 @@ compute_ll <- function(family, y, X, betas, mle_coefs = NULL) {
 #' @param family Either "guassian", "gamma", "inverse.gaussian", "poisson", "binomial"
 #' @param X Design X matrix
 #' @param y Vector of y values
+#' @param mle Vector of mle values
 #' @param samples Each column is a new beta vector sample
 #' @param the_compared_theta Each row is vector of betas which we want the possibility
 #' @examples
@@ -2438,7 +2599,7 @@ compute_ll <- function(family, y, X, betas, mle_coefs = NULL) {
 #' prob2poss("gamma", X, y, samples, evaluated_new_theta)
 #' }
 #' @export
-prob2poss <- function(family, X, y, samples, the_compared_theta) {
+prob2poss <- function(family, X, y, mle, samples, the_compared_theta) {
   if (family == "gaussian") {
     p2p_function <- prob2poss_gaussian
   } else if (family == "gamma") {
@@ -2465,6 +2626,6 @@ prob2poss <- function(family, X, y, samples, the_compared_theta) {
   if (length(y) != nrow(X)) {
     stop("Dimension mismatch of X")
   }
-  out <- p2p_function(X, y, samples, t(the_compared_theta))
+  out <- p2p_function(X, y, mle, samples, t(the_compared_theta))
   return(out)
 }
