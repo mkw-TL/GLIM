@@ -5,20 +5,16 @@ compute_ll <- function() {
     .Call(`_GLIM_compute_ll`)
 }
 
-generate_unit_matrix_r <- function(rows, d, base_seed, i) {
-    .Call(`_GLIM_generate_unit_matrix_r`, rows, d, base_seed, i)
-}
-
-fit_glm_omp_cpp <- function(X, y, mle_coefs, betas, family, num_threads = 1L, m = 100L, parallel = TRUE, approx = FALSE, radial = FALSE, show_progress = TRUE, base_seed = 31415L) {
-    .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, betas, family, num_threads, m, parallel, approx, radial, show_progress, base_seed)
+fit_glm_omp_cpp <- function(X, y, mle_coefs, mle_val, betas, family, num_threads = 1L, m = 1000L, parallel = TRUE, approx = FALSE, radial = FALSE, show_progress = TRUE, base_seed = 31415L) {
+    .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, mle_val, betas, family, num_threads, m, parallel, approx, radial, show_progress, base_seed)
 }
 
 imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, generate_grid, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, parallel = TRUE, m = 1000L, base_seed = 31L) {
     .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, generate_grid, tol, a_val, b_val, max_it, parallel, m, base_seed)
 }
 
-radial_code <- function(num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val, base_seed = 0L) {
-    .Call(`_GLIM_radial_code`, num_samps, X, y, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val, base_seed)
+radial_code <- function(num_samps, X, y, mle_val, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val, num_omp_threads, base_seed = 0L) {
+    .Call(`_GLIM_radial_code`, num_samps, X, y, mle_val, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val, num_omp_threads, base_seed)
 }
 
 compute_gamma_ll <- function(y, eta, shape) {

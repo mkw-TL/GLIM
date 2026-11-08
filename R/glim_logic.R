@@ -44,8 +44,7 @@ glim_raw <- function(
   m,
   parallel,
   approx,
-  show_progress,
-  base_seed
+  show_progress
 ) {
   if (parallel) {
     num_omp_threads <- max(1, parallel::detectCores() - 1)
@@ -66,14 +65,14 @@ glim_raw <- function(
     X = X,
     y = y,
     mle_coefs = mle_coefs,
+    mle_val = ll_mle_original_data,
     betas = betas,
     family = family, # Pass the string straight down
     num_threads = num_omp_threads,
     m = m,
     parallel = parallel,
     approx = approx,
-    show_progress = show_progress,
-    base_seed = base_seed
+    show_progress = show_progress
   )
   return(output)
 }
@@ -134,13 +133,14 @@ generate_marginal_object <- function(
   family,
   mle_coefs,
   ll_mle_original_data,
-  n_grid_evals,
-  dispersion,
-  alpha,
-  step,
-  m,
-  parallel,
-  base_seed
+  vcov = NULL,
+  n_grid_evals = 25,
+  dispersion = 1,
+  alpha = 0.05,
+  step = NULL,
+  m = 50,
+  parallel = FALSE,
+  max_iter = 500
 ) {
   margins <- list()
   p <- ncol(X)
@@ -150,9 +150,7 @@ generate_marginal_object <- function(
     step_col <- step[col]
     off_idx <- setdiff(1:p, col)
 
-    # Pre-allocate list buffers based on expected evaluation grid size
-    # Utilization of lists for speedup in dynamic allocation suggested by Gemini.
-    max_est <- 2 * n_grid_evals + 100 # 100 is a magic number for some tolerance around the alpha-.01
+    max_est <- 2 * n_grid_evals + 100
     beta_list <- vector("list", max_est)
     plaus_list <- vector("list", max_est)
 
@@ -163,18 +161,25 @@ generate_marginal_object <- function(
     for (direction in c(-1, 1)) {
       beta <- mle_coefs
       current_plaus <- 1
+      iter <- 0
 
-      while (current_plaus > alpha - .01) {
+      while (current_plaus > (alpha - 0.01) && iter < max_iter) {
+        iter <- iter + 1
+
         tang <- profile_tangent(family, X, beta, col, dispersion)
-        if (is.null(tang)) {
-          warning(sprintf("Column %d: profile tangent failed; extension stopped.", col))
+        if (is.null(tang) | any(!is.finite(tang))) {
+          warning(sprintf(
+            "Column %d: profile tangent failed or non-finite; extension stopped.",
+            col
+          ))
           break
         }
+
         cand <- beta
         cand[col] <- cand[col] + direction * step_col
         cand[off_idx] <- cand[off_idx] + direction * step_col * tang
 
-        if (!is.finite(compute_ll(family, y, X, cand, mle_coefs))) {
+        if (!all(is.finite(cand)) | !is.finite(compute_ll(family, y, X, cand, mle_coefs))) {
           warning(sprintf(
             "Column %d: step left the valid parameter domain; extension stopped.",
             col
@@ -183,7 +188,15 @@ generate_marginal_object <- function(
         }
 
         beta <- correct_profile_point(family, X, y, cand, col, dispersion, mle_coefs)
-        current_plaus <- as.numeric(glim_raw(
+        if (is.null(beta) | any(!is.finite(beta))) {
+          warning(sprintf(
+            "Column %d: profile correction returned non-finite values; extension stopped.",
+            col
+          ))
+          break
+        }
+
+        raw_plaus <- glim_raw(
           X,
           y,
           family = family,
@@ -193,12 +206,21 @@ generate_marginal_object <- function(
           m = m,
           parallel = FALSE,
           approx = FALSE,
-          show_progress = FALSE,
-          base_seed = base_seed
-        ))
+          show_progress = FALSE
+        )
+
+        current_plaus <- as.numeric(raw_plaus)
+
+        if (length(current_plaus) == 0 | !is.finite(current_plaus)) {
+          warning(sprintf(
+            "Column %d: plausibility returned non-finite value; extension stopped.",
+            col
+          ))
+          break
+        }
+
         count <- count + 1
 
-        # Automatically double capacity if grid evaluations exceed estimate
         if (count > length(beta_list)) {
           length(beta_list) <- length(beta_list) * 2
           length(plaus_list) <- length(plaus_list) * 2
@@ -209,12 +231,12 @@ generate_marginal_object <- function(
       }
     }
 
-    # Bind into matrix/vector in one operation
     beta_for_margin <- do.call(rbind, beta_list[1:count])
     plaus_for_margin <- unlist(plaus_list[1:count], use.names = FALSE)
 
     margins[[col]] <- list(beta_for_margin = beta_for_margin, plaus_for_margin = plaus_for_margin)
   }
+
   obj_to_return <- list(
     margins = margins,
     extra_info = list(
@@ -224,12 +246,12 @@ generate_marginal_object <- function(
       mle_coefs = mle_coefs,
       ll_mle_original_data = ll_mle_original_data,
       n_grid_evals = n_grid_evals,
+      vcov = vcov,
       dispersion = dispersion,
       alpha = alpha,
       step = step,
       m = m,
-      parallel = parallel,
-      base_seed = base_seed
+      parallel = parallel
     )
   )
   class(obj_to_return) <- "glim_object"
@@ -274,8 +296,7 @@ generate_grid <- function(
     b_val = .65, # found through a grid search
     max_it = 25,
     parallel = FALSE,
-    m = m, # This is our m value
-    base_seed = sample.int(.Machine$integer.max, 1)
+    m = m # This is our m value
   )
   q_val <- qchisq(1 - alpha_target, df = length(mle_coefs)) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
   base_scale <- sqrt(dispersion * q_val * (1 / eigen_vals))
@@ -354,8 +375,7 @@ glim_inner_prob_approx_samples <- function(
   a_val,
   b_val,
   max_it,
-  tol,
-  base_seed
+  tol
 ) {
   if (parallel) {
     num_omp_threads <- max(1, parallel::detectCores() - 1)
@@ -404,8 +424,7 @@ glim_inner_prob_approx_samples <- function(
       b_val = b_val,
       max_it = max_it,
       parallel = TRUE,
-      m = m,
-      base_seed = base_seed
+      m = m
     )
     prev_xi <- xi[[i]]
     q_val <- qchisq(1 - alpha, df = length(mle_coefs)) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
@@ -436,8 +455,9 @@ glim_inner_prob_approx_samples <- function(
       lerped_xi <- (1 - w) * xi[[r]] + w * xi[[r + 1]]
     }
 
-    rand_dir <- generate_unit_matrix_r(1, length(mle_coefs), base_seed, i)
-    spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir)
+    z <- rnorm(mle_coefs, 0, 1)
+    rand_dir <- z / norm(z, "2")
+    spatial_dir <- eJ$vectors %*% (1 / sqrt(eJ$values) * rand_dir) # map it out to the corresponding elliptical distance
 
     samples[, i] <- mle_coefs +
       as.vector(
@@ -501,30 +521,31 @@ correct_profile_point <- function(
   dispersion = 1,
   mle_coefs = NULL,
   max_iter = 50,
-  tol = 1e-8
+  tol = 1e-6
 ) {
   beta <- as.numeric(beta)
   p <- length(beta)
-  off_idx <- setdiff(1:p, col)
-
-  ll_old <- compute_ll(family, y, X, beta, mle_coefs)
-  if (!is.finite(ll_old)) {
-    return(beta)
-  }
-
+  off_idx <- setdiff(seq_len(p), col)
   X_others <- X[, off_idx, drop = FALSE]
 
-  for (iter in 1:max_iter) {
-    eta <- as.vector(X %*% beta)
+  for (iter in seq_len(max_iter)) {
     grad_off <- gradient(family = family, X = X, y = y, beta = beta, dispersion = dispersion)[
       off_idx
     ]
-    w <- glm_weights(family, eta, dispersion)
-    if (!all(is.finite(grad_off)) || !all(is.finite(w))) {
+
+    if (!all(is.finite(grad_off))) {
+      break
+    }
+    if (max(abs(grad_off)) < tol) {
       break
     }
 
-    # Using info instead of observed hessian because always positive def
+    eta <- as.vector(X %*% beta)
+    w <- as.numeric(glm_weights(family, eta, dispersion))
+    if (!all(is.finite(w))) {
+      break
+    }
+
     Info <- crossprod(X_others, w * X_others)
     ridge <- max(1e-8 * mean(diag(Info)), 1e-12)
     Info_reg <- Info + diag(ridge, length(off_idx))
@@ -534,19 +555,16 @@ correct_profile_point <- function(
       break
     }
 
-    decrement <- sum(grad_off * delta)
-    if (decrement < tol) {
-      break
-    }
-
-    # Step-halving: accept only non-decreasing log-likelihood
+    # Root-finding line search: accept if gradient norm decreases (bypasses deviance/loglik sign mismatch)
     step_multiplier <- 1
     accepted <- FALSE
     proposed_beta <- beta
+
     while (step_multiplier > 1e-10) {
       proposed_beta[off_idx] <- beta[off_idx] + step_multiplier * delta
-      ll_new <- compute_ll(family, y, X, proposed_beta, mle_coefs)
-      if (ll_new >= ll_old) {
+      grad_new <- gradient(family, X, y, proposed_beta, dispersion)[off_idx]
+
+      if (all(is.finite(grad_new)) && max(abs(grad_new)) <= max(abs(grad_off)) + 1e-6) {
         accepted <- TRUE
         break
       }
@@ -554,12 +572,9 @@ correct_profile_point <- function(
     }
 
     if (!accepted) {
-      # No improving step: at numerical precision limit if decrement is tiny
       break
     }
-
     beta <- proposed_beta
-    ll_old <- ll_new
   }
 
   return(beta)
@@ -583,7 +598,6 @@ extend_profile <- function(
   m,
   parallel,
   approx,
-  base_seed,
   max_steps = 200
 ) {
   p <- length(mle_coefs)
@@ -630,8 +644,7 @@ extend_profile <- function(
       m = m,
       parallel = parallel,
       approx = approx,
-      show_progress = FALSE,
-      base_seed = base_seed
+      show_progress = FALSE
     ))
     out_betas <- rbind(out_betas, unname(new_beta))
     out_plaus <- c(out_plaus, current_plaus)
@@ -653,7 +666,6 @@ calculate_marginal_ftn <- function(
   parallel,
   approx,
   show_progress,
-  base_seed,
   max_steps,
   alpha,
   tolerance
@@ -698,8 +710,7 @@ calculate_marginal_ftn <- function(
           m = m,
           parallel = parallel,
           approx = approx,
-          show_progress = FALSE,
-          base_seed = base_seed
+          show_progress = FALSE
         ))
         out_betas <- rbind(out_betas, unname(new_beta))
         out_plaus <- c(out_plaus, current_plaus)
@@ -713,6 +724,13 @@ calculate_marginal_ftn <- function(
   }
   return(list(marginal_plaus = marginal_plaus, marginal_betas = marginal_betas))
 }
+
+
+.is_flag <- function(x) is.logical(x) && length(x) == 1 && !is.na(x)
+.is_whole <- function(x) {
+  is.numeric(x) && length(x) == 1 && is.finite(x) && x %% 1 == 0
+}
+.is_num1 <- function(x) is.numeric(x) && length(x) == 1 && is.finite(x)
 
 
 #' Generalized Linear Inferential Models (GLIM) Main Function
@@ -741,7 +759,6 @@ calculate_marginal_ftn <- function(
 #'
 #' # Grid-based evaluation (default)
 #' fit <- glim(y ~ x, data = dat, family = "gaussian", m = 500)
-#' get_CI(fit, alpha = .05)
 #' plot(fit)
 #' print(fit)
 #'
@@ -765,39 +782,54 @@ glim <- function(
   tol = .005,
   ...
 ) {
-  mf <- match.call(expand.dots = FALSE) # Captures the whole input
-  match <- match(
-    # filters out any non-used arguments
-    c("formula", "data"),
-    names(mf),
-    0L
+  # Allows family = "pois" to auto-match to "poisson"
+  family <- match.arg(
+    family,
+    choices = c("gaussian", "poisson", "gamma", "binomial", "inverse.gaussian")
   )
-  mf <- mf[c(1L, match)] # from match.call, take elements 1 (function name), 2 (match with formula), 3 (match with data)
-  mf$drop.unused.levels <- TRUE
-  mf[[1L]] <- quote(stats::model.frame)
-  env <- environment(formula)
-  if (is.null(env)) {
-    env <- parent.frame()
+
+  if (!.is_flag(approx)) {
+    stop("Input Error: 'approx' must be either TRUE or FALSE.")
   }
-  mf <- eval(mf, env)
-  mt <- attr(mf, "terms") # figure out the variables to expand out in the model.matrix. Contains further attributes of factors, etc
-  offset <- model.offset(mf) # would need to put into glim()
-  X <- model.matrix(mt, mf, NULL) # model.matrix() creates the dummy columns. NULL is the contrasts (which could be set as default setting within a useR's R session, but I don't want to incorporate this)
-  if (any(is.na(X))) {
-    stop("NA values detected in the X matrix.")
+  if (!.is_flag(radial)) {
+    stop("Input Error: 'radial' must be either TRUE or FALSE.")
   }
-  # If more than one column is all 1s, drop the automatic R intercept
-  # Gets rid of auto-prepended intercept if there already exists one. X == 1 is a boolean vector, so colsums is a good way of doing this
-  if (sum(colSums(X == 1) == nrow(X)) > 1 & "(Intercept)" %in% colnames(X)) {
-    X <- X[, colnames(X) != "(Intercept)", drop = FALSE]
+  if (radial && approx) {
+    stop("Input Error: radial and approx cannot both be TRUE.")
   }
-  y <- model.response(mf, "any")
-  if (any(is.na(y))) {
-    stop("NA values detected in the response.")
+
+  if (!(.is_whole(m) && m > 0)) {
+    stop("Input Error: m must be a positive integer")
   }
+  if (!(.is_num1(tol) && tol > 0 && tol < 1)) {
+    stop("Input Error: tol must be a number strictly between 0 and 1")
+  }
+
   args <- list(...)
+
+  # Unknown / unnamed extra arguments
+  if (length(args) > 0) {
+    allowed <- c(
+      "a_val",
+      "b_val",
+      "max_it",
+      "betas",
+      "n_grid_evals",
+      "num_samps",
+      "alpha",
+      "directly_calc_marginals",
+      "trim",
+      "parallel",
+      "base_seed"
+    )
+    nms <- names(args)
+    if (is.null(nms) || any(nms == "") || !all(nms %in% allowed)) {
+      stop("Incorrect names of additional arguments passed")
+    }
+  }
+
   if ("a_val" %in% names(args)) {
-    if (is.numeric(args$a_val) & length(args$a_val) == 1 & args$a_val > 0) {
+    if (.is_num1(args$a_val) && args$a_val > 0) {
       a_val <- args$a_val
     } else {
       stop("Input Error: a_val must be a positive number")
@@ -805,8 +837,9 @@ glim <- function(
   } else {
     a_val <- 1.5
   }
+
   if ("b_val" %in% names(args)) {
-    if (is.numeric(args$b_val) & length(args$b_val) == 1 & args$b_val > 0) {
+    if (.is_num1(args$b_val) && args$b_val > 0) {
       b_val <- args$b_val
     } else {
       stop("Input Error: b_val must be a positive number")
@@ -814,49 +847,29 @@ glim <- function(
   } else {
     b_val <- .65
   }
-  parallel <- TRUE
+
   if ("parallel" %in% names(args)) {
-    parallel <- args$parallel
-  }
-  betas <- NULL
-  if (approx == FALSE) {
-    if ("betas" %in% names(args)) {
-      if (is.vector(args$betas)) {
-        betas <- matrix(args$betas, nrow = 1)
-      }
-      if (is.data.frame(args$betas)) {
-        args$betas <- as.matrix(args$betas)
-      }
-      if (!(is.matrix(args$betas) & typeof(args$betas) == "double")) {
-        stop("Grid of betas not in the correct form")
-      }
-      betas <- args$betas
+    if (.is_flag(args$parallel)) {
+      parallel <- args$parallel
+    } else {
+      stop("Input Error: 'parallel' must be either TRUE or FALSE.")
     }
+  } else {
+    parallel <- TRUE
   }
+
   if ("n_grid_evals" %in% names(args)) {
-    if (
-      is.numeric(args$n_grid_evals) &
-        (args$n_grid_evals %% 1 == 0) &
-        length(as.integer(args$n_grid_evals)) == 1 &
-        as.integer(args$n_grid_evals > 1)
-    ) {
+    if (.is_whole(args$n_grid_evals) && args$n_grid_evals > 1) {
       n_grid_evals <- as.integer(args$n_grid_evals)
     } else {
-      stop("Input Error: n_grid_evals is not a positive integer")
+      stop("Input Error: n_grid_evals must be an integer greater than 1")
     }
   } else {
     n_grid_evals <- 25 # Is this a good number?
   }
-  if (is.numeric(as.numeric(tol)) & length(as.numeric(tol)) == 1 & as.numeric(tol) > 0) {
-    tol <- tol
-  } else {
-    stop("Input Error: tol is not currently valid")
-  }
 
   if ("max_it" %in% names(args)) {
-    if (
-      is.numeric(args$max_it) & args$max_it %% 1 == 0 & length(args$max_it) == 1 & args$max_it > 0
-    ) {
+    if (.is_whole(args$max_it) && args$max_it > 0) {
       max_it <- args$max_it
     } else {
       stop("Input Error: max_it must be a positive integer")
@@ -864,119 +877,120 @@ glim <- function(
   } else {
     max_it <- 25
   }
+
   if ("num_samps" %in% names(args)) {
-    if (is.integer(as.integer(args$num_samps)) & length(args$num_samps) == 1 & args$num_samps > 0) {
-      num_samps <- args$num_samps
+    # Accept 1000 as well as 1000L
+    if (.is_whole(args$num_samps) && args$num_samps > 0) {
+      num_samps <- as.integer(args$num_samps)
     } else {
       stop("Input Error: num_samps must be a positive integer")
     }
   } else {
     num_samps <- 2000
   }
-  if ("parallel" %in% names(args)) {
-    if (is.logical(args$parallel) & length(args$parallel) == 1) {
-      parallel <- args$parallel
-    } else {
-      stop("Input Error: parallel must be a logical")
-    }
-  } else {
-    parallel <- TRUE
-  }
+
   if ("alpha" %in% names(args)) {
-    if (is.integer(as.integer(args$alpha)) & length(args$alpha) == 1 & args$alpha > 0) {
+    if (.is_num1(args$alpha) && args$alpha > 0 && args$alpha < 1) {
       alpha <- args$alpha
     } else {
-      stop("Input Error: alpha must be a positive number")
+      stop("Input Error: alpha must be a number strictly between 0 and 1")
     }
   } else {
     alpha <- .05
   }
+
   directly_calc_marginals <- FALSE
   if ("directly_calc_marginals" %in% names(args)) {
-    if (is.logical(args$directly_calc_marginals) & length(args$directly_calc_marginals) == 1) {
+    if (.is_flag(args$directly_calc_marginals)) {
       directly_calc_marginals <- args$directly_calc_marginals
     } else {
       stop("Input Error: directly_calc_marginals must be TRUE or FALSE")
     }
   }
-  if (!("betas" %in% names(args))) {
-    if (ncol(X) > 5) {
-      directly_calc_marginals <- TRUE
-    }
-  }
+
   trim <- TRUE
   if ("trim" %in% names(args)) {
-    if (is.logical(args$trim) & length(args$trim) == 1) {
+    if (.is_flag(args$trim)) {
       trim <- args$trim
     } else {
       stop("Input Error: trim must be TRUE or FALSE")
     }
   }
 
-  if (!is.null(names(args))) {
-    if (
-      !(all(
-        names(args) %in%
-          c(
-            "a_val",
-            "b_val",
-            "max_it",
-            "betas",
-            "n_grid_evals",
-            "tol",
-            "num_samps",
-            "alpha",
-            "directly_calc_marginals",
-            "trim",
-            "parallel"
-          )
-      ))
-    ) {
-      stop("Incorrect names of additional arguments passed")
+  ## ---- 2. Model frame (drops incomplete cases) ----
+  mf <- match.call(expand.dots = FALSE)
+  match_idx <- match(
+    c("formula", "data", "subset", "weights", "na.action", "offset"),
+    names(mf),
+    0L
+  )
+  mf <- mf[c(1L, match_idx)]
+  mf$drop.unused.levels <- TRUE
+
+  # Force na.omit so NAs never reach C++
+  if (is.null(mf$na.action)) {
+    mf$na.action <- quote(stats::na.omit)
+  }
+  mf[[1L]] <- quote(stats::model.frame)
+  env <- environment(formula)
+  if (is.null(env)) {
+    env <- parent.frame()
+  }
+  mf <- eval(mf, env)
+  mt <- attr(mf, "terms")
+  X <- model.matrix(mt, mf, NULL)
+  y <- model.response(mf, "any")
+  if (any(is.na(y))) {
+    stop("NA values detected in the response.")
+  }
+
+  ## ---- 3. Validation that needs X / y ----
+  betas <- NULL
+  if (!approx && "betas" %in% names(args)) {
+    b_mat <- args$betas
+
+    # Automatically convert data.frames to matrices
+    if (is.data.frame(b_mat)) {
+      b_mat <- as.matrix(b_mat)
+    }
+
+    # Strictly require a double matrix (rejects "a" and integer matrices)
+    if (!is.matrix(b_mat) || typeof(b_mat) != "double") {
+      stop("Input Error: Grid of betas must be a numeric matrix.")
+    }
+
+    if (ncol(b_mat) != ncol(X)) {
+      stop("Input Error: Grid of betas columns must match the number of predictors.")
+    }
+
+    betas <- b_mat # Save the coerced, validated matrix back
+  }
+
+  if (!("betas" %in% names(args))) {
+    if (ncol(X) > 5) {
+      directly_calc_marginals <- TRUE
     }
   }
 
-  if (is.vector(y)) {
-    if (nrow(X) != length(y)) {
-      stop(
-        "Input Error: The number of rows in the design matrix X must equal the length of the response vector y."
-      )
-    }
-  } else {
-    if (nrow(X) != nrow(y)) {
-      stop(
-        "Input Error: The number of rows in the design matrix X must equal the length of the response vector y."
-      )
-    }
+  if (NROW(X) != NROW(y)) {
+    stop(
+      "Input Error: The number of rows in the design matrix X must equal the length of the response vector y."
+    )
   }
 
-  if (ncol(X) > nrow(X)) {
+  if (NCOL(X) > NROW(X)) {
     warning(
       "Input Warning: The number of predictors (p) is greater than the number of observations (n)."
     )
   }
 
-  # This allows users to type family = "pois" and it will auto-match to "poisson"
-  family <- match.arg(
-    family,
-    choices = c("gaussian", "poisson", "gamma", "binomial", "inverse.gaussian")
-  )
-
-  if (!is.logical(parallel) | length(parallel) != 1 | is.na(parallel)) {
-    stop("Input Error: 'parallel' must be either TRUE or FALSE.")
-  }
-
-  if (!is.logical(approx) | length(approx) != 1 | is.na(approx)) {
-    stop("Input Error: 'approx' must be either TRUE or FALSE.")
-  }
-
-  # Inside glim_raw or the main exported wrapper
+  # Response domain checks per family
   if (family == "poisson") {
-    if (any(y < 0) | !all(y == floor(y))) {
+    if (!is.numeric(y) || any(y < 0 | y != floor(y))) {
       stop("Input Error: For Poisson family, 'y' must contain only non-negative integers.")
     }
   } else if (family %in% c("gamma", "inverse.gaussian")) {
-    if (any(y <= 0)) {
+    if (!is.numeric(y) || any(y <= 0)) {
       stop(sprintf(
         "Input Error: For %s family, all values in 'y' must be strictly positive (y > 0).",
         family
@@ -984,68 +998,50 @@ glim <- function(
     }
   }
 
-  if (is.numeric(m) & m %% 1 == 0 & length(m) == 1 & m > 0) {
-    m <- m
-  } else {
-    stop("Input Error: m must be a positive integer")
-  }
-
-  if (is.numeric(tol) & length(tol) == 1 & tol > 0 & tol < 1) {
-    tol <- tol
-  } else {
-    stop("Input Error: tol must be between 0 and 1")
-  }
-
   J <- NULL
   if (is.data.frame(X)) {
     X <- as.matrix(X)
   }
-  # Got rid of intercept logic, since covered.
+
+  ## ---- 4. Family-specific MLE setup ----
   ## Binomial setup
-  if (family == "binomial" | family == "logistic") {
-    if (is.data.frame(X)) {
-      X <- as.matrix(X)
+  if (family == "binomial") {
+    if (is.factor(y)) {
+      if (nlevels(y) != 2) {
+        stop("Factor response must have exactly 2 levels")
+      }
+      y <- as.numeric(y == levels(y)[2]) # levels(y)[2] is treated as success
     }
-    if (is.vector(y) & all(y == 0 | y == 1)) {
+
+    if (is.null(dim(y))) {
       if (length(y) != nrow(X)) {
         stop("y and X lengths differ")
       }
-    } else if (is.matrix(y) & ncol(y) == 2) {
-      # Two-column integer matrix (Successes / Failures)
+      if (!all(y %in% c(0, 1))) {
+        stop("Binomial vector response must contain only 0s and 1s")
+      }
+    } else if (is.matrix(y) && ncol(y) == 2) {
+      if (nrow(y) != nrow(X)) {
+        stop("y and X row counts differ")
+      }
       successes <- y[, 1]
       failures <- y[, 2]
 
-      if (ncol(X) == 1) {
-        idx_success <- rep(1:nrow(X), times = successes)
-        idx_fail <- rep(1:nrow(X), times = failures)
-      } else {
-        idx_success <- rep(1:nrow(X), times = successes)
-        idx_fail <- rep(1:nrow(X), times = failures)
-      }
-      # I did not know this, but X[c(2, 2), ] will repeat the second index twice
-      # drop = FALSE means that it stays as a matrix, rather than going to a vector
+      idx_success <- rep(seq_len(nrow(X)), times = successes)
+      idx_fail <- rep(seq_len(nrow(X)), times = failures)
+
       X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
       y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
-    } else if (is.factor(y)) {
-      # Success is any level that is NOT the first level
-
-      is_success <- as.integer(y != levels(y)[1])
-      successes <- is_success * rep(1, length(y))
-      failures <- (1 - is_success) * rep(1, length(y))
-
-      idx_success <- rep(1:nrow(X), times = successes)
-      idx_fail <- rep(1:nrow(X), times = failures)
-
-      # I did not know this, but X[c(2, 2), ] will repeat the second index twice
-      # drop = FALSE means that it stays as a matrix, rather than going to a vector
-      y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
-      X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
+    } else {
+      stop("Invalid response format for binomial family")
     }
-    # We are using (-1) so that R knows the X matrix we are using; we don't want to append any extra intercepts
-    fit <- glm(y ~ X - 1, family = binomial)
+    # -1 because X already contains the intercept column (if any)
+    # suppressWarnings: glm warns about fitted probabilities of 0/1, but we
+    # detect that case ourselves right below and give a clearer error.
+    fit <- suppressWarnings(glm(y ~ X - 1, family = binomial))
     eps <- 10 * .Machine$double.eps
-    if (any(fit$fitted.values > (1 - eps)) | any(fit$fitted.values < eps)) {
-      stop("Data is completely seperable. MLE does not exist")
+    if (any(fit$fitted.values > (1 - eps)) || any(fit$fitted.values < eps)) {
+      stop("Data is completely separable. MLE does not exist")
     }
     mle_coefs <- fit$coefficients
     if (any(is.na(mle_coefs))) {
@@ -1060,6 +1056,7 @@ glim <- function(
     p2p_function <- prob2poss_logis
 
     ll_mle_original_data <- compute_logistic_ll_r(X, y, mle_coefs)
+
     ## Gamma setup
   } else if (family == "gamma") {
     fit <- glm(y ~ X - 1, family = Gamma(link = "log"))
@@ -1113,8 +1110,8 @@ glim <- function(
     J <- crossprod(X, X * (mu_i^3) / 4)
     p2p_function <- prob2poss_invgauss
 
-    ## Gaussian Setup
-  } else if (family == "normal" | family == "gaussian") {
+    ## Gaussian setup
+  } else if (family == "gaussian") {
     fit <- lm(y ~ X - 1)
     ll_mle_original_data <- as.numeric(logLik(fit))
     mle_coefs <- coef(fit)
@@ -1130,12 +1127,14 @@ glim <- function(
   } else {
     stop("Family not supported")
   }
+
   if (!is.null(J)) {
-    J <- (J + t(J)) / 2 # symmetrize to try to kill some rounding asymmetries
+    J <- (J + t(J)) / 2 # symmetrize to kill some rounding asymmetries
     eJ <- eigen(J)
 
     eJ$values[eJ$values < 1e-4] <- .000001
   }
+
   if (!is.null(mle_coefs)) {
     if (length(mle_coefs) != ncol(X)) {
       stop(
@@ -1143,9 +1142,14 @@ glim <- function(
       )
     }
   }
-  if (!missing(dispersion) & (!is.numeric(dispersion) | dispersion <= 0)) {
+
+  # FIX: `missing()` only works on function arguments, not local variables.
+  if (
+    !is.numeric(dispersion) || length(dispersion) != 1 || !is.finite(dispersion) || dispersion <= 0
+  ) {
     stop("Internal error: 'dispersion' must be a strictly positive numeric value.")
   }
+
   show_progress <- FALSE
   eigen_vecs <- eJ$vectors
   eigen_vals <- eJ$values
@@ -1162,10 +1166,9 @@ glim <- function(
   # bringing them out, because most all need access to this variable
 
   message("Our MLE is: ", paste(round(mle_coefs, 4), collapse = ", "))
-  base_seed <- sample.int(.Machine$integer.max, 1)
-  if ((approx == FALSE) & (radial == FALSE)) {
+  if ((approx == FALSE) && (radial == FALSE)) {
     show_progress <- TRUE
-    if (is.null(betas) & ncol(X) < 6) {
+    if (is.null(betas) && ncol(X) < 6) {
       message("generating grid of betas")
       generated_grid <- generate_grid(
         X,
@@ -1203,8 +1206,7 @@ glim <- function(
         m,
         parallel,
         approx,
-        show_progress,
-        base_seed
+        show_progress
       )
       grid_data <- list(
         possibilities = possibils,
@@ -1260,8 +1262,7 @@ glim <- function(
             ll_mle_original_data,
             m,
             parallel,
-            approx,
-            base_seed
+            approx
           )
           dn <- extend_profile(
             -1,
@@ -1280,8 +1281,7 @@ glim <- function(
             ll_mle_original_data,
             m,
             parallel,
-            approx,
-            base_seed
+            approx
           )
           extended_in_pos_betas[[col]] <- up$betas
           extended_in_pos_plaus[[col]] <- up$plaus
@@ -1302,20 +1302,20 @@ glim <- function(
           family,
           mle_coefs,
           ll_mle_original_data,
+          vcov,
           n_grid_evals,
           dispersion,
           alpha,
           step,
           m,
-          parallel,
-          base_seed
+          parallel
         )
         obj_to_return <- list(marginals = marginals, grid_data = grid_data)
         class(obj_to_return) <- "glim_object"
         return(obj_to_return)
       }
     }
-    if (is.null(betas) & ncol(X) > 5) {
+    if (is.null(betas) && ncol(X) > 5) {
       message(
         "\n Since the number of predictors > 5, only margins are calculated. Extra control can be given by passing in beta values: \n betas = matrix(c(beta_eval1, beta_eval2), byrow = TRUE)"
       )
@@ -1325,13 +1325,13 @@ glim <- function(
         family,
         mle_coefs,
         ll_mle_original_data,
+        vcov,
         n_grid_evals,
         dispersion,
         alpha,
         step,
         m,
-        parallel,
-        base_seed
+        parallel
       )
       class(marginals) <- "glim_object"
       return(marginals)
@@ -1347,8 +1347,7 @@ glim <- function(
         m,
         parallel,
         approx,
-        show_progress,
-        base_seed
+        show_progress
       )
       glim_object <- list(
         possibilities = possibils,
@@ -1375,13 +1374,13 @@ glim <- function(
           family,
           mle_coefs,
           ll_mle_original_data,
+          vcov,
           n_grid_evals,
           dispersion,
           alpha,
           step,
           m,
-          parallel,
-          base_seed
+          parallel
         )
         obj_to_return <- list(glim_object = glim_object, marginals = marginals)
         class(obj_to_return) <- "glim_object"
@@ -1390,8 +1389,7 @@ glim <- function(
     }
   }
 
-  if ((approx == TRUE) & (radial == FALSE)) {
-    base_seed <- sample.int(.Machine$integer.max, 1)
+  if ((approx == TRUE) && (radial == FALSE)) {
     inner_prob <- glim_inner_prob_approx_samples(
       X = X,
       y = y,
@@ -1405,8 +1403,7 @@ glim <- function(
       a_val = a_val,
       b_val = b_val,
       max_it = max_it,
-      tol = tol,
-      base_seed = base_seed
+      tol = tol
     )
     elliptical_data <- list(
       samples = inner_prob$samples,
@@ -1420,24 +1417,25 @@ glim <- function(
       family,
       mle_coefs,
       ll_mle_original_data,
+      vcov,
       n_grid_evals,
       dispersion,
       alpha,
       step,
       m,
-      parallel,
-      base_seed
+      parallel
     )
     obj_to_return <- list(margin = margin, elliptical_data = elliptical_data)
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
   }
 
-  if (radial == TRUE & approx == TRUE) {
+  if (radial == TRUE && approx == TRUE) {
     stop("Radial and Elliptical approximation methods cannot both be used")
   }
   # radial and elliptical ALWAYS calculate actual marginals
-  if (radial == TRUE & approx == FALSE) {
+  if (radial == TRUE && approx == FALSE) {
+    message("For 5+ predictors, the elliptical (approx) method is recommended")
     num_omp_threads <- max(1, parallel::detectCores() - 1)
 
     # We change the number of blas threads down to 1 so that the parallelization doesn't
@@ -1447,8 +1445,6 @@ glim <- function(
       RhpcBLASctl::blas_set_num_threads(1)
       # If we get a function crash (or not!), reset the threads back to what it originally was
       on.exit(RhpcBLASctl::blas_set_num_threads(original_blas_threads), add = TRUE)
-    } else {
-      num_omp_threads <- 1
     }
     radial_list <- radial(
       num_samps,
@@ -1464,7 +1460,8 @@ glim <- function(
       max_it,
       a_val,
       b_val,
-      n_grid_evals = n_grid_evals
+      n_grid_evals = n_grid_evals,
+      num_omp_threads = num_omp_threads
     )
     margin <- generate_marginal_object(
       X,
@@ -1472,27 +1469,17 @@ glim <- function(
       family,
       mle_coefs,
       ll_mle_original_data,
+      vcov,
       n_grid_evals,
       dispersion,
       alpha,
       step,
       m,
-      parallel,
-      base_seed
+      parallel
     )
     samples <- radial_list$output_samples
     betas_evaluated <- radial_list$betas_evaluated
-    radial_data <- list(
-      samples = samples,
-      betas_evaluated = betas_evaluated,
-      family = family,
-      X = X,
-      y = y,
-      mle_coefs = mle_coefs,
-      logLik = ll_mle_original_data,
-      vcov = vcov,
-      dispersion = dispersion
-    )
+    radial_data <- list(samples = samples, betas_evaluated = betas_evaluated)
     obj_to_return <- list(margin = margin, radial_data = radial_data)
     class(obj_to_return) <- "glim_object"
     return(obj_to_return)
@@ -1509,11 +1496,11 @@ prob2poss_logis <- function(X, y, mle, samples, the_compared_theta) {
   if (is.data.frame(X)) {
     X <- as.matrix(X)
   }
-  if (is.vector(y) & all(y == 0 | y == 1)) {
+  if (is.vector(y) && all(y == 0 | y == 1)) {
     if (length(y) != nrow(X)) {
       stop("y and X lengths differ")
     }
-  } else if (is.matrix(y) & ncol(y) == 2) {
+  } else if (is.matrix(y) && ncol(y) == 2) {
     # Two-column integer matrix (Successes / Failures)
     successes <- y[, 1]
     failures <- y[, 2]
@@ -1699,6 +1686,7 @@ prob2poss_invgauss <- function(X, y, mle, samples, the_compared_theta) {
 #' @param a_val Hyperparameter `a`, the step size. Small values (1-2) are typically what this is set to
 #' @param b_val Hyperparameter `b`, the step-size decay. Should be between \[.5 and 1\]
 #' @param n_grid_evals Resolution of grid
+#' @param num_omp_threads Number of threads
 #' @return A matrix of output samples evaluated by the C++ backend.
 #' @noRd
 radial <- function(
@@ -1715,12 +1703,14 @@ radial <- function(
   max_it,
   a_val,
   b_val,
-  n_grid_evals
+  n_grid_evals,
+  num_omp_threads
 ) {
   output_samples <- radial_code(
     num_samps,
     X,
     y,
+    ll_mle_original_data,
     mle_coefs,
     eJ$vectors,
     eJ$values,
@@ -1730,7 +1720,9 @@ radial <- function(
     tol,
     max_it,
     a_val,
-    b_val
+    b_val,
+    num_omp_threads,
+    base_seed = 0
   )
   grid <- generate_grid(
     X = X,
@@ -1752,77 +1744,35 @@ radial <- function(
 #'
 #' @noRd
 prob2poss_poisson <- function(X, y, mle, samples, the_compared_theta) {
-  if (any(!(is.integer(y) & y >= 0))) {
-    stop("y must be positive integers")
+  if (!is.numeric(y) || anyNA(y) || any(y < 0) || any(y != floor(y))) {
+    stop("y must be non-negative integers")
   }
-  if (is.data.frame(X)) {
-    X <- as.matrix(X)
+  X <- as.matrix(X)
+  p <- ncol(X)
+
+  samples <- as.matrix(samples)
+  if (nrow(samples) != p && ncol(samples) == p) {
+    samples <- t(samples) # rows were samples -> columns
   }
-  eta <- X %*% samples
-  mle_coefs <- mle
-  ll_val_samps <- as.vector(compute_poisson_ll_r(y, eta))
-  ll_val <- as.vector(compute_poisson_ll_r(y, X %*% the_compared_theta))
-  sapply(ll_val, function(x) sum(ll_val_samps <= x) / length(ll_val_samps))
+  if (nrow(samples) != p) {
+    stop(sprintf("samples must have %d rows or columns (one per coefficient)", p))
+  }
+
+  theta <- the_compared_theta
+  theta <- if (is.null(dim(theta))) matrix(theta, nrow = p) else as.matrix(theta)
+  if (nrow(theta) != p && ncol(theta) == p) {
+    theta <- t(theta)
+  }
+  if (nrow(theta) != p) {
+    stop(sprintf("the_compared_theta must have %d coefficients", p))
+  }
+
+  ll_val_samps <- as.vector(compute_poisson_ll_r(y, X %*% samples))
+  ll_val <- as.vector(compute_poisson_ll_r(y, X %*% theta))
+  sapply(ll_val, function(x) mean(ll_val_samps <= x))
 }
 
-
-#' Returns a confidence interval
-#'
-#' Requires a grid of betas. Note that a 95% confidence interval corresponds to alpha = .05
-#'
-#' @param alpha Note that a 95% confidence interval corresponds to alpha = .05
-#' @param betas The grid of beta values which we are evaluating on
-#' @param possibilities The vector of possibilities
-#' @return A matrix of compatable beta values from the grid.
-#' @examples
-#' betas <- cbind(intercept = c(1.8, 1.9, 2.0, 2.1, 2.2), x = c(1.3, 1.4, 1.5, 1.6, 1.7))
-#' possibilities <- c(0.02, 0.20, 1.00, 0.30, 0.03)
-#'
-#' # 95% confidence region (alpha = .05)
-#' get_CI_manual(alpha = .05, betas = betas, possibilities = possibilities)
-#' @export
-get_CI_manual <- function(alpha, betas, possibilities) {
-  return(betas[possibilities > alpha, ])
-}
-
-#' Returns a confidence interval
-#'
-#' Note that a 95% confidence interval corresponds to alpha = .05
-#'
-#' @param glim_object An object returned by glim()
-#' @param ... Used to pass in the alpha level. Ex: 'alpha = .10'
-#' @return A matrix of compatable beta values from the grid.
-#' @examples
-#' \dontrun{
-#' fit <- glim(y ~ x, data = dat, family = "gaussian")
-#'
-#' # 95% confidence region (default)
-#' get_CI(fit)
-#'
-#' # 90% confidence region
-#' get_CI(fit, alpha = .10)
-#' }
-#' @export
-get_CI <- function(glim_object, ...) {
-  args <- list(...)
-  alpha <- .05
-  if ("alpha" %in% names(args)) {
-    if (
-      (is.numeric(args$alpha)) & (length(args$alpha == 1)) & (args$alpha <= 1) & (args$alpha >= 0)
-    ) {
-      alpha <- args$alpha
-    } else {
-      stop("Alpha cutoff invalid")
-    }
-  }
-
-  if (!is(glim_object, "glim_object")) {
-    stop("Object which was passed is not a direct result from glim()")
-  }
-  return(glim_object$betas[glim_object$possibilities > alpha, ])
-}
-
-# TODO figure out 2d marginalization for the elliptical case
+# TODO figure out 2d marginalization for the elliptical case (if at all)
 #' Plot
 #'
 #' Plotting for glim objects
@@ -1846,7 +1796,7 @@ plot.glim_object <- function(x, ...) {
   args <- list(...)
   alpha <- -1
   if ("alpha" %in% names(args)) {
-    if (is.numeric(args$alpha) && length(args$alpha) == 1 && args$alpha <= 1 && args$alpha >= 0) {
+    if (is.numeric(args$alpha) && length(args$alpha) == 1 && args$alpha < 1 && args$alpha > 0) {
       alpha <- args$alpha
     } else {
       stop("Alpha cutoff invalid")
@@ -1942,7 +1892,7 @@ plot.glim_object <- function(x, ...) {
       mfrow = c(num_predictors, num_predictors),
       mar = c(3, 3, 1.5, 0.8), # Tightened per panel
       oma = c(1, 1, 3.5, 0), # Outer margin space for title and exterior axis labels
-      mgp = c(1.8, 0.5, 0), # Moves axis titles & tick labels closer to the axis
+      mgp = c(1.8, 0.5, 0), # Moves axis titles && tick labels closer to the axis
       cex.lab = cex_val * 1.2,
       cex.axis = cex_val * 1.2
     )
@@ -1959,7 +1909,7 @@ plot.glim_object <- function(x, ...) {
           # --- DIAGONAL: 1D Profile Plot ---
           max_plaus <- tapply(poss, betas[, col], max_or_na)
           beta_vals <- as.numeric(names(max_plaus))
-          valid <- is.finite(beta_vals) & is.finite(max_plaus)
+          valid <- is.finite(max(beta_vals)) && is.finite(min(beta_vals)) && is.finite(max_plaus)
 
           if (any(valid)) {
             ord <- order(beta_vals[valid])
@@ -2064,7 +2014,7 @@ plot.glim_object <- function(x, ...) {
     #     mfrow = c(num_predictors, num_predictors),
     #     mar = c(3, 3, 1.5, 0.8), # Tightened per panel
     #     oma = c(1, 1, 3.5, 0), # Outer margin space for title and exterior axis labels
-    #     mgp = c(1.8, 0.5, 0), # Moves axis titles & tick labels closer to the axis
+    #     mgp = c(1.8, 0.5, 0), # Moves axis titles && tick labels closer to the axis
     #     cex.lab = cex_val * 1.2,
     #     cex.axis = cex_val * 1.2
     #   )
@@ -2081,7 +2031,7 @@ plot.glim_object <- function(x, ...) {
     #         # --- DIAGONAL: 1D Profile Plot ---
     #         max_plaus <- tapply(poss, betas[, col], max_or_na)
     #         beta_vals <- as.numeric(names(max_plaus))
-    #         valid <- is.finite(beta_vals) & is.finite(max_plaus)
+    #         valid <- is.finite(beta_vals) && is.finite(max_plaus)
 
     #         if (any(valid)) {
     #           ord <- order(beta_vals[valid])
@@ -2114,7 +2064,7 @@ plot.glim_object <- function(x, ...) {
     #         y_vals <- y_vals[y_ord]
     #         z_mat <- z_mat[x_ord, y_ord, drop = FALSE]
 
-    #         if (length(x_vals) >= 2 && length(y_vals) >= 2 && any(is.finite(z_mat))) {
+    #         if (length(x_vals) >= 2 &&  length(y_vals) >= 2 &&  any(is.finite(z_mat))) {
     #           contour(
     #             x = x_vals,
     #             y = y_vals,
@@ -2146,7 +2096,7 @@ plot.glim_object <- function(x, ...) {
     #   }
 
     #   # Outer Title
-    #   fam_title <- if (!is.null(family) && nchar(family) > 0) {
+    #   fam_title <- if (!is.null(family) &&  nchar(family) > 0) {
     #     paste0(toupper(substr(family, 1, 1)), substr(family, 2, nchar(family)))
     #   } else {
     #     ""
@@ -2186,7 +2136,7 @@ plot.glim_object <- function(x, ...) {
     #     mfrow = c(num_predictors, num_predictors),
     #     mar = c(3, 3, 1.5, 0.8), # Tightened per panel
     #     oma = c(1, 1, 3.5, 0), # Outer margin space for title and exterior axis labels
-    #     mgp = c(1.8, 0.5, 0), # Moves axis titles & tick labels closer to the axis
+    #     mgp = c(1.8, 0.5, 0), # Moves axis titles && tick labels closer to the axis
     #     cex.lab = cex_val * 1.2,
     #     cex.axis = cex_val * 1.2
     #   )
@@ -2203,7 +2153,7 @@ plot.glim_object <- function(x, ...) {
     #         # --- DIAGONAL: 1D Profile Plot ---
     #         max_plaus <- tapply(poss, betas[, col], max_or_na)
     #         beta_vals <- as.numeric(names(max_plaus))
-    #         valid <- is.finite(beta_vals) & is.finite(max_plaus)
+    #         valid <- is.finite(beta_vals) && is.finite(max_plaus)
 
     #         if (any(valid)) {
     #           ord <- order(beta_vals[valid])
@@ -2236,7 +2186,7 @@ plot.glim_object <- function(x, ...) {
     #         y_vals <- y_vals[y_ord]
     #         z_mat <- z_mat[x_ord, y_ord, drop = FALSE]
 
-    #         if (length(x_vals) >= 2 && length(y_vals) >= 2 && any(is.finite(z_mat))) {
+    #         if (length(x_vals) >= 2 &&  length(y_vals) >= 2 &&  any(is.finite(z_mat))) {
     #           contour(
     #             x = x_vals,
     #             y = y_vals,
@@ -2268,7 +2218,7 @@ plot.glim_object <- function(x, ...) {
     #   }
 
     #   # Outer Title
-    #   fam_title <- if (!is.null(family) && nchar(family) > 0) {
+    #   fam_title <- if (!is.null(family) &&  nchar(family) > 0) {
     #     paste0(toupper(substr(family, 1, 1)), substr(family, 2, nchar(family)))
     #   } else {
     #     ""
@@ -2356,8 +2306,8 @@ print.glim_object <- function(x, alpha = .05, ...) {
       max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
 
       beta_vals <- as.numeric(names(max_plaus))
-      valid <- is.finite(beta_vals) & is.finite(max_plaus)
-      alpha_cut <- valid & (max_plaus > alpha)
+      valid <- is.finite(beta_vals) && is.finite(max_plaus)
+      alpha_cut <- valid && (max_plaus > alpha)
       valid_betas <- beta_vals[alpha_cut]
 
       if (length(valid_betas) > 0) {
@@ -2431,11 +2381,19 @@ print.glim_object <- function(x, alpha = .05, ...) {
 #' @return A logLik class object
 #' @export
 logLik.glim_object <- function(object, ...) {
-  val <- object$logLik
-  attr(val, "df") <- length(object$mle_coefs)
-  attr(val, "nobs") <- length(object$y)
-  class(val) <- "logLik"
-  return(val)
+  if ("grid_data" %in% names(object)) {
+    val <- object$grid_data$logLik
+    attr(val, "df") <- length(object$grid_data$mle_coefs)
+    attr(val, "nobs") <- length(object$grid_data$y)
+    class(val) <- "logLik"
+    return(val)
+  } else if ("margin" %in% names(object)) {
+    val <- object$margin$extra_info$ll_mle_original_data
+    attr(val, "df") <- length(object$mle_coefs)
+    attr(val, "nobs") <- length(object$y)
+    class(val) <- "logLik"
+    return(val)
+  }
 }
 
 #' Extract the MLE coefficients
@@ -2447,7 +2405,11 @@ logLik.glim_object <- function(object, ...) {
 #' @return A vector of MLE coefficients
 #' @export
 coef.glim_object <- function(object, ...) {
-  return(object$mle_coefs)
+  if ("grid_data" %in% names(object)) {
+    return(object$grid_data$mle_coefs)
+  } else if ("margin" %in% names(object)) {
+    return(object$margin$extra_info$mle_coefs)
+  }
 }
 
 #' Extract the log likelihood at the MLE
@@ -2458,34 +2420,34 @@ coef.glim_object <- function(object, ...) {
 #' @param ... Additional arguments
 #' @return A matrix containing the confidence/credible interval
 #' @export
-confint.glim_object <- function(object, ...) {
-  alpha <- .05
-  args <- list(...)
-  if ("alpha" %in% names(args)) {
-    alpha <- args$alpha
+confint.glim_object <- function(object, alpha = .05) {
+  if ("grid_data" %in% names(object)) {
+    alpha <- .05
+    row_names <- colnames(object$X)
+    lower_bound <- numeric(ncol(object$X))
+    upper_bound <- numeric(ncol(object$X))
+
+    for (col in 1:ncol(object$X)) {
+      max_plaus <- tapply(object$possibilities, object$betas[, col], max, na.rm = TRUE)
+
+      beta_vals <- as.numeric(names(max_plaus))
+      valid <- is.finite(beta_vals) && is.finite(max_plaus)
+      alpha_cut <- valid && (max_plaus > alpha)
+      valid_betas <- beta_vals[alpha_cut]
+
+      # Save results into our vectors
+      lower_bound[col] <- if (length(valid_betas) > 0) min(valid_betas) else NA
+      upper_bound[col] <- if (length(valid_betas) > 0) max(valid_betas) else NA
+    }
+    out <- matrix(c(lower_bound, upper_bound), ncol = 2)
+    lower_a <- (alpha / 2) * 100
+    upper_a <- (1 - (alpha / 2)) * 100
+    colnames(out) <- c(sprintf("%.1f %%", lower_a), sprintf("%.1f %%", upper_a))
+    rownames(out) <- row_names
+    return(out)
+  } else if ("margin" %in% names(object)) {
+    return(object$margin)
   }
-  row_names <- colnames(object$X)
-  lower_bound <- numeric(ncol(object$X))
-  upper_bound <- numeric(ncol(object$X))
-
-  for (col in 1:ncol(object$X)) {
-    max_plaus <- tapply(object$possibilities, object$betas[, col], max, na.rm = TRUE)
-
-    beta_vals <- as.numeric(names(max_plaus))
-    valid <- is.finite(beta_vals) & is.finite(max_plaus)
-    alpha_cut <- valid & (max_plaus > alpha)
-    valid_betas <- beta_vals[alpha_cut]
-
-    # Save results into our vectors
-    lower_bound[col] <- if (length(valid_betas) > 0) min(valid_betas) else NA
-    upper_bound[col] <- if (length(valid_betas) > 0) max(valid_betas) else NA
-  }
-  out <- matrix(c(lower_bound, upper_bound), ncol = 2)
-  lower_a <- (alpha / 2) * 100
-  upper_a <- (1 - (alpha / 2)) * 100
-  colnames(out) <- c(sprintf("%.1f %%", lower_a), sprintf("%.1f %%", upper_a))
-  rownames(out) <- row_names
-  return(out)
 }
 
 #' Returns the variance-covariance at the MLE
@@ -2497,7 +2459,11 @@ confint.glim_object <- function(object, ...) {
 #' @return A logLik class object
 #' @export
 vcov.glim_object <- function(object, ...) {
-  return(object$vcov)
+  if ("margin" %in% names(object)) {
+    return(object$margin$extra_info$vcov)
+  } else {
+    return(object$vcov)
+  }
 }
 
 #' nobs

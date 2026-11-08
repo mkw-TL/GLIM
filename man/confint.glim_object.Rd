@@ -4,7 +4,7 @@
 \alias{confint.glim_object}
 \title{Extract the log likelihood at the MLE}
 \usage{
-\method{confint}{glim_object}(object, ...)
+\method{confint}{glim_object}(object, alpha = 0.05)
 }
 \arguments{
 \item{object}{A 'glim_object' from 'glim()'}

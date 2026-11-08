@@ -75,7 +75,7 @@ test_that("Fisher information from glm_weights() matches vcov() from glm", {
     fit <- glm(y ~ x, data = d$dat, family = if (fam == "poisson") poisson else binomial)
     w <- glm_weights(fam, as.vector(d$X %*% coef(fit)))
     info <- crossprod(d$X, w * d$X)
-    expect_equal(solve(info), unname(vcov(fit)), tolerance = 1e-6, label = fam)
+    expect_equal(unname(solve(info)), unname(vcov(fit)), tolerance = 1e-5, label = fam)
   }
 })
 

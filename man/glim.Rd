@@ -52,7 +52,6 @@ dat <- data.frame(x = x, y = y)
 
 # Grid-based evaluation (default)
 fit <- glim(y ~ x, data = dat, family = "gaussian", m = 500)
-get_CI(fit, alpha = .05)
 plot(fit)
 print(fit)
 

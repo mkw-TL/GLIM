@@ -1,106 +1,131 @@
-# S3 accessors, get_CI helpers and prob2poss.
+# S3 methods (coef, logLik, print, plot) on the new output layouts.
+# Accessors that are currently broken for some layouts are pinned in test-known-issues.R.
 
-fit_pois <- local({
+with_null_device <- function(code) {
+  grDevices::pdf(NULL)
+  on.exit(grDevices::dev.off(), add = TRUE)
+  force(code)
+}
+
+test_that("coef() on the default grid fit matches glm()", {
+  fit <- fit_grid_pois()
   d <- make_data("poisson", n = 40)
-  set.seed(5)
-  list(
-    d = d,
-    fit = glim(y ~ x, data = d$dat, family = "poisson", m = 50, n_grid_evals = 7, parallel = FALSE)
-  )
+  ref <- glm(y ~ x, data = d$dat, family = poisson)
+  expect_equal(unname(coef(fit)), unname(coef(ref)), tolerance = 1e-6)
 })
 
-test_that("coef / logLik / nobs / vcov accessors are consistent with glm", {
-  fit <- fit_pois$fit
-  ref <- glm(y ~ x, data = fit_pois$d$dat, family = poisson)
+test_that("logLik() on the default grid fit matches glm() and carries df / nobs", {
+  fit <- fit_grid_pois()
+  d <- make_data("poisson", n = 40)
+  ref <- glm(y ~ x, data = d$dat, family = poisson)
+  ll <- logLik(fit)
+  expect_s3_class(ll, "logLik")
+  expect_equal(as.numeric(ll), as.numeric(logLik(ref)), tolerance = 1e-6)
+  expect_equal(attr(ll, "df"), 2)
+  expect_equal(attr(ll, "nobs"), 40)
+})
+
+test_that("coef() and logLik() values work on an approx (margin) fit", {
+  skip_on_cran()
+  fit <- fit_approx_pois()
+  d <- make_data("poisson", n = 40)
+  ref <- glm(y ~ x, data = d$dat, family = poisson)
   expect_equal(unname(coef(fit)), unname(coef(ref)), tolerance = 1e-6)
   expect_equal(as.numeric(logLik(fit)), as.numeric(logLik(ref)), tolerance = 1e-6)
-  expect_equal(attr(logLik(fit), "df"), 2)
-  expect_equal(attr(logLik(fit), "nobs"), 40)
-  expect_equal(nobs(fit), 40)
-  expect_equal(unname(vcov(fit)), unname(vcov(ref)), tolerance = 1e-6)
 })
 
-test_that("get_CI_manual() filters rows above alpha", {
-  betas <- cbind(a = c(1, 2, 3, 4), b = c(5, 6, 7, 8))
-  poss <- c(0.01, 0.2, 1, 0.04)
-  out <- get_CI_manual(0.05, betas, poss)
-  expect_equal(nrow(out), 2)
-  expect_equal(unname(out[, "a"]), c(2, 3))
-})
-
-test_that("get_CI_manual() with one surviving row still returns a matrix-like object", {
-  betas <- cbind(a = 1:3, b = 4:6)
-  out <- get_CI_manual(0.5, betas, c(0.1, 0.9, 0.2))
-  # `betas[mask, ]` drops to a vector for a single row; callers expect a matrix.
-  expect_true(is.matrix(out))
-})
-
-test_that("get_CI() works on a grid glim_object", {
-  # Uses object$betas, but the field is named betas_evaluated, so partial
-  # matching ($betas does not partial-match betas_evaluated for lists with
-  # `$`... it does for exact=FALSE) -- either way the result must be correct.
-  ci <- get_CI(fit_pois$fit, alpha = 0.05)
-  expect_true(is.matrix(ci))
-  expect_equal(ncol(ci), 2)
-  expect_true(nrow(ci) >= 1)
-})
-
-test_that("get_CI() validates input", {
-  expect_error(get_CI(list()), "not a direct result")
-  expect_error(get_CI(fit_pois$fit, alpha = 2), "Alpha cutoff invalid")
-  expect_error(get_CI(fit_pois$fit, alpha = -1), "Alpha cutoff invalid")
-})
-
-test_that("get_CI() region shrinks as alpha grows", {
-  big <- get_CI(fit_pois$fit, alpha = 0.01)
-  small <- get_CI(fit_pois$fit, alpha = 0.5)
-  expect_gte(NROW(big), NROW(small))
-})
-
-test_that("confint() brackets the MLE and is ordered", {
-  ci <- confint(fit_pois$fit, alpha = 0.05)
-  expect_equal(dim(ci), c(2, 2))
-  expect_equal(rownames(ci), colnames(fit_pois$fit$X))
-  mle <- coef(fit_pois$fit)
-  ok <- !is.na(ci[, 1]) & !is.na(ci[, 2])
-  expect_true(all(ci[ok, 1] <= mle[ok] + 1e-8))
-  expect_true(all(ci[ok, 2] >= mle[ok] - 1e-8))
-})
-
-test_that("confint() column labels reflect alpha/2", {
-  ci <- confint(fit_pois$fit, alpha = 0.10)
-  expect_equal(colnames(ci), c("5.0 %", "95.0 %"))
-})
-
-test_that("prob2poss() input validation", {
-  d <- make_data("gaussian")
-  S <- matrix(rnorm(2 * 20, c(0.5, 0.3), 0.1), nrow = 2)
-  expect_error(prob2poss("nope", d$X, d$y, S, c(0.5, 0.3)), "incorrectly specified")
-  expect_error(prob2poss("gaussian", d$X, d$y, S, matrix(1, 3, 3)), "Dimension mismatch")
-  expect_error(prob2poss("gaussian", d$X, d$y[-1], S, c(0.5, 0.3)), "Dimension mismatch")
-})
-
-test_that("prob2poss() is in [0,1], and ~1 near the sample centre / ~0 far away (gaussian)", {
-  d <- make_data("gaussian", n = 80)
-  mle <- unname(coef(lm(y ~ x, data = d$dat)))
-  set.seed(2)
-  cov <- vcov(lm(y ~ x, data = d$dat))
-  S <- t(MASS::mvrnorm(500, mle, cov))
-  near <- prob2poss("gaussian", d$X, d$y, S, mle)
-  far <- prob2poss("gaussian", d$X, d$y, S, mle + c(5, 5))
-  expect_true(near >= 0 && near <= 1)
-  expect_gt(near, 0.9)
-  expect_lt(far, 0.01)
-})
-
-test_that("prob2poss() accepts multiple evaluation points as rows or a data.frame", {
+test_that("coef() and logLik() work when directly_calc_marginals keeps grid_data", {
+  skip_on_cran()
   d <- make_data("poisson", n = 40)
-  mle <- unname(coef(glm(y ~ x, data = d$dat, family = poisson)))
-  set.seed(2)
-  S <- t(MASS::mvrnorm(300, mle, vcov(glm(y ~ x, data = d$dat, family = poisson))))
-  pts <- rbind(mle, mle + c(0.2, 0.2), mle + c(1, 1))
-  out <- prob2poss("poisson", d$X, d$y, S, pts)
-  expect_length(out, 3)
-  expect_equal(prob2poss("poisson", d$X, d$y, S, as.data.frame(pts)), out)
-  expect_true(out[1] >= out[3])
+  fit <- glim(
+    y ~ x,
+    data = d$dat,
+    family = "poisson",
+    m = 20,
+    n_grid_evals = 5,
+    directly_calc_marginals = TRUE,
+    parallel = FALSE
+  )
+  ref <- glm(y ~ x, data = d$dat, family = poisson)
+  expect_equal(unname(coef(fit)), unname(coef(ref)), tolerance = 1e-6)
+  expect_equal(as.numeric(logLik(fit)), as.numeric(logLik(ref)), tolerance = 1e-6)
+})
+
+# ---- print ------------------------------------------------------------------
+
+test_that("print() on a grid fit gives a table with MLE and interval columns", {
+  fit <- fit_grid_pois()
+  out <- capture.output(res <- print(fit))
+  txt <- paste(out, collapse = "\n")
+  expect_match(txt, "95% \\(marginal\\) confidence and credible region")
+  expect_match(txt, "MLE")
+  expect_match(txt, "Lower 95%")
+  expect_match(txt, "Upper 95%")
+  expect_match(txt, "\\(Intercept\\)")
+  expect_match(txt, "\\bx\\b")
+})
+
+test_that("print() returns its argument invisibly", {
+  fit <- fit_grid_pois()
+  capture.output(v <- withVisible(print(fit)))
+  expect_false(v$visible)
+  expect_s3_class(v$value, "glim_object")
+})
+
+test_that("print() honours alpha", {
+  fit <- fit_grid_pois()
+  txt <- paste(capture.output(print(fit, alpha = 0.10)), collapse = "\n")
+  expect_match(txt, "90% \\(marginal\\)")
+  expect_match(txt, "Lower 9")
+})
+
+test_that("print() on a grid fit brackets the MLE where bounds are known", {
+  fit <- fit_grid_pois()
+  out <- capture.output(print(fit))
+  rows <- out[grepl("^\\(Intercept\\)|^x ", out)]
+  expect_length(rows, 2)
+  nums <- lapply(strsplit(trimws(rows), "\\s+"), function(r) suppressWarnings(as.numeric(r[-1])))
+  for (v in nums) {
+    mle <- v[1]
+    lo <- v[2]
+    hi <- v[3]
+    if (!is.na(lo)) {
+      expect_lte(lo, mle + 1e-8)
+    }
+    if (!is.na(hi)) expect_gte(hi, mle - 1e-8)
+  }
+})
+
+test_that("print() works on an approx (margin) fit and shows one row per coefficient", {
+  skip_on_cran()
+  fit <- fit_approx_pois()
+  out <- capture.output(print(fit))
+  expect_true(any(grepl("^\\(Intercept\\)", out)))
+  expect_true(any(grepl("^x ", out)))
+})
+
+# ---- plot -------------------------------------------------------------------
+
+test_that("plot() validates alpha before drawing", {
+  fit <- fit_grid_pois()
+  expect_error(plot(fit, alpha = 2), "Alpha cutoff invalid")
+  expect_error(plot(fit, alpha = -0.5), "Alpha cutoff invalid")
+  expect_error(plot(fit, alpha = c(0.1, 0.2)), "Alpha cutoff invalid")
+})
+
+test_that("plot() on an approx (margin) fit draws without error", {
+  skip_on_cran()
+  fit <- fit_approx_pois()
+  with_null_device(expect_error(plot(fit), NA))
+  with_null_device(expect_error(plot(fit, alpha = 0.05), NA))
+})
+
+test_that("plot() restores graphical parameters", {
+  skip_on_cran()
+  fit <- fit_approx_pois()
+  with_null_device({
+    before <- par("mfrow")
+    plot(fit)
+    expect_equal(par("mfrow"), before)
+  })
 })

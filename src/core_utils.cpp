@@ -3,7 +3,7 @@
 
 #include "headers.h"
 #include <atomic>
-#include <random>
+#include <exception>
 
 using namespace Rcpp;
 using namespace arma;
@@ -68,42 +68,15 @@ public:
   }
 };
 
-// For efficient radial code (multiple uses)
-arma::vec generate_unit_matrix(int rows, int d, std::minstd_rand &gen) {
-  std::normal_distribution<double> rnorm(0.0, 1.0);
-
-  arma::vec u(d);
-  for (int i = 0; i < d; ++i) {
-    u[i] = rnorm(gen);
-  }
-
-  double norm = arma::norm(u, 2);
-  // Guard against the (astronomically unlikely) all-zero draw
-  if (norm < 1e-300) {
-    norm = 1e-300;
-  }
-  return u / norm;
-}
-
 // [[Rcpp::export]]
 double compute_ll() { return 0; }
 
-// version for R
-// [[Rcpp::export]]
-arma::vec generate_unit_matrix_r(int rows, int d, uint32_t base_seed, int i) {
-  // Initialize the generator exactly how your R code expects
-  // (Adjust the math here if your old R code seeded it differently)
-  std::minstd_rand gen(base_seed + i);
-
-  // Call the internal helper
-  return generate_unit_matrix(rows, d, gen);
-}
-
 // [[Rcpp::export]]
 arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
-                          const arma::vec &mle_coefs, const arma::mat &betas,
+                          const arma::vec &mle_coefs, double mle_val,
+                          const arma::mat &betas,
                           std::string family, // Pass string from R
-                          int num_threads = 1, int m = 100,
+                          int num_threads = 1, int m = 1000,
                           bool parallel = true, bool approx = false,
                           bool radial = false, bool show_progress = true,
                           uint32_t base_seed = 31415) {
@@ -129,8 +102,6 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
 
   std::atomic<bool> interrupted(false);
 
-  std::atomic<bool> singular_warning(false);
-
   std::atomic<int> progress_count(0);
   // Only update the console every 2% of total iterations to protect performance
   int tick_step = n_evals / 50;
@@ -144,6 +115,9 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   show_progress = (!approx && !radial && show_progress);
   StdoutProgressBar pb;
   Progress p(n_evals, show_progress, pb);
+
+  std::atomic<bool> had_error(false);
+  std::string err_msg;
 
 // X = scale_design_matrix_cpp(X);
 // The Parallel Loop. Schedule(static) means that each thread is assigned
@@ -172,77 +146,110 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
       }
 #endif
 
-      if (interrupted) {
+      if (interrupted || had_error) {
         continue;
       }
-      arma::vec beta_vals = betas.row(i).t();
-      double pl;
-      // Ending colon is a part of the case statement.
-      switch (fam) {
-      case GlmFamily::Gamma: {
-        pl = glm_gamma_pl_cpp(X, XtX, y, mle_coefs, beta_vals, m, approx, false,
-                              singular_warning, base_seed, i,
-                              Y_sim_thread_workspace);
-        break;
-      }
+      try {
+        arma::vec beta_vals = betas.row(i).t();
+        double pl;
+        // Ending colon is a part of the case statement.
+        switch (fam) {
+        case GlmFamily::Gamma: {
+          GammaWorkspace gamma_ws;
+          arma::vec eta_hat = exp(
+              X *
+              mle_coefs); // Could put these computations outside even further,
+                          // but would decrease code legibility and the amount
+                          // of work spent to compute these are minimal.
+          pl = glm_gamma_pl_cpp(X, XtX, y, mle_coefs, mle_val, beta_vals, m,
+                                approx, false, base_seed, i, eta_hat,
+                                Y_sim_thread_workspace, gamma_ws);
+          break;
+        }
 
-      case GlmFamily::Binomial: {
-        LogisticPlResult result = glm_logis_pl_cpp(
-            X, y, mle_coefs, beta_vals, m, approx, false, singular_warning,
-            base_seed, i, Y_sim_thread_workspace);
-        pl = result.poss;
-        break;
-      }
+        case GlmFamily::Binomial: {
+          LogisticWorkspace ws;
+          LogisticPlResult result =
+              glm_logis_pl_cpp(X, y, mle_coefs, mle_val, beta_vals, m, approx,
+                               false, base_seed, i, Y_sim_thread_workspace, ws);
+          pl = result.poss;
+          break;
+        }
 
-      case GlmFamily::Poisson: {
-        PoissonPlResult result = glm_poisson_pl_cpp(
-            X, y, mle_coefs, beta_vals, m, approx, false, singular_warning,
-            base_seed, i, Y_sim_thread_workspace);
-        // if (result.prop_separated > 0) {
-        //   // Note that sim_separated is a percentage of how many sims (for
-        //   that
-        //   // beta value) went poorly. Don't have a conceptual idea on how to
-        //   pass
-        //   // this back out.
-        //   seperation_issues++;
-        // }
-        pl = result.poss;
-        break;
-      }
+        case GlmFamily::Poisson: {
+          PoissonWorkspace ws;
+          PoissonPlResult result = glm_poisson_pl_cpp(
+              X, y, mle_coefs, mle_val, beta_vals, m, approx, false, base_seed,
+              i, Y_sim_thread_workspace, ws);
+          // if (result.prop_separated > 0) {
+          //   // Note that sim_separated is a percentage of how many sims (for
+          //   that
+          //   // beta value) went poorly. Don't have a conceptual idea on how
+          //   to pass
+          //   // this back out.
+          //   seperation_issues++;
+          // }
+          pl = result.poss;
+          break;
+        }
 
-      case GlmFamily::InverseGaussian: {
-        pl = glm_invgauss_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, false,
-                                 singular_warning, base_seed, i,
-                                 Y_sim_thread_workspace);
-        break;
-      }
+        case GlmFamily::InverseGaussian: {
+          InvGaussWorkspace ws;
 
-      case GlmFamily::Gaussian: {
-        pl = glm_gaussian_pl_cpp(X, y, mle_coefs, beta_vals, m, approx, false,
-                                 singular_warning, base_seed, i,
-                                 Y_sim_thread_workspace);
-        break;
-      }
+          arma::vec mu_hat_invgauss = arma::pow(X * mle_coefs, -0.5);
 
-      default:
-        pl = -1;
-        // This should never be reached, since filtering occurs in R before
-        // being passed here.
-        break;
+          pl = glm_invgauss_pl_cpp(X, y, mle_coefs, mle_val, beta_vals, m,
+                                   approx, false, base_seed, i, mu_hat_invgauss,
+                                   Y_sim_thread_workspace, ws);
+          break;
+        }
+
+        case GlmFamily::Gaussian: {
+          GaussianWorkspace ws;
+          double sigma_gauss =
+              sqrt(arma::accu((y - X * mle_coefs) % (y - X * mle_coefs)) /
+                   (y.n_elem - X.n_cols));
+          pl = glm_gaussian_pl_cpp(X, y, mle_coefs, mle_val, beta_vals, m,
+                                   approx, false, base_seed, i, sigma_gauss,
+                                   Y_sim_thread_workspace, ws);
+          break;
+        }
+
+        default:
+          pl = -1;
+          // This should never be reached, since filtering occurs in R before
+          // being passed here.
+          break;
+        }
+        plausabilities(i) = pl;
+        p.increment();
+      } catch (const std::exception &e) {
+#pragma omp critical(glim_err)
+        {
+          if (!had_error) {
+            err_msg = e.what();
+            had_error = true;
+          }
+        }
+      } catch (...) {
+#pragma omp critical(glim_err)
+        {
+          if (!had_error) {
+            err_msg = "unknown C++ exception";
+            had_error = true;
+          }
+        }
       }
-      plausabilities(i) = pl;
-      p.increment();
     }
+  }
+  if (had_error) {
+    Rcpp::stop("glim: failed evaluating grid point: %s", err_msg);
   }
 
   // We are now passed the OMP section
 
   if (interrupted) {
     Rcpp::stop("Computation aborted by user.");
-  }
-
-  if (singular_warning) {
-    Rcpp::warning("System is singular, attempting approximate solution");
   }
   return plausabilities;
 }
@@ -270,19 +277,11 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
 
   if (family == "binomial") {
     arma::mat Y_sim(X.n_rows, 2);
-    std::atomic singular_warning(false);
-    LogisticPlResult result = glm_logis_pl_cpp(X, y, mle, mle, 2, false, false,
-                                               singular_warning, 1, 1, Y_sim);
-    if (result.orig_separated) {
-      Rcpp::stop("Initial data is separated. Exiting calculation");
-
-      arma::vec pos{
-          1, arma::fill::value(
-                 arma::datum::nan)}; // Need to have curly braces, as this
-                                     // function lives in a .h file, and C++
-                                     // doesn't want to use () for instantiation
-      return (pos);
-    }
+    LogisticWorkspace ws;
+    LogisticPlResult result = glm_logis_pl_cpp(X, y, mle, mle_val, mle, 2,
+                                               false, false, 1, 1, Y_sim, ws);
+    // Evaluate at beta_vals = mle. Only m = 2 because just want to check for
+    // seperation
   }
 
   // Setup Chi-Squared distribution to replicate R's qchisq()
@@ -320,11 +319,11 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
       uint32_t seed_minus = step_stride + 10000;
 
       double val1 =
-          fit_glm_omp_cpp(X, y, mle, MPlus.t(), family, 1, m, parallel, true,
-                          false, false, seed_plus)(0, 0);
+          fit_glm_omp_cpp(X, y, mle, mle_val, MPlus.t(), family, 1, m, parallel,
+                          true, false, false, seed_plus)(0, 0);
       double val2 =
-          fit_glm_omp_cpp(X, y, mle, MMinus.t(), family, 1, m, parallel, true,
-                          false, false, seed_minus)(0, 0);
+          fit_glm_omp_cpp(X, y, mle, mle_val, MMinus.t(), family, 1, m,
+                          parallel, true, false, false, seed_minus)(0, 0);
       double g_xi = std::max(val1, val2) - alpha;
       if ((g_xi <= std::abs(tol)) || (it >= max_it)) {
         break;
@@ -340,26 +339,16 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
   return xi;
 }
 
-// Written by gemini. Uses the trick to seperate into cases
-inline double sum_softplus(const arma::vec &eta) {
-  double sum_val = 0.0;
-  for (arma::uword i = 0; i < eta.n_elem; ++i) {
-    sum_val += (eta(i) > 0) ? (eta(i) + std::log1p(std::exp(-eta(i))))
-                            : std::log1p(std::exp(eta(i)));
-  }
-  return sum_val;
-}
-
 // [[Rcpp::export]]
-arma::mat radial_code(int num_samps, arma::mat X, arma::vec y,
-                      arma::vec mle_coefs, arma::mat eig_vecs,
-                      arma::vec eig_vals, std::string family, double dispersion,
-                      int m, double tol, int max_it, double a_val, double b_val,
-                      uint32_t base_seed = 0) {
+arma::mat radial_code(int num_samps, arma::mat &X, arma::vec &y, double mle_val,
+                      arma::vec &mle_coefs, arma::mat &eig_vecs,
+                      arma::vec &eig_vals, std::string family,
+                      double dispersion, int m, double tol, int max_it,
+                      double a_val, double b_val, int num_omp_threads,
+                      int base_seed = 0) {
+  tol = std::max(tol, 2.0 / m);
   int d = X.n_cols;
   arma::mat sampled_betas(mle_coefs.n_elem, num_samps);
-
-  std::atomic<bool> singular_warning(false);
 
   arma::mat XtX = X.t() * X; // Precompute here, not inside the loop!
   arma::mat Y_sim(X.n_rows, m);
@@ -368,14 +357,10 @@ arma::mat radial_code(int num_samps, arma::mat X, arma::vec y,
   // Family-specific precomputations
   arma::vec p_hat;
   bool orig_separated = false;
-  double mle_val_logis = 0.0;
 
   arma::vec eta_hat_gamma;
 
-  double mle_ll_poisson = 0.0;
-
   double sigma_gauss = 0.0;
-  double mle_val_gauss = 0.0;
 
   arma::vec mu_hat_invgauss;
 
@@ -389,61 +374,104 @@ arma::mat radial_code(int num_samps, arma::mat X, arma::vec y,
   // --- Initial Separation Checks ---
   // Pass base_seed and an arbitrary eval_index (e.g., 0) for these checks
   if (fam == GlmFamily::Binomial) {
+    LogisticWorkspace ws;
     LogisticPlResult result =
-        glm_logis_pl_cpp(X, y, mle_coefs, mle_coefs, 2, false, false,
-                         singular_warning, base_seed, 0, Y_sim);
-    if (result.orig_separated) {
-      Rcpp::stop("Initial data is separated. Exiting calculation");
-      arma::mat betas{1, 1, arma::fill::value(arma::datum::nan)};
-      return (betas);
-    }
+        glm_logis_pl_cpp(X, y, mle_coefs, mle_val, mle_coefs, 2, false, false,
+                         base_seed, 0, Y_sim, ws);
     eta_hat = X * mle_coefs;
     p_hat = 1.0 / (1.0 + arma::exp(-eta_hat));
     orig_separated = arma::any(p_hat < 1e-8) || arma::any(p_hat > (1.0 - 1e-8));
-    mle_val_logis = arma::dot(y, eta_hat) - sum_softplus(eta_hat);
   } else if (fam == GlmFamily::Poisson) {
+    PoissonWorkspace ws;
     PoissonPlResult result =
-        glm_poisson_pl_cpp(X, y, mle_coefs, mle_coefs, 2, false, false,
-                           singular_warning, base_seed, 0, Y_sim);
-    if (result.orig_separated) {
-      Rcpp::stop("Initial data is separated. Exiting calculation");
-      arma::mat betas{1, 1, arma::fill::value(arma::datum::nan)};
-      return (betas);
-    }
-    arma::vec eta_hat_pois = arma::clamp(eta_hat, -10.0, 10.0);
-    mle_ll_poisson = arma::dot(y, eta_hat_pois) -
-                     arma::accu(exp(eta_hat_pois)) -
-                     arma::accu(arma::lgamma(y + 1.0));
+        glm_poisson_pl_cpp(X, y, mle_coefs, mle_val, mle_coefs, 2, false, false,
+                           base_seed, 0, Y_sim, ws);
   } else if (fam == GlmFamily::Gamma) {
     // Precompute for Core Engine
     eta_hat_gamma = eta_hat;
-    eta_hat_gamma.elem(arma::find(eta_hat_gamma > 50)).fill(50);
-    eta_hat_gamma.elem(arma::find(eta_hat_gamma < -50)).fill(-50);
   } else if (fam == GlmFamily::Gaussian) {
     // Precompute for Core Engine
     sigma_gauss = std::sqrt(arma::accu((y - eta_hat) % (y - eta_hat)) /
                             (y.n_elem - mle_coefs.n_elem));
-    mle_val_gauss =
-        -(y.n_elem / 2.0) * std::log(2.0 * M_PI * sigma_gauss * sigma_gauss) -
-        arma::accu((y - eta_hat) % (y - eta_hat)) /
-            (2 * sigma_gauss * sigma_gauss);
   } else if (fam == GlmFamily::InverseGaussian) {
     // Precompute for Core Engine
     mu_hat_invgauss = arma::pow(eta_hat, -0.5);
   }
+  // Since R is doing all of the randomization, the base_seed shouldn't be
+  // needed anymore
+  Rcpp::NumericVector unif_alphas = Rcpp::runif(num_samps, 1e-12, 1.0 - 1e-12);
+  Rcpp::NumericVector q_vals = Rcpp::qchisq(1.0 - unif_alphas, d);
+  Rcpp::NumericVector norm_draws = Rcpp::rnorm(num_samps * d, 0.0, 1.0);
+
+  // Gets the pointers to the data, rather than using a pointer to SEXP
+  // (representation of Rcpp::NumericVector). Allows us to directly work
+  // with it as a C list.
+  double *p_unif_alphas = REAL(unif_alphas);
+  double *p_q_vals = REAL(q_vals);
+
+  // Map the Rcpp vector to an Armadillo matrix (d rows, num_samps cols)
+  // without copying memory
+  arma::mat Z(norm_draws.begin(), d, num_samps, false);
+  arma::mat XW_workspace(y.n_rows, d);
+  arma::vec eta_workspace(d);
+  arma::vec p_workspace(d);
+  arma::vec w_workspace(d);
+  // 1/sqrt(lambda_k): maps a direction in the whitened space back to beta space
+  // (V * Lambda^{-1/2}). The floor guards against zero/negative eigenvalues.
+  const arma::vec inv_sqrt_vals =
+      1.0 / arma::sqrt(arma::clamp(eig_vals, 1e-12, arma::datum::inf));
+  arma::mat X_pinv;
+  if (fam == GlmFamily::Gaussian) {
+    X_pinv = arma::pinv(X); // once, not m times per evaluation
+  }
+
   StdoutProgressBar pb;
   Progress p(num_samps, true, pb);
 
   std::atomic<bool> interrupted(false);
+  // Per-sample diagnostics. Plain int/double (NOT std::vector<bool>, which
+  // packs
+  // bits and is not safe to write from different threads).
+  std::vector<int> diag_iters(num_samps, 0);
+  std::vector<char> diag_converged(num_samps, 0);
+  std::vector<double> diag_first_g(
+      num_samps, 0.0); // g at iteration 1 = quality of the start
+  std::vector<double> diag_secs(num_samps, 0.0);
 
   // --- The Parallel Loop ---
-#pragma omp parallel
+#pragma omp parallel num_threads(num_omp_threads)
   {
     // Allocate workspace ONCE per thread
+    // To not have dynamic allocation of memory each time through the while loop
     arma::mat Y_sim_thread_workspace(X.n_rows, m);
+    bool thread_is_primary;
+    arma::vec beta_proposal(d);
+    arma::vec u(d);
+    arma::vec dir(d);
+    LogisticWorkspace logis_ws;
+    GammaWorkspace gamma_ws;
+    PoissonWorkspace pois_ws;
+    InvGaussWorkspace ig_ws;
+    GaussianWorkspace gauss_ws;
+    if (fam == GlmFamily::Poisson) {
+      pois_ws = PoissonWorkspace(X.n_rows, d);
+    }
+    if (fam == GlmFamily::InverseGaussian) {
+      ig_ws = InvGaussWorkspace(X.n_rows, d);
+    }
+    if (fam == GlmFamily::Gaussian) {
+      gauss_ws = GaussianWorkspace(X.n_rows, d);
+    }
+    if (fam == GlmFamily::Binomial) {
+      logis_ws = LogisticWorkspace(X.n_rows, d);
+    }
+    if (fam == GlmFamily::Gamma) {
+      gamma_ws = GammaWorkspace(X.n_rows, d);
+    }
 
+    int thread_local_completed = 0;
 // Divide the loop among the threads
-#pragma omp for schedule(static)
+#pragma omp for schedule(dynamic)
     for (int j = 0; j < num_samps; j++) {
 #ifdef _OPENMP
       if (omp_get_thread_num() == 0) {
@@ -451,116 +479,186 @@ arma::mat radial_code(int num_samps, arma::mat X, arma::vec y,
           interrupted = true;
         }
       }
-#else
-      if (Progress::check_abort()) {
-        interrupted = true;
-      }
 #endif
-
       if (interrupted) {
         continue;
       }
 
-      // 2. Deterministic RNG
-      // Offset by a large enough number (e.g., 9999) so the uniform draw
-      // doesn't overlap with the inner GLM simulation seeds!
-      uint32_t outer_seed = base_seed + static_cast<uint32_t>(j * 10007) + 9999;
-      std::minstd_rand gen(outer_seed);
-      std::uniform_real_distribution<double> runif(0.0, 1.0);
+      // Can keep the allocation here, since not in the while() loop.
+      double val1;
+      double g_xi;
+      double q_val = p_q_vals[j];
+      double alpha_val = p_unif_alphas[j];
 
-      double unif_alphas = runif(gen);
-      unif_alphas = std::min(std::max(unif_alphas, 1e-12), 1.0 - 1e-12);
+      // Extract col j as our random normal vector
+      u = Z.col(j);
+      const double u_norm = arma::norm(u, 2);
 
-      // Note: Ensure `generate_unit_matrix` is entirely thread-safe!
-      // If it relies on random numbers, you may need to pass `gen` or
-      // `outer_seed` into it.
+      // Direction: u/||u|| is uniform on the sphere in the whitened space. Map
+      // it back to beta space through V * Lambda^{-1/2} (same construction as
+      // `spatial_dir` in glim_inner_prob_approx_samples), then normalise.
+      dir = eig_vecs * (u % inv_sqrt_vals);
+      const double dir_len = arma::norm(dir, 2); // = ||V Lambda^-1/2 u||
+      dir /= dir_len;
 
-      arma::vec u = generate_unit_matrix(1, d, gen);
-      arma::vec scaled_u = u / arma::sqrt(eig_vals);
-
-      // Rotate by eigenvectors to match the tilt of the data
-      arma::vec elliptical_dir = eig_vecs * scaled_u;
-      arma::vec dir = arma::normalise(elliptical_dir);
-      double dir_norm = arma::norm(elliptical_dir);
-
-      boost::math::chi_squared dist(d);
-      double q_val = boost::math::quantile(dist, 1.0 - unif_alphas);
-
-      double r0 = std::sqrt(dispersion * q_val) *
-                  dir_norm; // compute BEFORE normalising
+      // Starting radius: where the ray mle + r*dir meets the asymptotic
+      // contour (b - mle)' J (b - mle) / dispersion = q.
+      //   dir' J dir = ||u||^2 / dir_len^2   =>   r0 = sqrt(disp*q) * dir_len /
+      //   ||u||
+      const double r0 = std::sqrt(dispersion * q_val) * dir_len / u_norm;
       double starting_xi = 2.0 * std::log(r0);
       int it = 1;
       bool approx = false;
 
-      while (true) {
-        bool thread_is_primary = true;
-#ifdef _OPENMP
-        thread_is_primary = (omp_get_thread_num() == 0);
-#endif
-        if (thread_is_primary) {
-          if ((it % 5 == 0) && (p.check_abort())) {
-            interrupted = true;
-          }
-        }
-        if (interrupted) {
-          break;
-        }
-        arma::vec dir_xi = dir * std::exp(starting_xi / 2.0);
-        arma::vec beta_proposal = mle_coefs + dir_xi;
+      double prev_xi = 0.0;
+      double prev_g = 0.0;
 
-        double val1 = 0.0;
+#ifdef _OPENMP
+      const double t_start = omp_get_wtime();
+#else
+      const double t_start = 0.0;
+#endif
+
+      // Draw the uniforms once per sample, outside the Robbins-Monro loop.
+      // Every iteration then re-thresholds the same U, so the possibility is a
+      // deterministic function of beta (needed for the stochastic approximation
+      // to settle) and we skip n*m RNG calls per iteration.
+      if (fam == GlmFamily::Binomial) {
+        fill_uniforms(Y_sim_thread_workspace,
+                      static_cast<uint64_t>(base_seed) * 1000003ULL +
+                          static_cast<uint64_t>(j),
+                      m, false);
+      }
+
+      while (true) {
+        double mult = std::exp(starting_xi / 2.0);
+        for (int i = 0; i < d; ++i) {
+          beta_proposal[i] = mle_coefs[i] + dir[i] * mult;
+        }
+        val1 = 0.0;
 
         // 3. Pass `base_seed` and iteration index `j` to inner GLM evaluators
         switch (fam) {
         case GlmFamily::Binomial: {
-          val1 =
-              glm_logis_pl_cpp(X, y, mle_coefs, beta_proposal, m, approx, true,
-                               singular_warning, base_seed, j, mle_val_logis,
-                               orig_separated, Y_sim_thread_workspace)
-                  .poss;
+          // Uniforms were drawn above; only the threshold p(beta) changes here.
+          // (The old call passed mle_val as `eval_index` by mistake.)
+          val1 = glm_logis_pl_from_uniforms(X, y, mle_val, beta_proposal,
+                                            Y_sim_thread_workspace, m, false,
+                                            logis_ws)
+                     .poss;
           break;
         }
         case GlmFamily::Gamma: {
-          val1 = glm_gamma_pl_cpp(X, XtX, y, mle_coefs, beta_proposal, m,
-                                  approx, true, singular_warning, base_seed, j,
-                                  eta_hat_gamma, Y_sim_thread_workspace);
+          val1 = glm_gamma_pl_cpp(X, XtX, y, mle_coefs, mle_val, beta_proposal,
+                                  m, approx, true, j, 0, eta_hat_gamma,
+                                  Y_sim_thread_workspace, gamma_ws);
           break;
         }
         case GlmFamily::Poisson: {
-          PoissonPlResult result =
-              glm_poisson_pl_cpp(X, y, mle_coefs, beta_proposal, m, approx,
-                                 false, singular_warning, base_seed, j,
-                                 mle_ll_poisson, Y_sim_thread_workspace);
+          PoissonPlResult result = glm_poisson_pl_cpp(
+              X, y, mle_coefs, mle_val, beta_proposal, m, approx, false, j, 1,
+              Y_sim_thread_workspace, pois_ws);
           val1 = result.poss;
           break;
         }
         case GlmFamily::InverseGaussian: {
-          val1 = glm_invgauss_pl_cpp(X, y, mle_coefs, beta_proposal, m, approx,
-                                     true, singular_warning, base_seed, j,
-                                     mu_hat_invgauss, Y_sim_thread_workspace);
+          val1 = glm_invgauss_pl_cpp(X, y, mle_coefs, mle_val, beta_proposal, m,
+                                     approx, true, j, 0, mu_hat_invgauss,
+                                     Y_sim_thread_workspace, ig_ws);
           break;
         }
         case GlmFamily::Gaussian: {
-          val1 = glm_gaussian_pl_cpp(
-              X, y, mle_coefs, beta_proposal, m, approx, true, singular_warning,
-              base_seed, j, sigma_gauss, mle_val_gauss, Y_sim_thread_workspace);
+          val1 = glm_gaussian_pl_cpp(X, y, mle_coefs, mle_val, beta_proposal, m,
+                                     approx, true, base_seed, j, sigma_gauss,
+                                     Y_sim_thread_workspace, gauss_ws);
           break;
         }
         default:
           break;
         }
-
-        double g_xi = val1 - unif_alphas;
+        g_xi = val1 - alpha_val;
+        if (it == 1)
+          diag_first_g[j] = g_xi;
 
         if ((std::abs(g_xi) <= tol) || (it >= max_it)) {
           sampled_betas.col(j) = beta_proposal;
+          diag_iters[j] = it;
+          diag_converged[j] = (std::abs(g_xi) <= tol);
+#ifdef _OPENMP
+          diag_secs[j] = omp_get_wtime() - t_start;
+#endif
           break;
         } else {
-          starting_xi = starting_xi + w(a_val, b_val, it) * g_xi;
+
+          double step = 0.0;
+          int update_method = 1;
+
+          if (update_method == 1) {
+            // -----------------------------------------------------
+            // SECANT METHOD
+            // -----------------------------------------------------
+            if (it == 1) {
+              step = w(a_val, b_val, it) * g_xi;
+            } else {
+              double denom = g_xi - prev_g;
+              if (std::abs(denom) < 1e-8) {
+                // Denominator too close to zero (e.g., deterministic flat
+                // region)
+                step = w(a_val, b_val, it) * g_xi;
+              } else {
+                step = -g_xi * (starting_xi - prev_xi) / denom;
+                // Clamp step to avoid wild jumps from small denominators
+                step = std::max(-2.0, std::min(2.0, step));
+              }
+            }
+            prev_xi = starting_xi;
+            prev_g = g_xi;
+          } else if (update_method == 2) {
+            // -----------------------------------------------------
+            // CALIBRATED CHI-SQUARE METHOD
+            // -----------------------------------------------------
+            double x = std::exp(starting_xi) / dispersion;
+            // Derivative of Possibility: -f_chi2(x) * x
+            double slope = -R::dchisq(x, d, 0) * x;
+
+            if (std::abs(slope) < 1e-8) {
+              // Flat tail/extreme value fallback
+              step = w(a_val, b_val, it) * g_xi;
+            } else {
+              step = -g_xi / slope;
+              // Clamp
+              step = std::max(-2.0, std::min(2.0, step));
+            }
+          } else {
+            // -----------------------------------------------------
+            // ORIGINAL ROBBINS-MONRO
+            // -----------------------------------------------------
+            step = w(a_val, b_val, it) * g_xi;
+          }
+
+          starting_xi = starting_xi + step;
           it++;
         }
       }
-      p.increment();
+      thread_local_completed++;
+      if (thread_local_completed >= 20) {
+#pragma omp critical(progress_update)
+        {
+          if (Progress::check_abort()) {
+            interrupted = true;
+          }
+          p.increment(thread_local_completed);
+        }
+        thread_local_completed = 0;
+      }
+    }
+
+    // Flush any remaining completed iterations per thread at loop completion
+    if (thread_local_completed > 0) {
+#pragma omp critical(progress_update)
+      {
+        p.increment(thread_local_completed);
+      }
     }
   }
 
@@ -568,8 +666,38 @@ arma::mat radial_code(int num_samps, arma::mat X, arma::vec y,
     Rcpp::stop("Computation interrupted by user.");
   }
 
-  if (singular_warning) {
-    Rcpp::warning("solve(): system is singular; attempting approx solution");
+  {
+    int n_hit_max = 0;
+    long total_iters = 0;
+    double sum_abs_first_g = 0.0, sum_secs = 0.0, max_secs = 0.0;
+    std::vector<int> hist(max_it + 1, 0);
+    for (int j = 0; j < num_samps - 1;
+         ++j) { // last column is overwritten with the MLE
+      total_iters += diag_iters[j];
+      if (!diag_converged[j])
+        ++n_hit_max;
+      if (diag_iters[j] <= max_it)
+        ++hist[diag_iters[j]];
+      sum_abs_first_g += std::abs(diag_first_g[j]);
+      sum_secs += diag_secs[j];
+      max_secs = std::max(max_secs, diag_secs[j]);
+    }
+    const int N = num_samps - 1;
+    // Rcpp::Rcout << "\n--- radial diagnostics ---\n"
+    //             << "samples hitting max_it (" << max_it << "): " << n_hit_max
+    //             << " / " << N << " (" << 100.0 * n_hit_max / N << "%)\n"
+    //             << "mean iterations per sample: " << (double)total_iters / N
+    //             << "\n"
+    //             << "mean |g| at iteration 1 (start quality): "
+    //             << sum_abs_first_g / N << "\n"
+    //             << "total possibility evaluations: " << total_iters
+    //             << " (each = " << m << " logistic fits)\n"
+    //             << "per-sample seconds: mean " << sum_secs / N << ", max "
+    //             << max_secs << "\n"
+    //             << "iteration histogram:\n";
+    // for (int k = 1; k <= max_it; ++k)
+    //   if (hist[k] > 0)
+    //     Rcpp::Rcout << "  " << k << " iters: " << hist[k] << "\n";
   }
 
   sampled_betas.col(num_samps - 1) = mle_coefs;

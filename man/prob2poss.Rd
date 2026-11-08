@@ -4,7 +4,7 @@
 \alias{prob2poss}
 \title{Probability to Possibility Transform}
 \usage{
-prob2poss(family, X, y, samples, the_compared_theta)
+prob2poss(family, X, y, mle, samples, the_compared_theta)
 }
 \arguments{
 \item{family}{Either "guassian", "gamma", "inverse.gaussian", "poisson", "binomial"}
@@ -12,6 +12,8 @@ prob2poss(family, X, y, samples, the_compared_theta)
 \item{X}{Design X matrix}
 
 \item{y}{Vector of y values}
+
+\item{mle}{Vector of mle values}
 
 \item{samples}{Each column is a new beta vector sample}
 

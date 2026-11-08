@@ -1,4 +1,4 @@
-# correct_profile_point() and extend_profile(): the new constrained-profile machinery.
+# correct_profile_point() and extend_profile(): the constrained-profile machinery.
 
 correct_profile_point <- internal("correct_profile_point")
 extend_profile <- internal("extend_profile")
@@ -43,7 +43,14 @@ test_that("correct_profile_point() is a no-op when already at the constrained op
 test_that("correct_profile_point() returns input unchanged if start has non-finite ll", {
   d <- make_data("inverse.gaussian")
   start <- c(-5, -5)
-  out <- suppressWarnings(correct_profile_point("inverse.gaussian", d$X, d$y, start, col = 2, mle_coefs = start))
+  out <- suppressWarnings(correct_profile_point(
+    "inverse.gaussian",
+    d$X,
+    d$y,
+    start,
+    col = 2,
+    mle_coefs = start
+  ))
   expect_equal(out, start)
 })
 
@@ -57,34 +64,76 @@ test_that("correct_profile_point() works when p = 1 (no off-diagonal params)", {
 
 test_that("extend_profile() returns empty result when no extension is needed", {
   res <- extend_profile(
-    direction = 1, needs_extension = FALSE, betas = matrix(0, 1, 2), col = 1,
-    possibilities = 1, alpha = 0.05, tolerance = 0.01, step = 0.1,
-    family = "poisson", X = matrix(1, 1, 2), y = 1, dispersion = 1,
-    mle_coefs = c(0, 0), ll_mle_original_data = 0, m = 5, parallel = FALSE,
-    approx = FALSE, base_seed = 1
+    direction = 1,
+    needs_extension = FALSE,
+    betas = matrix(0, 1, 2),
+    col = 1,
+    possibilities = 1,
+    alpha = 0.05,
+    tolerance = 0.01,
+    step = 0.1,
+    family = "poisson",
+    X = matrix(1, 1, 2),
+    y = 1,
+    dispersion = 1,
+    mle_coefs = c(0, 0),
+    ll_mle_original_data = 0,
+    m = 5,
+    parallel = FALSE,
+    approx = FALSE,
+    base_seed = 1
   )
-  expect_equal(nrow(res$betas), 0)
+  expect_named(res, c("betas", "plaus"))
+  expect_equal(dim(res$betas), c(0, 2))
   expect_length(res$plaus, 0)
 })
 
-test_that("extend_profile() walks outward monotonically in the requested direction", {
+test_that("extend_profile() returns a p-column matrix plus matching plausibilities", {
   d <- make_data("poisson", n = 40)
-  fit <- glim(y ~ x, data = d$dat, family = "poisson", m = 50, n_grid_evals = 5, parallel = FALSE)
+  glmfit <- glm(y ~ x, data = d$dat, family = poisson)
+  mle <- unname(coef(glmfit))
+  res <- extend_profile(
+    direction = 1,
+    needs_extension = TRUE,
+    betas = matrix(mle, 1),
+    col = 2,
+    possibilities = 1,
+    alpha = 0.05,
+    tolerance = 0.01,
+    step = 0.05,
+    family = "poisson",
+    X = d$X,
+    y = d$y,
+    dispersion = 1,
+    mle_coefs = mle,
+    ll_mle_original_data = as.numeric(logLik(glmfit)),
+    m = 50,
+    parallel = FALSE,
+    approx = FALSE,
+    base_seed = 1
+  )
+  expect_equal(ncol(res$betas), 2)
+  expect_equal(nrow(res$betas), length(res$plaus))
+  expect_gt(nrow(res$betas), 0)
+  expect_equal(res$betas[1, 2], mle[2] + 0.05, tolerance = 1e-10)
+})
+
+test_that("glim() extensions walk outward monotonically in the requested direction", {
+  gd <- fit_grid_pois()[["grid_data"]]
   col <- 2
   for (dir in c(-1, 1)) {
-    ext <- if (dir > 0) fit$extended_in_pos_betas[[col]] else fit$extended_in_neg_betas[[col]]
-    if (length(ext) > 0) {
+    ext <- if (dir > 0) gd$extended_in_pos_betas[[col]] else gd$extended_in_neg_betas[[col]]
+    if (nrow(ext) > 1) {
       steps <- diff(ext[, col])
       expect_true(all(sign(steps) == dir), info = paste("direction", dir))
     }
   }
 })
 
-test_that("extend_profile() stops once plausibility drops below alpha - tolerance", {
-  d <- make_data("poisson", n = 40)
-  fit <- glim(y ~ x, data = d$dat, family = "poisson", m = 50, n_grid_evals = 5, parallel = FALSE)
+test_that("glim() extensions stop once plausibility drops below alpha - tolerance", {
+  gd <- fit_grid_pois()[["grid_data"]]
   for (col in 1:2) {
-    for (pl in list(fit$extended_in_pos_plaus[[col]], fit$extended_in_neg_plaus[[col]])) {
+    for (pl in list(gd$extended_in_pos_plaus[[col]], gd$extended_in_neg_plaus[[col]])) {
       if (length(pl) > 1) {
         # every point before the last must still be above the stopping threshold
         expect_true(all(utils::head(pl, -1) > 0.05 - 0.01))
@@ -99,11 +148,25 @@ test_that("extend_profile() respects max_steps with a warning", {
   ll <- as.numeric(logLik(glm(y ~ x, data = d$dat, family = poisson)))
   expect_warning(
     extend_profile(
-      direction = 1, needs_extension = TRUE, betas = matrix(mle, 1), col = 2,
-      possibilities = 1, alpha = -1, tolerance = 0, step = 1e-4, # never reaches alpha
-      family = "poisson", X = d$X, y = d$y, dispersion = 1, mle_coefs = mle,
-      ll_mle_original_data = ll, m = 5, parallel = FALSE, approx = FALSE,
-      base_seed = 1, max_steps = 3
+      direction = 1,
+      needs_extension = TRUE,
+      betas = matrix(mle, 1),
+      col = 2,
+      possibilities = 1,
+      alpha = -1,
+      tolerance = 0,
+      step = 1e-4, # never reaches alpha
+      family = "poisson",
+      X = d$X,
+      y = d$y,
+      dispersion = 1,
+      mle_coefs = mle,
+      ll_mle_original_data = ll,
+      m = 5,
+      parallel = FALSE,
+      approx = FALSE,
+      base_seed = 1,
+      max_steps = 3
     ),
     "max_steps"
   )

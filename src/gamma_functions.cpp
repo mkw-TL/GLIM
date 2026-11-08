@@ -1,5 +1,4 @@
 #include "headers.h"
-#include <atomic>
 // [[Rcpp::depends(RcppArmadillo)]]
 // [[Rcpp::plugins(openmp)]]
 
@@ -10,83 +9,53 @@ double calculate_deviance_gamma(const arma::vec &y, const arma::vec &mu) {
   return 2.0 * arma::accu(y / mu - arma::log(y / mu) - 1.0);
 }
 
-// IRLS Gamma regression solver (Log link), fisher weights, W = 1.
 arma::vec fit_gamma_log_cpp(const arma::mat &X, const arma::mat &XtX,
                             const arma::vec &y, const arma::vec &initial_beta,
-                            bool approx, std::atomic<bool> &singular_warning) {
-  arma::vec proposed_beta = initial_beta;
-  // Initialization so that the y and eta_hat values start off close to
-  // eachother.
-  //
-  // Note that formally there is a 1/nu here. However, we will cancel it out
-  // with the gradient.
-  arma::vec proposed_mu =
-      arma::exp(arma::clamp(X * proposed_beta, -30.0, 30.0));
-  proposed_mu =
-      arma::clamp(proposed_mu, std::numeric_limits<double>::epsilon(), 1e15);
-  double current_dev = calculate_deviance_gamma(y, proposed_mu);
+                            bool approx, GammaWorkspace &ws) {
+  const double eps = std::numeric_limits<double>::epsilon();
+  arma::vec beta = initial_beta;
 
-  arma::vec step(X.n_cols);
+  ws.mu = arma::clamp(arma::exp(arma::clamp(X * beta, -30.0, 30.0)), eps, 1e15);
+  double current_dev = calculate_deviance_gamma(y, ws.mu);
 
   for (int i = 0; i < 20; i++) {
+    // ws.mu already holds mu at the current beta (initially above, later
+    // from the accepted step), so there is no need to recompute eta/mu here.
+    ws.grad = X.t() * (y / ws.mu - 1.0);
 
-    // Gradient d_ll/d_eta is deriv of: (-e^-eta * y - eta) * nu
-    arma::vec eta = X * proposed_beta;
-    arma::vec mu = arma::exp(arma::clamp(eta, -30.0, 30.0));
-    mu = arma::clamp(mu, std::numeric_limits<double>::epsilon(), 1e15);
-    arma::vec grad = X.t() * (y / mu - 1.0);
-
-    // The G matrix (diag(g'(mu) / alpha(mu)) = deriv(log(mu)) / 1)
-
-    // Now we do step-halfing. Ensures that any improvement we make does
-    // decrease the varaince. Avoids wild steps. Calculate the proposed step
-    bool success = arma::solve(
-        step, XtX, grad, arma::solve_opts::fast + arma::solve_opts::no_approx);
+    bool success =
+        arma::solve(ws.step, XtX, ws.grad,
+                    arma::solve_opts::fast + arma::solve_opts::no_approx);
+    if (!success)
+      success = arma::solve(ws.step, XtX, ws.grad, arma::solve_opts::no_approx);
     if (!success) {
-      // Fast solver failed (e.g. non-positive definite / rank deficient).
-      // Try the general solver without automatic SVD fallback or console
-      // prints.
-      success = arma::solve(step, XtX, grad, arma::solve_opts::no_approx);
+      ws.step = arma::pinv(XtX) * ws.grad;
     }
 
-    if (!success) {
-      // Both exact solvers failed (matrix is genuinely singular/collinear).
-      // 1. Flag the main thread to emit the R warning safely after the loop
-      singular_warning = true;
+    ws.temp_beta = beta + ws.step;
+    ws.mu_try = arma::clamp(
+        arma::exp(arma::clamp(X * ws.temp_beta, -30.0, 30.0)), eps, 1e15);
+    double proposed_dev = calculate_deviance_gamma(y, ws.mu_try);
 
-      // 2. Compute the approximate solution via pseudoinverse (SVD)
-      step = arma::pinv(XtX) * grad;
-      success = true; // Mark as resolved via approximation
-    }
-    if (!success) {
-      break;
-      // Rcpp::Rcout << "Things broke";
-    }
-    // Propose a new beta
-    arma::vec temp_beta = proposed_beta + step;
-    arma::vec proposed_mu = arma::exp(arma::clamp(X * temp_beta, -30.0, 30.0));
-    proposed_mu =
-        arma::clamp(proposed_mu, std::numeric_limits<double>::epsilon(), 1e15);
-    double proposed_dev = calculate_deviance_gamma(y, proposed_mu);
-    // Step-Halving Loop
     int half_iter = 0;
     while ((!std::isfinite(proposed_dev) || proposed_dev > current_dev) &&
            half_iter < 25) {
-      step = step / 2.0;                // Cut the step in half
-      temp_beta = proposed_beta + step; // Try again
-      proposed_mu = arma::exp(arma::clamp(X * temp_beta, -30.0, 30.0));
-      proposed_mu = arma::clamp(proposed_mu,
-                                std::numeric_limits<double>::epsilon(), 1e15);
-      proposed_dev = calculate_deviance_gamma(y, proposed_mu);
+      ws.step *= 0.5;
+      ws.temp_beta = beta + ws.step;
+      ws.mu_try = arma::clamp(
+          arma::exp(arma::clamp(X * ws.temp_beta, -30.0, 30.0)), eps, 1e15);
+      proposed_dev = calculate_deviance_gamma(y, ws.mu_try);
       half_iter++;
     }
-    proposed_beta = temp_beta;
+
+    beta = ws.temp_beta;
+    ws.mu.swap(ws.mu_try); // accepted mu becomes current mu, no copy
     current_dev = proposed_dev;
 
-    if (arma::norm(step) < 1e-6)
+    if (arma::norm(ws.step) < 1e-6)
       break;
   }
-  return proposed_beta;
+  return beta;
 }
 
 // Helper function to compute full Gamma log-likelihood matching R's logLik()
@@ -123,7 +92,7 @@ double pearson_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat,
 }
 
 // [[Rcpp::export]]
-double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
+double mle_estimate_dispersion_gamma(arma::vec y, arma::vec &mu_hat, double p) {
   // Safety net against zero or negative values disrupting logs
   arma::vec ratio = y / mu_hat;
   ratio.elem(arma::find(ratio < 1e-8)).fill(1e-8);
@@ -180,42 +149,38 @@ double mle_estimate_dispersion_gamma(arma::vec y, arma::vec mu_hat, double p) {
 }
 
 // 1. Core Engine (Accepts precomputed eta_hat AND workspace)
-double
-glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX, const arma::vec &y,
-                 const arma::vec &mle_coefs, const arma::vec &beta_vals, int m,
-                 bool approx, bool radial, std::atomic<bool> &singular_warning,
-                 uint32_t base_seed, int eval_index,
-                 const arma::vec &eta_hat,     // <-- Precomputed passed in
-                 arma::mat &Y_sim_workspace) { // <-- Passed by reference!
-  int n = X.n_rows;
+double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
+                        const arma::vec &y, const arma::vec &mle_coefs,
+                        double mle_val, const arma::vec &beta_vals, int m,
+                        bool approx, bool radial, uint32_t base_seed,
+                        int eval_index, const arma::vec &eta_hat,
+                        arma::mat &Y_sim_workspace, GammaWorkspace &ws) {
+  const int n = X.n_rows;
+  const int P = X.n_cols;
 
-  // Compute true expected values based on proposed betas
-  arma::vec eta = X * beta_vals;
-  eta.elem(arma::find(eta > 50)).fill(50);
-  eta.elem(arma::find(eta < -50)).fill(-50); // avoids D_mean explosions
-  arma::vec mu = arma::exp(eta);
-  mu.elem(arma::find(mu < 1e-8)).fill(1e-8);
+  ws.eta = arma::clamp(X * beta_vals, -50.0, 50.0); // avoids D_mean explosions
+  ws.mu = arma::exp(ws.eta);
+  ws.mu.elem(arma::find(ws.mu < 1e-8)).fill(1e-8);
 
-  double dispersion = mle_estimate_dispersion_gamma(y, mu, beta_vals.n_elem);
-  double shape = 1.0 / dispersion;
-  double true_ll = compute_gamma_ll(y, eta, shape);
-
-  // We use the precomputed eta_hat here, but compute mle_ll dynamically
-  // because 'shape' depends on the proposed beta_vals
-  double mle_ll = compute_gamma_ll(y, eta_hat, shape);
-  double f_x = true_ll - mle_ll;
+  const double dispersion =
+      mle_estimate_dispersion_gamma(y, ws.mu, beta_vals.n_elem);
+  const double shape = 1.0 / dispersion;
+  const double true_ll = compute_gamma_ll(y, ws.eta, shape);
+  const double mle_ll = compute_gamma_ll(y, eta_hat, shape);
+  const double f_x = true_ll - mle_ll;
 
   bool is_already_parallel = false;
 #ifdef _OPENMP
   is_already_parallel = omp_in_parallel();
 #endif
-  bool run_inner_parallel = (radial || approx) && !is_already_parallel;
-  uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
+  const bool run_inner_parallel = (radial || approx) && !is_already_parallel;
+  const uint32_t eval_seed =
+      base_seed + static_cast<uint32_t>(eval_index * 10007);
 
-  arma::vec scale = mu * dispersion;
+  // ws.mu is overwritten per-thread below only when run serially, so take
+  // the scale vector now.
+  const arma::vec scale = ws.mu * dispersion;
 
-  // --- 1. Deterministic Parallel Data Generation ---
-  // Use the pre-allocated workspace instead of allocating a new matrix Y
 #pragma omp parallel for schedule(static) if (run_inner_parallel)
   for (int j = 0; j < m; ++j) {
     std::mt19937 gen(eval_seed + j);
@@ -228,26 +193,33 @@ glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX, const arma::vec &y,
 
   int count_less = 0;
 
-  // --- 2. Parallel Model Fitting & Likelihood Evaluation ---
-#pragma omp parallel for schedule(guided)                                      \
-    reduction(+ : count_less) if (run_inner_parallel)
-  for (int j = 0; j < m; ++j) {
-    arma::vec y_sim = Y_sim_workspace.col(j);
-    arma::vec beta_sim_hat =
-        fit_gamma_log_cpp(X, XtX, y_sim, beta_vals, approx, singular_warning);
+#pragma omp parallel if (run_inner_parallel) reduction(+ : count_less)
+  {
+    // Threads get private scratch; the serial path reuses ws (no allocation).
+    GammaWorkspace local_ws;
+    if (run_inner_parallel)
+      local_ws = GammaWorkspace(n, P);
+    GammaWorkspace &fit_ws = run_inner_parallel ? local_ws : ws;
 
-    arma::vec eta_sim_hat = X * beta_sim_hat;
-    arma::vec mu_sim_hat = arma::exp(eta_sim_hat);
+#pragma omp for schedule(guided)
+    for (int j = 0; j < m; ++j) {
+      // Zero-copy view of column j (no allocation, no copy)
+      const arma::vec y_sim(Y_sim_workspace.colptr(j), n, false, true);
 
-    double shape_sim_hat = 1.0 / mle_estimate_dispersion_gamma(
-                                     y_sim, mu_sim_hat, beta_sim_hat.n_elem);
+      arma::vec beta_sim_hat =
+          fit_gamma_log_cpp(X, XtX, y_sim, beta_vals, approx, fit_ws);
 
-    double llX_j = compute_gamma_ll(y_sim, eta, shape_sim_hat);
-    double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
-    double f_X_j = llX_j - mle_sim;
+      arma::vec eta_sim_hat = X * beta_sim_hat;
+      arma::vec mu_sim_hat = arma::exp(eta_sim_hat);
 
-    if (f_X_j < f_x) {
-      count_less++;
+      double shape_sim_hat = 1.0 / mle_estimate_dispersion_gamma(
+                                       y_sim, mu_sim_hat, beta_sim_hat.n_elem);
+
+      double llX_j = compute_gamma_ll(y_sim, ws.eta, shape_sim_hat);
+      double mle_sim = compute_gamma_ll(y_sim, eta_sim_hat, shape_sim_hat);
+
+      if (llX_j - mle_sim < f_x)
+        count_less++;
     }
   }
 
@@ -257,18 +229,12 @@ glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX, const arma::vec &y,
 // 2. Convenience Wrapper (Calculates MLE vectors, requires workspace)
 double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
                         const arma::vec &y, const arma::vec &mle_coefs,
-                        const arma::vec &beta_vals, int m, bool approx,
-                        bool radial, std::atomic<bool> &singular_warning,
-                        uint32_t base_seed, int eval_index,
-                        arma::mat &Y_sim_workspace) {
-
-  // Precompute clipped eta_hat once per evaluation rather than inside the core
-  // engine
-  arma::vec eta_hat = X * mle_coefs;
-  eta_hat.elem(arma::find(eta_hat > 50)).fill(50);
-  eta_hat.elem(arma::find(eta_hat < -50)).fill(-50);
-
-  return glm_gamma_pl_cpp(X, XtX, y, mle_coefs, beta_vals, m, approx, radial,
-                          singular_warning, base_seed, eval_index, eta_hat,
-                          Y_sim_workspace);
+                        const double mle_val, const arma::vec &beta_vals, int m,
+                        bool approx, bool radial, uint32_t base_seed,
+                        int eval_index, arma::mat &Y_sim_workspace,
+                        GammaWorkspace &ws) {
+  arma::vec eta_hat = arma::clamp(X * mle_coefs, -50.0, 50.0);
+  return glm_gamma_pl_cpp(X, XtX, y, mle_coefs, mle_val, beta_vals, m, approx,
+                          radial, base_seed, eval_index, eta_hat,
+                          Y_sim_workspace, ws);
 }
