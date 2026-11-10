@@ -9,7 +9,7 @@
 \arguments{
 \item{x}{A 'glim_object' from 'glim()'}
 
-\item{...}{Supports differing alpha levels. EX: alpha = .05}
+\item{alpha}{Supports differing alpha levels, although will not provide correct results if initial model specified a higher alpha level.}
 }
 \value{
 Print output

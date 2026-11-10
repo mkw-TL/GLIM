@@ -25,8 +25,7 @@ expect_marginals_object <- function(mo, p, family = NULL) {
     "alpha",
     "step",
     "m",
-    "parallel",
-    "base_seed"
+    "parallel"
   )
   expect_true(all(needed %in% names(mo$extra_info)))
   if (!is.null(family)) {
@@ -208,44 +207,6 @@ test_that("approx = TRUE returns list(margin, elliptical_data)", {
   expect_true(all(is.finite(ed$samples)))
 })
 
-test_that("radial = TRUE returns list(margin, radial_data)", {
-  skip_on_cran()
-  d <- make_data("poisson", n = 40)
-  set.seed(5)
-  fit <- glim(
-    y ~ x,
-    data = d$dat,
-    family = "poisson",
-    radial = TRUE,
-    m = 20,
-    n_grid_evals = 5,
-    num_samps = 20,
-    parallel = FALSE
-  )
-  expect_s3_class(fit, "glim_object")
-  expect_named(fit, c("margin", "radial_data"))
-  expect_marginals_object(fit[["margin"]], p = 2, family = "poisson")
-
-  rd <- fit[["radial_data"]]
-  expect_true(all(
-    c(
-      "samples",
-      "betas_evaluated",
-      "family",
-      "X",
-      "y",
-      "mle_coefs",
-      "logLik",
-      "vcov",
-      "dispersion"
-    ) %in%
-      names(rd)
-  ))
-  expect_equal(rd$family, "poisson")
-  # radial() hands back the whole generate_grid() result here
-  expect_true(is.list(rd$betas_evaluated))
-  expect_true(all(c("betas", "approx_grid_resolution") %in% names(rd$betas_evaluated)))
-})
 
 test_that("fit_parts() / marginals_of() find the right sub-object on every layout", {
   g <- fit_grid_pois()

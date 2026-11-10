@@ -152,8 +152,9 @@ test_that("prob2poss_poisson returns possibilities in [0, 1] with expected shape
   d <- make_poisson_data()
   samples <- matrix(rnorm(ncol(d$X) * 200, mean = d$beta, sd = 0.05), nrow = ncol(d$X))
   theta_grid <- matrix(rnorm(ncol(d$X) * 5, mean = d$beta, sd = 0.05), nrow = ncol(d$X))
+  fake_mle_coefs <- matrix(rnorm(ncol(d$X)), nrow = ncol(d$X))
 
-  poss <- prob2poss_poisson(d$X, d$y, samples, theta_grid)
+  poss <- prob2poss_poisson(d$X, d$y, fake_mle_coefs, samples, theta_grid)
 
   expect_length(poss, ncol(theta_grid))
   expect_true(all(poss >= 0 & poss <= 1))
@@ -163,9 +164,10 @@ test_that("prob2poss_poisson coerces a data.frame X to a matrix", {
   d <- make_poisson_data()
   samples <- matrix(rnorm(ncol(d$X) * 50, mean = d$beta, sd = 0.05), nrow = ncol(d$X))
   theta_grid <- matrix(d$beta, ncol = 1)
+  fake_mle_coefs <- matrix(rnorm(ncol(d$X)), nrow = ncol(d$X))
 
-  poss_matrix <- prob2poss_poisson(d$X, d$y, samples, theta_grid)
-  poss_df <- prob2poss_poisson(as.data.frame(d$X), d$y, samples, theta_grid)
+  poss_matrix <- prob2poss_poisson(d$X, d$y, fake_mle_coefs, samples, theta_grid)
+  poss_df <- prob2poss_poisson(as.data.frame(d$X), d$y, fake_mle_coefs, samples, theta_grid)
 
   expect_equal(poss_matrix, poss_df, tolerance = 1e-8)
 })
@@ -174,8 +176,9 @@ test_that("prob2poss_gamma returns possibilities in [0, 1]", {
   d <- make_gamma_data()
   samples <- matrix(rnorm(ncol(d$X) * 200, mean = d$beta, sd = 0.02), nrow = ncol(d$X))
   theta_grid <- matrix(rnorm(ncol(d$X) * 5, mean = d$beta, sd = 0.02), nrow = ncol(d$X))
+  fake_mle_coefs <- matrix(rnorm(ncol(d$X)), nrow = ncol(d$X))
 
-  poss <- prob2poss_gamma(d$X, d$y, samples, theta_grid)
+  poss <- prob2poss_gamma(d$X, d$y, fake_mle_coefs, samples, theta_grid)
 
   expect_length(poss, ncol(theta_grid))
   expect_true(all(poss >= 0 & poss <= 1))
@@ -185,8 +188,9 @@ test_that("prob2poss_gaussian returns possibilities in [0, 1]", {
   d <- make_gaussian_data()
   samples <- matrix(rnorm(ncol(d$X) * 200, mean = d$beta, sd = 0.1), nrow = ncol(d$X))
   theta_grid <- matrix(rnorm(ncol(d$X) * 5, mean = d$beta, sd = 0.1), nrow = ncol(d$X))
+  fake_mle_coefs <- matrix(rnorm(ncol(d$X)), nrow = ncol(d$X))
 
-  poss <- prob2poss_gaussian(d$X, d$y, samples, theta_grid)
+  poss <- prob2poss_gaussian(d$X, d$y, fake_mle_coefs, samples, theta_grid)
 
   expect_length(poss, ncol(theta_grid))
   expect_true(all(poss >= 0 & poss <= 1))
@@ -196,8 +200,9 @@ test_that("prob2poss_invgauss returns possibilities in [0, 1]", {
   d <- make_invgauss_data()
   samples <- matrix(rnorm(ncol(d$X) * 200, mean = d$beta, sd = 0.05), nrow = ncol(d$X))
   theta_grid <- matrix(rnorm(ncol(d$X) * 5, mean = d$beta, sd = 0.05), nrow = ncol(d$X))
+  fake_mle_coefs <- matrix(rnorm(ncol(d$X)), nrow = ncol(d$X))
 
-  poss <- prob2poss_invgauss(d$X, d$y, samples, theta_grid)
+  poss <- prob2poss_invgauss(d$X, d$y, fake_mle_coefs, samples, theta_grid)
 
   expect_length(poss, ncol(theta_grid))
   expect_true(all(poss >= 0 & poss <= 1))
@@ -207,13 +212,14 @@ test_that("prob2poss_logis handles 0/1 response, success/failure matrix, and fac
   d <- make_binomial_data()
   samples <- matrix(rnorm(ncol(d$X) * 200, mean = d$beta, sd = 0.05), nrow = ncol(d$X))
   theta_grid <- matrix(d$beta, ncol = 1)
+  fake_mle_coefs <- matrix(rnorm(ncol(d$X)), nrow = ncol(d$X))
 
-  poss_binary <- prob2poss_logis(d$X, d$y, samples, theta_grid)
+  poss_binary <- prob2poss_logis(d$X, d$y, fake_mle_coefs, samples, theta_grid)
   expect_length(poss_binary, 1)
   expect_true(poss_binary >= 0 && poss_binary <= 1)
 
   # y and X length mismatch should error
-  expect_error(prob2poss_logis(d$X, d$y[-1], samples, theta_grid), "differ")
+  expect_error(prob2poss_logis(d$X, d$y[-1], fake_mle_coefs, samples, theta_grid), "differ")
 
   # Two-column successes/failures matrix
   n_groups <- 10
@@ -223,11 +229,11 @@ test_that("prob2poss_logis handles 0/1 response, success/failure matrix, and fac
   y_mat <- cbind(successes, failures)
   samples_g <- matrix(rnorm(ncol(Xg) * 100), nrow = ncol(Xg))
   theta_g <- matrix(c(0, 0.1), ncol = 1)
-  poss_grouped <- prob2poss_logis(Xg, y_mat, samples_g, theta_g)
+  poss_grouped <- prob2poss_logis(Xg, y_mat, fake_mle_coefs, samples_g, theta_g)
   expect_length(poss_grouped, 1)
 
   # Factor response
   y_factor <- factor(ifelse(d$y == 1, "yes", "no"), levels = c("no", "yes"))
-  poss_factor <- prob2poss_logis(d$X, y_factor, samples, theta_grid)
+  poss_factor <- prob2poss_logis(d$X, y_factor, fake_mle_coefs, samples, theta_grid)
   expect_equal(poss_factor, poss_binary, tolerance = 1e-8)
 })

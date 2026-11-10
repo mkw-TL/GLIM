@@ -99,18 +99,9 @@ test_that("glim validates m and tol", {
   d <- make_gaussian_data()
   df <- data.frame(y = d$y, x1 = d$X[, 2])
 
-  expect_error(
-    glim(y ~ x1, data = df, m = -1),
-    "'m' \\(number of samples\\) must be a single positive integer"
-  )
-  expect_error(
-    glim(y ~ x1, data = df, m = 1.5),
-    "'m' \\(number of samples\\) must be a single positive integer"
-  )
-  expect_error(
-    glim(y ~ x1, data = df, m = c(1, 2)),
-    "'m' \\(number of samples\\) must be a single positive integer"
-  )
+  expect_error(glim(y ~ x1, data = df, m = -1), "Input Error: m must be a positive integer")
+  expect_error(glim(y ~ x1, data = df, m = 1.5), "Input Error: m must be a positive integer")
+  expect_error(glim(y ~ x1, data = df, m = c(1, 2)), "Input Error: m must be a positive integer")
 
   expect_error(glim(y ~ x1, data = df, tol = -1))
 })
@@ -118,7 +109,10 @@ test_that("glim validates m and tol", {
 test_that("glim errors when radial and approx are both TRUE", {
   d <- make_gaussian_data()
   df <- data.frame(y = d$y, x1 = d$X[, 2])
-  expect_error(glim(y ~ x1, data = df, approx = TRUE, radial = TRUE), "cannot both be used")
+  expect_error(
+    glim(y ~ x1, data = df, approx = TRUE, radial = TRUE),
+    "Input Error: radial and approx cannot both be TRUE."
+  )
 })
 
 # Works just throws an error when running check()?

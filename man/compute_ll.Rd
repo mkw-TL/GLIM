@@ -14,6 +14,8 @@ compute_ll(family, y, X, betas, mle_coefs = NULL)
 \item{X}{Design matrix.}
 
 \item{betas}{Either a vector of the beta values, or a matrix where each row corresponds to the beta vector to evaluate. Will be transposed so that it conforms to the dimensions of X}
+
+\item{mle_coefs}{a vector of MLE coefficients}
 }
 \value{
 A vector/scalar of Log-Likelihood value(s)

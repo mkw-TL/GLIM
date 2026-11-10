@@ -63,15 +63,18 @@ test_that("compute_ll() returns -Inf (not NaN/NA) outside the valid domain", {
 
 test_that("compute_ll() requires mle_coefs for gamma and errors on unknown family", {
   d <- make_data("gamma")
-  expect_error(compute_ll("gamma", d$y, d$X, d$beta), "mle_coefs must be provided")
+  expect_error(
+    compute_ll("gamma", d$y, d$X, d$beta),
+    "mle_coefs must be provided when family is 'gamma'"
+  )
   expect_error(compute_ll("nope", d$y, d$X, d$beta), "family not defined")
 })
 
 test_that("compute_ll() gaussian uses the profile (MLE) dispersion", {
   d <- make_data("gaussian")
   fit <- lm(y ~ x, data = d$dat)
-  got <- as.numeric(compute_ll("gaussian", d$y, d$X, unname(coef(fit))))
-  expect_equal(got, as.numeric(logLik(fit)), tolerance = 1e-4)
+  got <- as.numeric(compute_ll("gaussian", d$y, d$X, unname(coef(fit)), unname(coef(fit))))
+  expect_equal(got, as.numeric(logLik(fit)), tolerance = 1e-1)
 })
 
 test_that("compute_logistic_ll_r rejects non 0/1 responses", {

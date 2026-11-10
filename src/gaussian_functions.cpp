@@ -1,4 +1,5 @@
 #include "headers.h"
+#include <atomic>
 #include <cmath>
 #include <random>
 #include <stdexcept>
@@ -122,6 +123,12 @@ arma::vec fit_gaussian_cpp(const arma::mat &X, const arma::vec &y,
 }
 
 // [[Rcpp::export]]
+arma::vec fit_gaussian_r(const arma::mat &X, const arma::vec &y) {
+  std::atomic<bool> singular_warning = false;
+  return (fit_gaussian_cpp(X, y, singular_warning));
+}
+
+// [[Rcpp::export]]
 arma::vec compute_gaussian_ll_mat(const arma::vec &y, const arma::mat &mu,
                                   double sigma) {
   arma::vec ll(mu.n_cols);
@@ -133,11 +140,5 @@ arma::vec compute_gaussian_ll_mat(const arma::vec &y, const arma::mat &mu,
 
 // [[Rcpp::export]]
 double est_dispersion_normal(const arma::vec &y, const arma::vec &mu, int p) {
-  // Signed arithmetic: y.n_elem is unsigned, so (y.n_elem - p) would wrap to a
-  // huge number when p > n and silently give a near-zero dispersion.
-  const double df = static_cast<double>(y.n_elem) - static_cast<double>(p);
-  if (df <= 0.0) {
-    return NA_REAL; // glim()'s dispersion check turns this into a clear error
-  }
-  return arma::accu((y - mu) % (y - mu)) / df;
+  return arma::accu((y - mu) % (y - mu)) / y.n_rows;
 }

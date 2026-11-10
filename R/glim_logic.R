@@ -2,10 +2,11 @@
 #' @importFrom Rcpp sourceCpp
 #' @importFrom progress progress_bar
 #' @importFrom parallel detectCores
-#' @importFrom stats logLik glm Gamma poisson inverse.gaussian lm coef runif qchisq model.matrix rnorm model.offset model.response binomial nobs vcov
+#' @importFrom stats logLik glm Gamma poisson inverse.gaussian lm coef runif qchisq model.matrix rnorm model.offset model.response binomial nobs vcov ave step
 #' @importFrom utils head
 #' @importFrom graphics par plot.default abline grid mtext
 #' @importFrom methods is
+#' @importFrom graphics contour
 #' @import RcppProgress
 NULL
 
@@ -526,6 +527,9 @@ correct_profile_point <- function(
   beta <- as.numeric(beta)
   p <- length(beta)
   off_idx <- setdiff(seq_len(p), col)
+  if (length(off_idx) == 0L) {
+    return(beta) # nothing to profile out
+  }
   X_others <- X[, off_idx, drop = FALSE]
 
   for (iter in seq_len(max_iter)) {
@@ -551,7 +555,7 @@ correct_profile_point <- function(
     Info_reg <- Info + diag(ridge, length(off_idx))
 
     delta <- tryCatch(solve(Info_reg, grad_off), error = function(e) NULL)
-    if (is.null(delta) | !all(is.finite(delta))) {
+    if (is.null(delta) || !all(is.finite(delta))) {
       break
     }
 
@@ -616,7 +620,7 @@ extend_profile <- function(
   }
 
   for (k in seq_len(max_steps)) {
-    if (current_plaus <= alpha - tolerance) {
+    if (!is.finite(current_plaus) || current_plaus <= alpha - tolerance) {
       break
     }
 
@@ -654,77 +658,6 @@ extend_profile <- function(
   }
   list(betas = out_betas, plaus = out_plaus)
 }
-
-calculate_marginal_ftn <- function(
-  X,
-  y,
-  family,
-  betas,
-  mle_coefs,
-  ll_mle_original_data,
-  m,
-  parallel,
-  approx,
-  show_progress,
-  max_steps,
-  alpha,
-  tolerance
-) {
-  marginal_plaus <- list()
-  marginal_betas <- list()
-
-  for (col in seq_along(ncol(X))) {
-    current_plaus <- 1
-    new_beta <- mle_coefs
-
-    for (direction in c(-1, 1)) {
-      for (k in seq_len(max_steps)) {
-        if (current_plaus <= alpha - tolerance) {
-          break
-        }
-
-        tang <- profile_tangent(family, X, new_beta, col, dispersion)
-        if (is.null(tang)) {
-          warning(sprintf("Column %d: profile tangent failed; extension stopped.", col))
-          break
-        }
-        cand <- new_beta
-        cand[col] <- cand[col] + direction * step
-        cand[off_idx] <- cand[off_idx] + direction * step * tang
-        if (!is.finite(compute_ll(family, y, X, cand, mle_coefs))) {
-          warning(sprintf(
-            "Column %d: step left the valid parameter domain; extension stopped.",
-            col
-          ))
-          break
-        }
-
-        new_beta <- correct_profile_point(family, X, y, cand, col, dispersion, mle_coefs)
-        current_plaus <- as.numeric(glim_raw(
-          X,
-          y,
-          family = family,
-          betas = matrix(new_beta, nrow = 1),
-          mle_coefs = mle_coefs,
-          ll_mle_original_data = ll_mle_original_data,
-          m = m,
-          parallel = parallel,
-          approx = approx,
-          show_progress = FALSE
-        ))
-        out_betas <- rbind(out_betas, unname(new_beta))
-        out_plaus <- c(out_plaus, current_plaus)
-      }
-      if (k == max_steps) {
-        warning(sprintf("Column %d: hit max_steps while extending.", col))
-      }
-      marginal_plaus[[col]] <- c(marginal_plaus[[col]], out_plaus)
-      marginal_betas[[col]] <- rbind(marginal_betas[[col]], out_betas)
-    }
-  }
-  return(list(marginal_plaus = marginal_plaus, marginal_betas = marginal_betas))
-}
-
 
 .is_flag <- function(x) is.logical(x) && length(x) == 1 && !is.na(x)
 .is_whole <- function(x) {
@@ -1232,19 +1165,18 @@ glim <- function(
         extended_in_pos_plaus <- vector("list", ncol(X))
 
         for (col in seq_len(ncol(X))) {
-          needs_upper <- FALSE
-          needs_lower <- FALSE
+          b_col <- betas[, col]
 
-          max_plaus <- tapply(possibils, betas[, col], max, na.rm = TRUE)
-          beta_vals <- as.numeric(names(max_plaus)) # might be some loss in precision here, but within the monte carlo error anyways
-          if (TRUE) {
-            #max(plaus(minimum_value(s)_of_beta_col)) > alpha
-            needs_lower <- TRUE
-          }
-          if (TRUE) {
-            #max(plaus(maximum_value(s)_of_beta_col) > alpha
-            needs_upper <- TRUE
-          }
+          # Find maximum plausibility at the grid boundaries for the current parameter column
+          min_b <- min(b_col, na.rm = TRUE)
+          max_b <- max(b_col, na.rm = TRUE)
+
+          max_plaus_min <- max(possibils[b_col == min_b], na.rm = TRUE)
+          max_plaus_max <- max(possibils[b_col == max_b], na.rm = TRUE)
+
+          # Check if plausibility at boundaries exceeds alpha threshold
+          needs_lower <- max_plaus_min > alpha
+          needs_upper <- max_plaus_max > alpha
           up <- extend_profile(
             +1,
             needs_upper,
@@ -1490,52 +1422,68 @@ glim <- function(
 #'
 #' @noRd
 prob2poss_logis <- function(X, y, mle, samples, the_compared_theta) {
-  if (any(!(y == 0 | y == 1))) {
-    stop("y must only comprise of zeros or ones")
+  X <- as.matrix(X)
+
+  # Factor response: convert FIRST, before any 0/1 check. A factor compared to
+  # 0 or 1 is never TRUE (it compares labels), which is what raised
+  # "y vector must only comprise of zeros or ones." The second level counts as
+  # success, the same convention glim() uses.
+  if (is.factor(y)) {
+    if (nlevels(y) != 2) {
+      stop("Factor response must have exactly 2 levels")
+    }
+    y <- as.numeric(y == levels(y)[2])
   }
-  if (is.data.frame(X)) {
-    X <- as.matrix(X)
+  if (is.data.frame(y)) {
+    y <- as.matrix(y)
   }
-  if (is.vector(y) && all(y == 0 | y == 1)) {
+
+  if (is.matrix(y)) {
+    # Two-column successes / failures: expand to one row per Bernoulli trial.
+    if (ncol(y) != 2) {
+      stop(
+        "When y is a matrix or data frame, it must have exactly 2 columns (successes and failures)."
+      )
+    }
+    if (nrow(y) != nrow(X)) {
+      stop("y and X lengths differ")
+    }
+    if (anyNA(y) || any(y < 0) || any(y %% 1 != 0)) {
+      stop("Counts in y must be non-negative integers.")
+    }
+    successes <- y[, 1]
+    failures <- y[, 2]
+    rows <- seq_len(nrow(X))
+    # X[c(2, 2), ] repeats row 2; drop = FALSE keeps a matrix.
+    X <- rbind(
+      X[rep(rows, times = successes), , drop = FALSE],
+      X[rep(rows, times = failures), , drop = FALSE]
+    )
+    y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
+  } else {
+    # Plain binary vector (numeric or logical).
+    if (anyNA(y) || any(!(y == 0 | y == 1))) {
+      stop("y vector must only comprise of zeros or ones.")
+    }
+    y <- as.numeric(y)
     if (length(y) != nrow(X)) {
       stop("y and X lengths differ")
     }
-  } else if (is.matrix(y) && ncol(y) == 2) {
-    # Two-column integer matrix (Successes / Failures)
-    successes <- y[, 1]
-    failures <- y[, 2]
-
-    idx_success <- rep(1:nrow(X), times = successes)
-    idx_fail <- rep(1:nrow(X), times = failures)
-
-    # I did not know this, but X[c(2, 2), ] will repeat the second index twice
-    # drop = FALSE means that it stays as a matrix, rather than going to a vector
-    X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
-    y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
-  } else if (is.factor(y)) {
-    # Success is any level that is NOT the first level
-
-    is_success <- as.integer(y != levels(y)[1])
-    successes <- is_success * rep(1, length(y))
-    failures <- (1 - is_success) * rep(1, length(y))
-
-    idx_success <- rep(1:nrow(X), times = successes)
-    idx_fail <- rep(1:nrow(X), times = failures)
-
-    # I did not know this, but X[c(2, 2), ] will repeat the second index twice
-    # drop = FALSE means that it stays as a matrix, rather than going to a vector
-    y <- c(rep(1, sum(successes)), rep(0, sum(failures)))
-    X <- rbind(X[idx_success, , drop = FALSE], X[idx_fail, , drop = FALSE])
   }
-  eta <- X %*% the_compared_theta
+
+  theta <- as.matrix(the_compared_theta) # one column per candidate theta
+  samples <- as.matrix(samples) # one column per sample
+
+  # Numerically stable log(1 + exp(eta)).
+  eta <- X %*% theta
   log_term <- pmax(eta, 0) + log1p(exp(-abs(eta)))
-  ll_val <- y %*% eta - colSums(log_term)
+  ll_val <- as.vector(y %*% eta) - colSums(log_term)
 
   eta_samps <- X %*% samples
   log_term_samps <- pmax(eta_samps, 0) + log1p(exp(-abs(eta_samps)))
   ll_val_samps <- as.vector(y %*% eta_samps) - colSums(log_term_samps)
 
-  return(sapply(ll_val, function(x) sum(ll_val_samps <= x)) / length(ll_val_samps))
+  vapply(ll_val, function(x) mean(ll_val_samps <= x), numeric(1))
 }
 
 #' Probability to Possibility Mapping for Gamma Regression
@@ -1643,29 +1591,34 @@ prob2poss_gaussian <- function(X, y, mle, samples, the_compared_theta) {
 #' @noRd
 prob2poss_invgauss <- function(X, y, mle, samples, the_compared_theta) {
   if (any(y <= 0)) {
-    stop("y cannot be negative or zero")
+    stop("y must be strictly positive")
   }
-  if (is.data.frame(X)) {
-    X <- as.matrix(X)
-  }
-  eta <- X %*% samples
-
-  # Providing initial coefficients using a rough approximation
-  initial_coefs <- coef(lm(1 / (y^2) ~ X - 1))
-
-  mle_coefs <- mle
-
+  X <- as.matrix(X)
   est_dispersion <- mle_estimate_dispersion_inv_gauss(y, mean(y))
 
-  # Check whether mapping from eta to mu is correct
-  ll_val_samps <- as.vector(compute_invgauss_ll_r(y, sqrt(1 / eta), gamma_val = est_dispersion))
-  ll_val <- as.vector(compute_invgauss_ll_r(
-    y,
-    sqrt(1 / X %*% the_compared_theta), # should do it element-wise
-    gamma_val = est_dispersion
-  ))
+  # Log-lik per column of `betas`; -Inf where any eta <= 0 (outside parameter space)
+  ll_cols <- function(betas) {
+    eta <- X %*% as.matrix(betas)
+    ll <- rep(-Inf, ncol(eta))
+    ok <- colSums(!is.finite(eta) | eta <= 0) == 0
+    if (any(ok)) {
+      ll[ok] <- as.vector(compute_invgauss_ll_r(
+        y,
+        sqrt(1 / eta[, ok, drop = FALSE]),
+        gamma_val = est_dispersion
+      ))
+    }
+    ll
+  }
 
-  sapply(ll_val, function(x) sum(ll_val_samps <= x) / length(ll_val_samps))
+  ll_val_samps <- ll_cols(samples)
+  ll_val_samps <- ll_val_samps[is.finite(ll_val_samps)] # keep draws inside the parameter space
+  if (length(ll_val_samps) == 0L) {
+    stop("No sampled coefficient vector gives a positive linear predictor (eta > 0).")
+  }
+  ll_val <- ll_cols(the_compared_theta) # invalid theta -> -Inf -> possibility 0
+
+  vapply(ll_val, function(x) mean(ll_val_samps <= x), numeric(1))
 }
 
 #' Radial C++ Bridge Function
@@ -2235,14 +2188,190 @@ plot.glim_object <- function(x, ...) {
 }
 
 
-# Note: Initially written by the author, Gemini helped with formatting of output
+# =============================================================================
+# Marginal intervals from a grid fit
+# =============================================================================
+#
+# THE IDEA
+# glim() evaluates a grid in which every row is a full candidate coefficient
+# vector (b0, b1, ...) and assigns each row a plausibility. A value of
+# coefficient j counts as plausible if AT LEAST ONE grid row with that value of
+# b_j has plausibility above alpha. In other words, we project the plausible
+# region onto the b_j axis: the other coefficients are free to take whatever
+# values make this b_j look best. The interval for coefficient j is the
+# smallest and largest plausible value of b_j.
+#
+# .grid_bounds() does the work. It is shared by print() and confint() so the
+# two can never disagree.
+
+# Marginal bounds from the grid evaluation.
+#   g:     the `grid_data` list stored inside a glim_object
+#   alpha: a value is plausible if its profile plausibility exceeds alpha
+# Returns list(lower, upper), each a numeric vector with one entry per
+# coefficient (NA where the bound is unknown).
+.grid_bounds <- function(g, alpha) {
+  betas <- g$betas_evaluated # one row per grid point, one column per coefficient
+  poss <- as.vector(g$possibilities) # one plausibility per grid point
+  p <- ncol(betas)
+  lower <- upper <- rep(NA_real_, p)
+
+  # max() that returns NA, not -Inf plus a warning, when a group is all NA.
+  safe_max <- function(v) if (all(is.na(v))) NA_real_ else max(v, na.rm = TRUE)
+
+  # "Is a at the same place as b?" Exact == is unreliable for floating point,
+  # so use a small relative tolerance.
+  at_edge <- function(a, b) abs(a - b) <= 1e-8 * max(1, abs(b))
+
+  # Bound reachable through a stored profile extension.
+  # If the plausible region touches the edge of the grid, it may continue past
+  # it. glim() can then have walked outward from the edge (the
+  # extended_in_{neg,pos}_{betas,plaus} entries) until plausibility dropped
+  # below alpha. Arguments:
+  #   ext_b, ext_p: extension points (matrix, one column per coefficient) and
+  #                 their plausibilities
+  #   col:          which coefficient we are bounding
+  #   edge:         the grid-edge value, used as the fallback bound
+  #   side:         "lower" or "upper"
+  extension_bound <- function(ext_b, ext_p, col, edge, side) {
+    # No extension stored (e.g. directly_calc_marginals = TRUE): the bound is
+    # UNKNOWN. Return NA so it is not presented as if it were the grid edge.
+    if (is.null(ext_b) || NROW(ext_b) == 0) {
+      return(NA_real_)
+    }
+    vals <- as.matrix(ext_b)[, col]
+
+    # Keep only extension points that are themselves plausible. The last point
+    # of an extension may be the first one that fell below alpha.
+    if (!is.null(ext_p)) {
+      ext_p <- as.vector(ext_p)
+      if (length(ext_p) == length(vals)) {
+        vals <- vals[is.finite(ext_p) & ext_p > alpha]
+      }
+    }
+    vals <- vals[is.finite(vals)]
+
+    # The extension ran but nothing beyond the edge is plausible, so the true
+    # bound lies between the edge and the first extension point. The edge is
+    # the best available estimate.
+    if (length(vals) == 0) {
+      return(edge)
+    }
+
+    # Otherwise the bound is the furthest plausible extension point (the edge
+    # is included so the result can never be tighter than the grid).
+    if (side == "lower") min(c(vals, edge)) else max(c(vals, edge))
+  }
+
+  for (col in seq_len(p)) {
+    # PROFILE MAXIMUM. A given value of b_j usually appears in many grid rows,
+    # paired with different values of the other coefficients. ave() gives every
+    # row the best plausibility among all rows that share its b_j value.
+    # (This replaces tapply() + as.numeric(names()), which round-trips values
+    # through character names and can lose precision, making the edge
+    # comparison below misfire.)
+    prof <- ave(poss, betas[, col], FUN = safe_max)
+
+    # Rows whose b_j value is plausible. Their b_j values are the plausible set.
+    ok <- is.finite(betas[, col]) & is.finite(prof) & prof > alpha
+    if (!any(ok)) {
+      next # nothing plausible: leave both bounds NA
+    }
+    valid <- betas[ok, col]
+    grid_min <- min(valid) # candidate lower bound
+    grid_max <- max(valid) # candidate upper bound
+
+    # LOWER BOUND.
+    # If grid_min is NOT at the smallest evaluated value, plausibility fell
+    # below alpha inside the grid, so grid_min is a real boundary.
+    # If it IS at the edge, the region may continue, so consult the extension.
+    lower[col] <- if (!at_edge(grid_min, min(betas[, col]))) {
+      grid_min
+    } else {
+      extension_bound(
+        g$extended_in_neg_betas[[col]],
+        g$extended_in_neg_plaus[[col]],
+        col,
+        grid_min,
+        "lower"
+      )
+    }
+
+    # UPPER BOUND. Same logic, mirrored (positive extensions, maximum).
+    upper[col] <- if (!at_edge(grid_max, max(betas[, col]))) {
+      grid_max
+    } else {
+      extension_bound(
+        g$extended_in_pos_betas[[col]],
+        g$extended_in_pos_plaus[[col]],
+        col,
+        grid_max,
+        "upper"
+      )
+    }
+  }
+  list(lower = lower, upper = upper)
+}
+
+
+#' Returns a matrix with confidence interval values
+#'
+#' Same numbers as used in print(), modulo stochastic noise
+#'
+#' @param object A 'glim_object' from 'glim()'
+#' @param parm A vector a strings specifying which variables to select
+#' @param level 1-alpha
+#' @return A matrix containing the confidence/credible interval
+#' @export
+confint.glim_object <- function(object, parm = NULL, level = .95) {
+  alpha <- 1 - level
+  if ("grid_data" %in% names(object)) {
+    # Grid fit: everything is stored inside grid_data (not at the top level).
+    g <- object$grid_data
+    b <- .grid_bounds(g, alpha)
+
+    # One row per coefficient, columns = lower and upper bound.
+    out <- cbind(b$lower, b$upper)
+
+    # Column labels are the tail percentages, e.g. "2.5 %" and "97.5 %".
+    colnames(out) <- c(
+      sprintf("%.1f %%", (alpha / 2) * 100),
+      sprintf("%.1f %%", (1 - alpha / 2) * 100)
+    )
+    rownames(out) <- colnames(g$X)
+  } else if ("margin" %in% names(object)) {
+    # Extract bounds from object$margin
+    data <- object[["margin"]]
+    X <- data[["extra_info"]]$X
+
+    lower_bound <- rep(NA_real_, ncol(X))
+    upper_bound <- rep(NA_real_, ncol(X))
+    for (col in seq_len(ncol(X))) {
+      beta_vals <- data[["margins"]][[col]]$beta_for_margin
+      lower_bound[col] <- min(beta_vals[, col])
+      upper_bound[col] <- max(beta_vals[, col])
+    }
+
+    out <- cbind(lower_bound, upper_bound)
+    colnames(out) <- c(
+      sprintf("%.1f %%", (alpha / 2) * 100),
+      sprintf("%.1f %%", (1 - alpha / 2) * 100)
+    )
+    rownames(out) <- colnames(X)
+  } else {
+    stop("Unrecognized glim_object structure")
+  }
+  if (!is.null(parm)) {
+    out <- out[parm, , drop = FALSE]
+  }
+  return(out)
+}
 
 #' Print
 #'
 #' Provides marginal confidence/credible regions at a specified alpha level. Can be changed by (say) alpha = .10. Produces a value of NA whenever the bound is not known (Likely the automatic grid was too small -- can be expanded through the betas argument in glim())
 #'
 #' @param x A 'glim_object' from 'glim()'
-#' @param ... Supports differing alpha levels. EX: alpha = .05
+#' @param alpha Supports differing alpha levels, although will not provide correct results if initial model specified a higher alpha level.
 #' @return Print output
 #' @examples
 #' \dontrun{
@@ -2256,121 +2385,189 @@ plot.glim_object <- function(x, ...) {
 #' }
 #' @export
 print.glim_object <- function(x, alpha = .05, ...) {
-  args <- list(...)
-
   cat(sprintf("%.0f%% (marginal) confidence and credible region:\n", (1 - alpha) * 100))
   cat("------------------------------------------------------------------------\n")
+
   if ("margin" %in% names(x)) {
     data <- x[["margin"]]
-    lower_bound <- rep(NA_real_, ncol(data[["extra_info"]]$X))
-    upper_bound <- rep(NA_real_, ncol(data[["extra_info"]]$X))
+    X <- data[["extra_info"]]$X
     mle_coefs <- data[["extra_info"]]$mle_coefs
-    for (col in 1:ncol(data[["extra_info"]]$X)) {
+
+    lower_bound <- rep(NA_real_, ncol(X))
+    upper_bound <- rep(NA_real_, ncol(X))
+    for (col in seq_len(ncol(X))) {
       beta_vals <- data[["margins"]][[col]]$beta_for_margin
       lower_bound[col] <- min(beta_vals[, col])
       upper_bound[col] <- max(beta_vals[, col])
     }
-    # Build the structured data frame
-    summary_table <- data.frame(
-      Estimate = sprintf("%.4f", mle_coefs),
-      Lower = sprintf("%.4f", lower_bound),
-      Upper = sprintf("%.4f", upper_bound),
-      row.names = colnames(data[["extra_info"]]$X)
-    )
-
-    # Rename columns to show the interval width dynamically
-    colnames(summary_table) <- c(
-      "MLE",
-      paste0("Lower ", (1 - alpha) * 100, "%"),
-      paste0("Upper ", (1 - alpha) * 100, "%")
-    )
-
-    # Print the formatted table cleanly
-    print(summary_table, quote = FALSE)
-    cat("------------------------------------------------------------------------\n")
-    invisible(x)
+    row_names <- colnames(X)
   } else if ("grid_data" %in% names(x)) {
-    # margins not found, so either in elliptical_data, radial_data, grid_data
-    grid_object <- x[["grid_data"]]
-    betas <- grid_object$betas_evaluated
-    poss <- grid_object$possibilities
-    family <- grid_object$family
-    mle_coefs <- grid_object$mle_coefs
-
-    row_names <- colnames(betas)
-    ll_mle_original_data <- numeric(ncol(betas))
-    lower_bound <- rep(NA_real_, ncol(betas))
-    upper_bound <- rep(NA_real_, ncol(betas))
-
-    for (col in 1:ncol(betas)) {
-      max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
-
-      beta_vals <- as.numeric(names(max_plaus))
-      valid <- is.finite(beta_vals) && is.finite(max_plaus)
-      alpha_cut <- valid && (max_plaus > alpha)
-      valid_betas <- beta_vals[alpha_cut]
-
-      if (length(valid_betas) > 0) {
-        # ---------- LOWER BOUND ----------
-        grid_min <- min(valid_betas)
-        if (grid_min != min(betas[, col])) {
-          lower_bound[col] <- grid_min
-        } else {
-          # Boundary hit: Check if negative extensions exist for this parameter
-          if (
-            !is.null(x$extended_in_neg_betas) &&
-              !is.null(x$extended_in_neg_betas[[col]]) &&
-              nrow(x$extended_in_neg_betas[[col]]) > 0
-          ) {
-            # The lowest value reached in the extension
-            lower_bound[col] <- min(x$extended_in_neg_betas[[col]][, col])
-          } else {
-            lower_bound[col] <- NA_real_
-          }
-        }
-
-        # ---------- UPPER BOUND ----------
-        grid_max <- max(valid_betas)
-        if (grid_max != max(betas[, col])) {
-          upper_bound[col] <- grid_max
-        } else {
-          # Boundary hit: Check if positive extensions exist for this parameter
-          if (
-            !is.null(x$extended_in_pos_betas) &&
-              !is.null(x$extended_in_pos_betas[[col]]) &&
-              nrow(x$extended_in_pos_betas[[col]]) > 0
-          ) {
-            # The highest value reached in the extension
-            upper_bound[col] <- max(x$extended_in_pos_betas[[col]][, col])
-          } else {
-            upper_bound[col] <- NA_real_
-          }
-        }
-      }
-    }
-    # Build the structured data frame
-    summary_table <- data.frame(
-      Estimate = sprintf("%.4f", mle_coefs),
-      Lower = sprintf("%.4f", lower_bound),
-      Upper = sprintf("%.4f", upper_bound),
-      row.names = row_names
-    )
-
-    # Rename columns to show the interval width dynamically
-    colnames(summary_table) <- c(
-      "MLE",
-      paste0("Lower ", (1 - alpha) * 100, "%"),
-      paste0("Upper ", (1 - alpha) * 100, "%")
-    )
-
-    # Print the formatted table cleanly
-    print(summary_table, quote = FALSE)
-    cat("------------------------------------------------------------------------\n")
-    invisible(x)
+    g <- x[["grid_data"]]
+    b <- .grid_bounds(g, alpha)
+    lower_bound <- b$lower
+    upper_bound <- b$upper
+    mle_coefs <- g$mle_coefs
+    row_names <- colnames(g$betas_evaluated)
   } else {
     warning("Object does not seem to have a valid structure")
+    return(invisible(x))
   }
+
+  summary_table <- data.frame(
+    Estimate = sprintf("%.4f", mle_coefs),
+    Lower = sprintf("%.4f", lower_bound),
+    Upper = sprintf("%.4f", upper_bound),
+    row.names = row_names
+  )
+
+  colnames(summary_table) <- c(
+    "MLE",
+    paste0("Lower ", (1 - alpha) * 100, "%"),
+    paste0("Upper ", (1 - alpha) * 100, "%")
+  )
+
+  print(summary_table, quote = FALSE)
+  cat("------------------------------------------------------------------------\n")
+  invisible(x)
 }
+
+
+# # Note: Initially written by the author, Gemini helped with formatting of output
+
+# #' Print
+# #'
+# #' Provides marginal confidence/credible regions at a specified alpha level. Can be changed by (say) alpha = .10. Produces a value of NA whenever the bound is not known (Likely the automatic grid was too small -- can be expanded through the betas argument in glim())
+# #'
+# #' @param x A 'glim_object' from 'glim()'
+# #' @param ... Supports differing alpha levels. EX: alpha = .05
+# #' @return Print output
+# #' @examples
+# #' \dontrun{
+# #' fit <- glim(y ~ x, data = dat, family = "gaussian")
+# #'
+# #' # Print the 95% confidence and credible region (default)
+# #' print(fit)
+# #'
+# #' # Print at a different alpha level
+# #' print(fit, alpha = .10)
+# #' }
+# #' @export
+# print.glim_object <- function(x, alpha = .05, ...) {
+#   args <- list(...)
+
+#   cat(sprintf("%.0f%% (marginal) confidence and credible region:\n", (1 - alpha) * 100))
+#   cat("------------------------------------------------------------------------\n")
+#   if ("margin" %in% names(x)) {
+#     data <- x[["margin"]]
+#     lower_bound <- rep(NA_real_, ncol(data[["extra_info"]]$X))
+#     upper_bound <- rep(NA_real_, ncol(data[["extra_info"]]$X))
+#     mle_coefs <- data[["extra_info"]]$mle_coefs
+#     for (col in 1:ncol(data[["extra_info"]]$X)) {
+#       beta_vals <- data[["margins"]][[col]]$beta_for_margin
+#       lower_bound[col] <- min(beta_vals[, col])
+#       upper_bound[col] <- max(beta_vals[, col])
+#     }
+#     # Build the structured data frame
+#     summary_table <- data.frame(
+#       Estimate = sprintf("%.4f", mle_coefs),
+#       Lower = sprintf("%.4f", lower_bound),
+#       Upper = sprintf("%.4f", upper_bound),
+#       row.names = colnames(data[["extra_info"]]$X)
+#     )
+
+#     # Rename columns to show the interval width dynamically
+#     colnames(summary_table) <- c(
+#       "MLE",
+#       paste0("Lower ", (1 - alpha) * 100, "%"),
+#       paste0("Upper ", (1 - alpha) * 100, "%")
+#     )
+
+#     # Print the formatted table cleanly
+#     print(summary_table, quote = FALSE)
+#     cat("------------------------------------------------------------------------\n")
+#     invisible(x)
+#   } else if ("grid_data" %in% names(x)) {
+#     # margins not found, so either in elliptical_data, radial_data, grid_data
+#     grid_object <- x[["grid_data"]]
+#     betas <- grid_object$betas_evaluated
+#     poss <- grid_object$possibilities
+#     family <- grid_object$family
+#     mle_coefs <- grid_object$mle_coefs
+
+#     row_names <- colnames(betas)
+#     ll_mle_original_data <- numeric(ncol(betas))
+#     lower_bound <- rep(NA_real_, ncol(betas))
+#     upper_bound <- rep(NA_real_, ncol(betas))
+
+#     for (col in 1:ncol(betas)) {
+#       max_plaus <- tapply(poss, betas[, col], max, na.rm = TRUE)
+
+#       beta_vals <- as.numeric(names(max_plaus))
+#       valid <- all(is.finite(beta_vals)) && all(is.finite(max_plaus))
+#       alpha_cut <- valid && (max_plaus > alpha)
+#       valid_betas <- beta_vals[alpha_cut]
+
+#       if (length(valid_betas) > 0) {
+#         # ---------- LOWER BOUND ----------
+#         grid_min <- min(valid_betas)
+#         if (grid_min != min(betas[, col])) {
+#           lower_bound[col] <- grid_min
+#         } else {
+#           # Boundary hit: Check if negative extensions exist for this parameter
+#           if (
+#             !is.null(x$extended_in_neg_betas) &&
+#               !is.null(x$extended_in_neg_betas[[col]]) &&
+#               nrow(x$extended_in_neg_betas[[col]]) > 0
+#           ) {
+#             # The lowest value reached in the extension
+#             lower_bound[col] <- min(x$extended_in_neg_betas[[col]][, col])
+#           } else {
+#             lower_bound[col] <- NA_real_
+#           }
+#         }
+
+#         # ---------- UPPER BOUND ----------
+#         grid_max <- max(valid_betas)
+#         if (grid_max != max(betas[, col])) {
+#           upper_bound[col] <- grid_max
+#         } else {
+#           # Boundary hit: Check if positive extensions exist for this parameter
+#           if (
+#             !is.null(x$extended_in_pos_betas) &&
+#               !is.null(x$extended_in_pos_betas[[col]]) &&
+#               nrow(x$extended_in_pos_betas[[col]]) > 0
+#           ) {
+#             # The highest value reached in the extension
+#             upper_bound[col] <- max(x$extended_in_pos_betas[[col]][, col])
+#           } else {
+#             upper_bound[col] <- NA_real_
+#           }
+#         }
+#       }
+#     }
+#     # Build the structured data frame
+#     summary_table <- data.frame(
+#       Estimate = sprintf("%.4f", mle_coefs),
+#       Lower = sprintf("%.4f", lower_bound),
+#       Upper = sprintf("%.4f", upper_bound),
+#       row.names = row_names
+#     )
+
+#     # Rename columns to show the interval width dynamically
+#     colnames(summary_table) <- c(
+#       "MLE",
+#       paste0("Lower ", (1 - alpha) * 100, "%"),
+#       paste0("Upper ", (1 - alpha) * 100, "%")
+#     )
+
+#     # Print the formatted table cleanly
+#     print(summary_table, quote = FALSE)
+#     cat("------------------------------------------------------------------------\n")
+#     invisible(x)
+#   } else {
+#     warning("Object does not seem to have a valid structure")
+#   }
+# }
 
 #' Extract the log likelihood at the MLE
 #'
@@ -2412,43 +2609,42 @@ coef.glim_object <- function(object, ...) {
   }
 }
 
-#' Extract the log likelihood at the MLE
-#'
-#' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
-#'
-#' @param object A 'glim_object' from 'glim()'
-#' @param ... Additional arguments
-#' @return A matrix containing the confidence/credible interval
-#' @export
-confint.glim_object <- function(object, alpha = .05) {
-  if ("grid_data" %in% names(object)) {
-    alpha <- .05
-    row_names <- colnames(object$X)
-    lower_bound <- numeric(ncol(object$X))
-    upper_bound <- numeric(ncol(object$X))
+# #' Extract the log likelihood at the MLE
+# #'
+# #' Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+# #'
+# #' @param object A 'glim_object' from 'glim()'
+# #' @param ... Additional arguments
+# #' @return A matrix containing the confidence/credible interval
+# #' @export
+# confint.glim_object <- function(object, alpha = .05) {
+#   if ("grid_data" %in% names(object)) {
+#     row_names <- colnames(object$X)
+#     lower_bound <- numeric(ncol(object$X))
+#     upper_bound <- numeric(ncol(object$X))
 
-    for (col in 1:ncol(object$X)) {
-      max_plaus <- tapply(object$possibilities, object$betas[, col], max, na.rm = TRUE)
+#     for (col in 1:ncol(object$X)) {
+#       max_plaus <- tapply(object$possibilities, object$betas[, col], max, na.rm = TRUE)
 
-      beta_vals <- as.numeric(names(max_plaus))
-      valid <- is.finite(beta_vals) && is.finite(max_plaus)
-      alpha_cut <- valid && (max_plaus > alpha)
-      valid_betas <- beta_vals[alpha_cut]
+#       beta_vals <- as.numeric(names(max_plaus))
+#       valid_alpha_cut <- is.finite(beta_vals) & is.finite(max_plaus) & (max_plaus > alpha)
+#       valid_betas <- beta_vals[valid_alpha_cut]
 
-      # Save results into our vectors
-      lower_bound[col] <- if (length(valid_betas) > 0) min(valid_betas) else NA
-      upper_bound[col] <- if (length(valid_betas) > 0) max(valid_betas) else NA
-    }
-    out <- matrix(c(lower_bound, upper_bound), ncol = 2)
-    lower_a <- (alpha / 2) * 100
-    upper_a <- (1 - (alpha / 2)) * 100
-    colnames(out) <- c(sprintf("%.1f %%", lower_a), sprintf("%.1f %%", upper_a))
-    rownames(out) <- row_names
-    return(out)
-  } else if ("margin" %in% names(object)) {
-    return(object$margin)
-  }
-}
+#       # Save results into our vectors
+#       lower_bound[col] <- if (length(valid_betas) > 0) min(valid_betas) else NA
+#       upper_bound[col] <- if (length(valid_betas) > 0) max(valid_betas) else NA
+#     }
+#     out <- matrix(c(lower_bound, upper_bound), ncol = 2)
+#     lower_a <- (alpha / 2) * 100
+#     upper_a <- (1 - (alpha / 2)) * 100
+#     colnames(out) <- c(sprintf("%.1f %%", lower_a), sprintf("%.1f %%", upper_a))
+#     rownames(out) <- row_names
+#     return(out)
+#   } else if ("margin" %in% names(object)) {
+#     return(object$margin)
+#   }
+#   stop("Unrecognized glim_object structure")
+# }
 
 #' Returns the variance-covariance at the MLE
 #'
@@ -2486,6 +2682,7 @@ nobs.glim_object <- function(object, ...) {
 #' @param y Vector of y values. Required to have more than 1 observation
 #' @param X Design matrix.
 #' @param betas Either a vector of the beta values, or a matrix where each row corresponds to the beta vector to evaluate. Will be transposed so that it conforms to the dimensions of X
+#' @param mle_coefs a vector of MLE coefficients
 #' @return A vector/scalar of Log-Likelihood value(s)
 #' @examples
 #' \dontrun{
@@ -2505,7 +2702,7 @@ compute_ll <- function(family, y, X, betas, mle_coefs = NULL) {
   ll <- NULL
   if (family == "gaussian") {
     if (is.null(mle_coefs)) {
-      stop("mle_coefs must be provided when family is 'gamma'")
+      stop("mle_coefs must be provided when family is 'gaussian'")
     }
     ll <- compute_gaussian_ll_r(
       y,
@@ -2519,16 +2716,17 @@ compute_ll <- function(family, y, X, betas, mle_coefs = NULL) {
     }
     ll <- compute_gamma_ll_r(
       y = y,
-      exp(X %*% betas),
+      X %*% betas,
       shape = 1 / mle_estimate_dispersion_gamma(y, exp(X %*% mle_coefs), ncol(X))
     )
   } else if (family == "poisson") {
-    ll <- compute_poisson_ll_r(y, exp(X %*% betas))
+    ll <- compute_poisson_ll_r(y, X %*% betas)
   } else if (family == "binomial") {
     ll <- compute_logistic_ll_r(X, y, betas)
   } else if (family == "inverse.gaussian") {
     # Again, note that 1/eta will be element-wise
     eta <- X %*% betas
+    # invgauss uses (y, mu) instead of (y, eta)
     ll <- compute_invgauss_ll_r(
       y,
       sqrt(1 / eta),
@@ -2537,7 +2735,7 @@ compute_ll <- function(family, y, X, betas, mle_coefs = NULL) {
   } else {
     stop("family not defined")
   }
-  if (!is.finite(ll)) {
+  if (!all(is.finite(ll))) {
     return(-Inf)
   }
   return(ll)

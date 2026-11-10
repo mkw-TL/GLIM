@@ -91,7 +91,6 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   int n_evals = betas.n_rows;
   arma::vec plausabilities(n_evals);
   arma::mat XtX = X.t() * X;
-  double separation_issues = 0;
 
   if (y.n_elem != X.n_rows || mle_coefs.n_elem != X.n_cols ||
       betas.n_cols != X.n_cols) {
@@ -107,9 +106,6 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   int tick_step = n_evals / 50;
   if (tick_step < 1)
     tick_step = 1;
-
-  int next_percentage_milestone = 0;
-  int percentage_step = 2; // Update every 2%
 
   // If done via radial or approx, then the progress bar happens elsewhere
   show_progress = (!approx && !radial && show_progress);
@@ -275,14 +271,7 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
                 int m = 1000, uint32_t base_seed = 31) {
   int D = mle.size();
 
-  if (family == "binomial") {
-    arma::mat Y_sim(X.n_rows, 2);
-    LogisticWorkspace ws;
-    LogisticPlResult result = glm_logis_pl_cpp(X, y, mle, mle_val, mle, 2,
-                                               false, false, 1, 1, Y_sim, ws);
-    // Evaluate at beta_vals = mle. Only m = 2 because just want to check for
-    // seperation
-  }
+  // TODO maybe a seperation check? Or maybe can be done in R
 
   // Setup Chi-Squared distribution to replicate R's qchisq()
   boost::math::chi_squared dist(D);
@@ -356,7 +345,6 @@ arma::mat radial_code(int num_samps, arma::mat &X, arma::vec &y, double mle_val,
 
   // Family-specific precomputations
   arma::vec p_hat;
-  bool orig_separated = false;
 
   arma::vec eta_hat_gamma;
 
@@ -373,19 +361,12 @@ arma::mat radial_code(int num_samps, arma::mat &X, arma::vec &y, double mle_val,
 
   // --- Initial Separation Checks ---
   // Pass base_seed and an arbitrary eval_index (e.g., 0) for these checks
+  // TODO put in R
   if (fam == GlmFamily::Binomial) {
-    LogisticWorkspace ws;
-    LogisticPlResult result =
-        glm_logis_pl_cpp(X, y, mle_coefs, mle_val, mle_coefs, 2, false, false,
-                         base_seed, 0, Y_sim, ws);
     eta_hat = X * mle_coefs;
     p_hat = 1.0 / (1.0 + arma::exp(-eta_hat));
-    orig_separated = arma::any(p_hat < 1e-8) || arma::any(p_hat > (1.0 - 1e-8));
   } else if (fam == GlmFamily::Poisson) {
-    PoissonWorkspace ws;
-    PoissonPlResult result =
-        glm_poisson_pl_cpp(X, y, mle_coefs, mle_val, mle_coefs, 2, false, false,
-                           base_seed, 0, Y_sim, ws);
+    //
   } else if (fam == GlmFamily::Gamma) {
     // Precompute for Core Engine
     eta_hat_gamma = eta_hat;
@@ -444,7 +425,6 @@ arma::mat radial_code(int num_samps, arma::mat &X, arma::vec &y, double mle_val,
     // Allocate workspace ONCE per thread
     // To not have dynamic allocation of memory each time through the while loop
     arma::mat Y_sim_thread_workspace(X.n_rows, m);
-    bool thread_is_primary;
     arma::vec beta_proposal(d);
     arma::vec u(d);
     arma::vec dir(d);
@@ -682,7 +662,6 @@ arma::mat radial_code(int num_samps, arma::mat &X, arma::vec &y, double mle_val,
       sum_secs += diag_secs[j];
       max_secs = std::max(max_secs, diag_secs[j]);
     }
-    const int N = num_samps - 1;
     // Rcpp::Rcout << "\n--- radial diagnostics ---\n"
     //             << "samples hitting max_it (" << max_it << "): " << n_hit_max
     //             << " / " << N << " (" << 100.0 * n_hit_max / N << "%)\n"

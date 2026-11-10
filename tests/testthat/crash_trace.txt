@@ -1,23 +1,15 @@
 
-Starting test i 
-Running trim = 'a' 
-Running directly_calc_marginals = 1 
-Finished test i 
-Starting test j 
-Finished test j 
-Starting test k 
-End test k 
-Start test l 
-End test l 
-Start test l2 
-End test l2 
-Start test m 
-end test m 
-start test n 
-end test n 
-start test o 
-end test o 
-start test p 
-end test p 
-start test q 
-end test q 
+21 
+21 
+22 
+22 
+23 
+23 
+24 
+24 
+25 
+26 
+27 
+27 
+28 
+28 

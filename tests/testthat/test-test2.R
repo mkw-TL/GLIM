@@ -1,5 +1,11 @@
 library(testthat)
 
+trace_crash <- function(msg) {
+  cat(msg, "\n", file = "crash_trace.txt", append = TRUE)
+}
+# Clear the file from previous runs
+writeLines("", "crash_trace.txt")
+
 # Helper function to generate basic data
 generate_mock_data <- function(n = 100, p = 3, family = "gaussian") {
   set.seed(42)
@@ -90,21 +96,51 @@ skip_if_glim_missing <- function() {
 }
 
 test_that("fit_glm_omp_cpp enforces strict dimension matching", {
+  trace_crash("21")
   dat <- generate_mock_data(n = 100, p = 3)
   betas <- matrix(rnorm(30), ncol = 3) # 10 rows, 3 cols
 
   # Mismatched y length
   expect_error(
-    fit_glm_omp_cpp(dat$X, dat$y[-1], c(0, 0, 0), betas, "gaussian", 1, 10, FALSE, FALSE),
+    fit_glm_omp_cpp(
+      dat$X,
+      dat$y[-1],
+      c(0, 0, 0),
+      0,
+      betas,
+      "gaussian",
+      1,
+      10,
+      FALSE,
+      FALSE,
+      FALSE,
+      FALSE,
+      245
+    ),
     "Dimension mismatch"
   )
 
   # Mismatched betas columns
   bad_betas <- matrix(rnorm(40), ncol = 4)
   expect_error(
-    fit_glm_omp_cpp(dat$X, dat$y, c(0, 0, 0), bad_betas, "gaussian", 1, 10, FALSE, FALSE),
+    fit_glm_omp_cpp(
+      dat$X,
+      dat$y,
+      c(0, 0, 0),
+      0,
+      bad_betas,
+      "gaussian",
+      1,
+      10,
+      FALSE,
+      FALSE,
+      FALSE,
+      FALSE,
+      2454
+    ),
     "Dimension mismatch"
   )
+  trace_crash("21")
 })
 
 # test_that("Progress bar prints to console when approx = FALSE", {
@@ -119,6 +155,7 @@ test_that("fit_glm_omp_cpp enforces strict dimension matching", {
 # })
 
 test_that("BLAS threads are restored even if C++ throws an error", {
+  trace_crash("22")
   skip_if_not_installed("RhpcBLASctl")
 
   original_threads <- RhpcBLASctl::blas_get_num_procs()
@@ -130,7 +167,7 @@ test_that("BLAS threads are restored even if C++ throws an error", {
     family = "gaussian",
     betas = matrix(),
     mle_coefs = c(1, 1),
-    mle_val = 0,
+    ll_mle_original_data = 0,
     m = 10,
     parallel = TRUE,
     approx = FALSE
@@ -138,6 +175,7 @@ test_that("BLAS threads are restored even if C++ throws an error", {
 
   # Check if threads were restored despite the crash
   expect_equal(RhpcBLASctl::blas_get_num_procs(), original_threads)
+  trace_crash("22")
 })
 
 # test_that("glim handles factor y correctly", {
@@ -154,6 +192,7 @@ test_that("BLAS threads are restored even if C++ throws an error", {
 # })
 
 test_that("Inverse Gaussian Information Matrix (J) matches standard GLM implementations", {
+  trace_crash("23")
   set.seed(123)
   X <- cbind(1, rnorm(100))
   # True mu > 0
@@ -175,9 +214,11 @@ test_that("Inverse Gaussian Information Matrix (J) matches standard GLM implemen
 
   # They should be proportional/equivalent
   expect_equal(as.numeric(J_yours), as.numeric(J_r), tolerance = 1e-2)
+  trace_crash("23")
 })
 
 test_that("lerped_xi boundary logic catches extreme uniform values", {
+  trace_crash("24")
   # Rather than testing the whole function, you should abstract the lerping
   # logic into a tiny helper function (e.g., `interpolate_xi(u, AA, xi)`)
   # so you can unit test it directly with u = 0.0001 and u = 0.9999.
@@ -201,9 +242,11 @@ test_that("lerped_xi boundary logic catches extreme uniform values", {
   expect_equal(get_lerped(0.00005), 1)
   expect_equal(get_lerped(0.99995), 100)
   expect_true(get_lerped(0.5) > 1 && get_lerped(0.5) < 100)
+  trace_crash("24")
 })
 
 test_that("C++ Poisson solver runs and returns expected dimensions", {
+  trace_crash("25")
   set.seed(123)
   data <- generate_mock_data(n = 100, family = "poisson")
 
@@ -214,9 +257,11 @@ test_that("C++ Poisson solver runs and returns expected dimensions", {
   expect_length(res, ncol(data$X))
   # Basic sanity check that it's finite
   expect_true(all(is.finite(res)))
+  trace_crash("26")
 })
 
 test_that("C++ Inverse Gaussian solver handles basic inputs", {
+  trace_crash("27")
   set.seed(123)
   data <- generate_mock_data(n = 100, family = "inverse.gaussian")
 
@@ -227,20 +272,17 @@ test_that("C++ Inverse Gaussian solver handles basic inputs", {
 
   expect_type(res, "double")
   expect_length(res, ncol(data$X))
+  trace_crash("27")
 })
 
 test_that("C++ Gamma solver converges cleanly", {
+  trace_crash("28")
   set.seed(123)
   data <- generate_mock_data(n = 100, family = "gamma")
 
-  res <- fit_gamma_log_cpp(
-    X = data$X,
-    y = data$y,
-    XtX = t(data$X) %*% data$X,
-    initial_beta = rep(1, length = 3),
-    approx = FALSE
-  )
+  res <- fit_gamma_log_r(X = data$X, y = data$y, initial_beta = rep(1, length = 3))
 
   expect_type(res, "double")
   expect_length(res, ncol(data$X))
+  trace_crash("28")
 })

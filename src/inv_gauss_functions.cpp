@@ -56,6 +56,7 @@ double mle_estimate_dispersion_inv_gauss(const arma::vec &y,
 }
 
 // IRLS Inverse Gaussian regression solver (1/mu^2 link)
+// [[Rcpp::export]]
 arma::vec fit_invgauss_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &initial_beta, bool approx) {
   arma::vec proposed_beta = initial_beta;
@@ -166,7 +167,6 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
       (((mu % mu % mu) * (y.n_elem - beta_vals.n_elem)) * (1 + sbar)));
   double gamma = 1.0 / estimated_dispersion;
 
-  double true_ll = compute_invgauss_ll(y, mu, gamma);
   mle_val = compute_invgauss_ll(y, mu_hat, gamma);
   const double f_x =
       invgauss_ll_raw(y, mu, gamma) - invgauss_ll_raw(y, mu_hat, gamma);
@@ -176,7 +176,6 @@ double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
   is_already_parallel = omp_in_parallel();
 #endif
   bool run_inner_parallel = (radial || approx) && !is_already_parallel;
-  uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
 
   // is_already_parallel / run_inner_parallel / eval_seed as before
 

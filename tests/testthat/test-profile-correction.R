@@ -80,8 +80,7 @@ test_that("extend_profile() returns empty result when no extension is needed", {
     ll_mle_original_data = 0,
     m = 5,
     parallel = FALSE,
-    approx = FALSE,
-    base_seed = 1
+    approx = FALSE
   )
   expect_named(res, c("betas", "plaus"))
   expect_equal(dim(res$betas), c(0, 2))
@@ -109,23 +108,78 @@ test_that("extend_profile() returns a p-column matrix plus matching plausibiliti
     ll_mle_original_data = as.numeric(logLik(glmfit)),
     m = 50,
     parallel = FALSE,
-    approx = FALSE,
-    base_seed = 1
+    approx = FALSE
   )
   expect_equal(ncol(res$betas), 2)
   expect_equal(nrow(res$betas), length(res$plaus))
   expect_gt(nrow(res$betas), 0)
   expect_equal(res$betas[1, 2], mle[2] + 0.05, tolerance = 1e-10)
 })
-
-test_that("glim() extensions walk outward monotonically in the requested direction", {
+test_that("extend_profile walks outward and stops once plausibility falls below alpha", {
   gd <- fit_grid_pois()[["grid_data"]]
   col <- 2
+  alpha <- 0.05
+  tol <- 0.01
+  max_steps <- 200
+  b <- gd$betas_evaluated
+
+  # Cut the grid down to a narrow band around the MLE (about one step either
+  # side) so the plausible region lies well beyond the band and the extension
+  # has real work to do. The 1.5 absorbs floating-point error in the spacing.
+  step <- median(diff(sort(unique(b[, col]))))
+  keep <- abs(b[, col] - gd$mle_coefs[col]) <= 1.5 * step
+  b_small <- b[keep, , drop = FALSE]
+  p_small <- gd$possibilities[keep]
+
+  # Precondition: both edges of the narrow grid are plausible, so extension is
+  # requested in both directions.
+  edge_plaus <- function(v) max(p_small[b_small[, col] == v], na.rm = TRUE)
+  expect_gt(edge_plaus(min(b_small[, col])), alpha)
+  expect_gt(edge_plaus(max(b_small[, col])), alpha)
+
   for (dir in c(-1, 1)) {
-    ext <- if (dir > 0) gd$extended_in_pos_betas[[col]] else gd$extended_in_neg_betas[[col]]
-    if (nrow(ext) > 1) {
-      steps <- diff(ext[, col])
-      expect_true(all(sign(steps) == dir), info = paste("direction", dir))
+    edge_val <- if (dir > 0) max(b_small[, col]) else min(b_small[, col])
+    ext <- extend_profile(
+      dir,
+      TRUE,
+      b_small,
+      col,
+      p_small,
+      alpha,
+      tol,
+      step,
+      gd$family,
+      gd$X,
+      gd$y,
+      gd$dispersion,
+      gd$mle_coefs,
+      gd$logLik,
+      200,
+      FALSE,
+      FALSE,
+      max_steps = max_steps
+    )
+    n <- nrow(ext$betas)
+    label <- paste("direction", dir)
+
+    # The contract: at least one step is taken, and betas and plausibilities
+    # line up.
+    expect_gte(n, 1, label = label)
+    expect_equal(length(ext$plaus), n)
+
+    # Each step moves the profiled coordinate exactly one step outward from the
+    # edge, in the requested direction.
+    path <- c(edge_val, ext$betas[, col])
+    expect_true(all(sign(diff(path)) == dir), info = label)
+
+    # The walk only stops when a point is at or below alpha - tolerance. So
+    # every point except the last is still above that level, and the last point
+    # is the one that ended the walk (unless max_steps was exhausted).
+    if (n > 1) {
+      expect_true(all(ext$plaus[-n] > alpha - tol), info = label)
+    }
+    if (n < max_steps) {
+      expect_lte(ext$plaus[n], alpha - tol, label = paste("last plausibility,", label))
     }
   }
 })
@@ -165,9 +219,67 @@ test_that("extend_profile() respects max_steps with a warning", {
       m = 5,
       parallel = FALSE,
       approx = FALSE,
-      base_seed = 1,
       max_steps = 3
     ),
     "max_steps"
   )
+})
+
+test_that("extend_profile returns an empty result when no extension is requested", {
+  gd <- fit_grid_pois()[["grid_data"]]
+  p <- length(gd$mle_coefs)
+
+  for (dir in c(-1, 1)) {
+    ext <- extend_profile(
+      dir,
+      FALSE,
+      gd$betas_evaluated,
+      2,
+      gd$possibilities,
+      0.05,
+      0.01,
+      0.1,
+      gd$family,
+      gd$X,
+      gd$y,
+      gd$dispersion,
+      gd$mle_coefs,
+      gd$logLik,
+      50,
+      FALSE,
+      FALSE
+    )
+    expect_equal(nrow(ext$betas), 0)
+    expect_equal(ncol(ext$betas), p)
+    expect_length(ext$plaus, 0)
+  }
+})
+
+# .grid_bounds() on hand-built objects: no model fitting, no Monte Carlo noise.
+test_that(".grid_bounds uses only plausible extension points", {
+  g <- list(
+    betas_evaluated = cbind(b0 = c(-1, 0, 1)),
+    possibilities = c(0.5, 1, 0.5), # plausible all the way to both edges
+    extended_in_neg_betas = list(cbind(b0 = c(-2, -3))),
+    extended_in_neg_plaus = list(c(0.3, 0.01)), # -3 is the point that ended the walk
+    extended_in_pos_betas = list(cbind(b0 = 2)),
+    extended_in_pos_plaus = list(0.01) # the only extension point is implausible
+  )
+  b <- .grid_bounds(g, 0.05)
+  expect_equal(b$lower, -2) # the implausible -3 is dropped
+  expect_equal(b$upper, 1) # nothing plausible past the edge: fall back to the edge
+})
+
+test_that(".grid_bounds gives NA when the edge is reached and no extension exists", {
+  g <- list(betas_evaluated = cbind(b0 = c(-1, 0, 1)), possibilities = c(0.5, 1, 0.5))
+  b <- .grid_bounds(g, 0.05)
+  expect_true(is.na(b$lower))
+  expect_true(is.na(b$upper))
+})
+
+test_that(".grid_bounds uses the grid directly when plausibility falls inside it", {
+  g <- list(betas_evaluated = cbind(b0 = c(-1, 0, 1)), possibilities = c(0.01, 1, 0.01))
+  b <- .grid_bounds(g, 0.05)
+  expect_equal(b$lower, 0)
+  expect_equal(b$upper, 0)
 })

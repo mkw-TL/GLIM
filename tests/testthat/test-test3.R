@@ -109,11 +109,11 @@ test_that("glim_raw works with the gaussian family", {
     family = "gaussian",
     betas = matrix(c(.3, .5), nrow = 1),
     mle_coefs = mle_coefs,
-    mle_val = logLik(mle_fit),
+    ll_mle_original_data = 1,
     m = 100,
     parallel = FALSE,
     approx = TRUE,
-    base_seed = 24
+    show_progress = FALSE
   )
 
   # Assert expected output type or structure
@@ -140,10 +140,11 @@ test_that("glim_raw executes successfully for gaussian and inverse.gaussian fami
     family = "gaussian",
     betas = betas,
     mle_coefs = mle_coefs,
-    mle_val = mle_val,
+    ll_mle_original_data = mle_val,
     m = 10,
     parallel = FALSE,
-    approx = TRUE
+    approx = TRUE,
+    show_progress = FALSE
   )
   # Just expecting it to return a matrix (the possibility outputs) without error
   expect_true(is.matrix(res_gauss))
@@ -158,10 +159,11 @@ test_that("glim_raw executes successfully for gaussian and inverse.gaussian fami
     family = "inverse.gaussian",
     betas = betas,
     mle_coefs = mle_coefs,
-    mle_val = mle_val,
+    ll_mle_original_data = mle_val,
     m = 10,
     parallel = FALSE,
-    approx = TRUE
+    approx = TRUE,
+    show_progress = FALSE
   )
   expect_true(is.matrix(res_inv_gauss))
 })
@@ -189,10 +191,11 @@ test_that("C++ backend robustly handles collinear design matrices via fallback s
       family = "poisson",
       betas = betas,
       mle_coefs = mle_coefs,
-      mle_val = -10,
+      ll_mle_original_data = 10,
       m = 10,
       parallel = FALSE,
-      approx = TRUE
+      approx = TRUE,
+      show_progress = FALSE
     )
   })
 })
@@ -216,10 +219,11 @@ test_that("glim_raw works with gamma and poisson families", {
     family = "gamma",
     betas = betas,
     mle_coefs = mle_coefs,
-    mle_val = mle_val,
+    ll_mle_original_data = mle_val,
     m = 10,
     parallel = FALSE,
-    approx = TRUE
+    approx = TRUE,
+    show_progress = FALSE
   )
   expect_true(is.matrix(res_gamma))
 
@@ -233,10 +237,11 @@ test_that("glim_raw works with gamma and poisson families", {
     family = "poisson",
     betas = betas,
     mle_coefs = mle_coefs,
-    mle_val = mle_val,
+    ll_mle_original_data = mle_val,
     m = 10,
     parallel = FALSE,
-    approx = TRUE
+    approx = TRUE,
+    show_progress = FALSE
   )
   expect_true(is.matrix(res_pois))
 })
@@ -253,10 +258,11 @@ test_that("glim_raw triggers parallel processing logic safely", {
     family = "poisson",
     betas = matrix(c(2, 3, 1), nrow = 1),
     mle_coefs = coef(mle_fit),
-    mle_val = as.numeric(logLik(mle_fit)),
+    ll_mle_original_data = 1,
     m = 50,
     parallel = TRUE, # This will test the parallel core setup and RhpcBLASctl check
-    approx = TRUE
+    approx = TRUE,
+    show_progress = FALSE
   )
 
   expect_type(result, "double")

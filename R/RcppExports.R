@@ -17,6 +17,10 @@ radial_code <- function(num_samps, X, y, mle_val, mle_coefs, eig_vecs, eig_vals,
     .Call(`_GLIM_radial_code`, num_samps, X, y, mle_val, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val, num_omp_threads, base_seed)
 }
 
+fit_gamma_log_r <- function(X, y, initial_beta) {
+    .Call(`_GLIM_fit_gamma_log_r`, X, y, initial_beta)
+}
+
 compute_gamma_ll <- function(y, eta, shape) {
     .Call(`_GLIM_compute_gamma_ll`, y, eta, shape)
 }
@@ -37,6 +41,10 @@ compute_gaussian_ll <- function(y, mu, sigma) {
     .Call(`_GLIM_compute_gaussian_ll`, y, mu, sigma)
 }
 
+fit_gaussian_r <- function(X, y) {
+    .Call(`_GLIM_fit_gaussian_r`, X, y)
+}
+
 compute_gaussian_ll_mat <- function(y, mu, sigma) {
     .Call(`_GLIM_compute_gaussian_ll_mat`, y, mu, sigma)
 }
@@ -47,6 +55,10 @@ est_dispersion_normal <- function(y, mu, p) {
 
 mle_estimate_dispersion_inv_gauss <- function(y, ybar) {
     .Call(`_GLIM_mle_estimate_dispersion_inv_gauss`, y, ybar)
+}
+
+fit_invgauss_cpp <- function(X, y, initial_beta, approx) {
+    .Call(`_GLIM_fit_invgauss_cpp`, X, y, initial_beta, approx)
 }
 
 compute_invgauss_ll <- function(y, mu, gamma_val) {
@@ -71,5 +83,9 @@ compute_poisson_ll <- function(eta, y) {
 
 compute_poisson_ll_mat <- function(eta, y) {
     .Call(`_GLIM_compute_poisson_ll_mat`, eta, y)
+}
+
+fit_poisson_log_cpp <- function(X, y, initial_beta) {
+    .Call(`_GLIM_fit_poisson_log_cpp`, X, y, initial_beta)
 }
 

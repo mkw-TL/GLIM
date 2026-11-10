@@ -58,6 +58,14 @@ arma::vec fit_gamma_log_cpp(const arma::mat &X, const arma::mat &XtX,
   return beta;
 }
 
+// [[Rcpp::export]]
+arma::vec fit_gamma_log_r(const arma::mat &X, const arma::vec &y,
+                          const arma::vec &initial_beta) {
+  GammaWorkspace ws;
+  arma::mat XtX = X.t() * X;
+  return fit_gamma_log_cpp(X, XtX, y, initial_beta, false, ws);
+}
+
 // Helper function to compute full Gamma log-likelihood matching R's logLik()
 // [[Rcpp::export]]
 double compute_gamma_ll(const arma::vec &y, const arma::vec &eta,

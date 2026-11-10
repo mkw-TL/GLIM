@@ -92,6 +92,7 @@ PoissonResult fit_poisson_inner(const arma::mat &X, const arma::vec &y,
 }
 
 // Standalone wrapper for other callers
+// [[Rcpp::export]]
 arma::vec fit_poisson_log_cpp(const arma::mat &X, const arma::vec &y,
                               const arma::vec &initial_beta) {
   PoissonWorkspace ws(X.n_rows, X.n_cols);
@@ -173,7 +174,6 @@ PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
                                    uint32_t base_seed, int eval_index,
                                    arma::mat &Y_sim_workspace) {
   arma::vec eta_hat = arma::clamp(X * mle_coefs, -10.0, 10.0);
-  double mle_ll = compute_poisson_ll(eta_hat, y);
   PoissonWorkspace ws(X.n_rows, X.n_cols);
   return glm_poisson_pl_cpp(X, y, mle_coefs, mle_val, beta_vals, m, approx,
                             radial, base_seed, eval_index, Y_sim_workspace, ws);

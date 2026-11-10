@@ -2,18 +2,20 @@
 % Please edit documentation in R/glim_logic.R
 \name{confint.glim_object}
 \alias{confint.glim_object}
-\title{Extract the log likelihood at the MLE}
+\title{Returns a matrix with confidence interval values}
 \usage{
-\method{confint}{glim_object}(object, alpha = 0.05)
+\method{confint}{glim_object}(object, parm = NULL, level = 0.95)
 }
 \arguments{
 \item{object}{A 'glim_object' from 'glim()'}
 
-\item{...}{Additional arguments}
+\item{parm}{A vector a strings specifying which variables to select}
+
+\item{level}{1-alpha}
 }
 \value{
 A matrix containing the confidence/credible interval
 }
 \description{
-Extracts the logLik at the MLE value. Will be very similar to glm's implementation, but will be minor differences based on the implementation to arrive at the MLE. Most notably, since the gamma and inverse gaussian case use a MLE estimator (instead of glm's default Pearson MOM estimator) for the dispersion parameter, this will provide different results in this case.
+Same numbers as used in print(), modulo stochastic noise
 }
