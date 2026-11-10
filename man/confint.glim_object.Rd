@@ -4,7 +4,7 @@
 \alias{confint.glim_object}
 \title{Returns a matrix with confidence interval values}
 \usage{
-\method{confint}{glim_object}(object, parm = NULL, level = 0.95)
+\method{confint}{glim_object}(object, parm = NULL, level = 0.95, ...)
 }
 \arguments{
 \item{object}{A 'glim_object' from 'glim()'}
@@ -12,6 +12,8 @@
 \item{parm}{A vector a strings specifying which variables to select}
 
 \item{level}{1-alpha}
+
+\item{...}{Unused}
 }
 \value{
 A matrix containing the confidence/credible interval

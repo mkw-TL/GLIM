@@ -7,9 +7,11 @@
 \method{print}{glim_object}(x, alpha = 0.05, ...)
 }
 \arguments{
-\item{x}{A 'glim_object' from 'glim()'}
+\item{x}{a 'glim_object'}
 
-\item{alpha}{Supports differing alpha levels, although will not provide correct results if initial model specified a higher alpha level.}
+\item{alpha}{A specified alpha level cut}
+
+\item{...}{Unused}
 }
 \value{
 Print output
