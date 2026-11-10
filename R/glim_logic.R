@@ -2320,9 +2320,10 @@ plot.glim_object <- function(x, ...) {
 #' @param object A 'glim_object' from 'glim()'
 #' @param parm A vector a strings specifying which variables to select
 #' @param level 1-alpha
+#' @param ... Unused
 #' @return A matrix containing the confidence/credible interval
 #' @export
-confint.glim_object <- function(object, parm = NULL, level = .95) {
+confint.glim_object <- function(object, parm = NULL, level = .95, ...) {
   alpha <- 1 - level
   if ("grid_data" %in% names(object)) {
     # Grid fit: everything is stored inside grid_data (not at the top level).
@@ -2383,6 +2384,9 @@ confint.glim_object <- function(object, parm = NULL, level = .95) {
 #' # Print at a different alpha level
 #' print(fit, alpha = .10)
 #' }
+#' @param x a 'glim_object'
+#' @param alpha A specified alpha level cut
+#' @param ... Unused
 #' @export
 print.glim_object <- function(x, alpha = .05, ...) {
   cat(sprintf("%.0f%% (marginal) confidence and credible region:\n", (1 - alpha) * 100))
