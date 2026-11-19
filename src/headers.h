@@ -72,24 +72,23 @@ struct GaussianWorkspace {
 PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
                                    const arma::vec &mle_coefs, double mle_val,
                                    const arma::vec &beta_vals, int m,
-                                   bool approx, bool radial, uint32_t base_seed,
+                                   bool approx, uint32_t base_seed,
                                    int eval_index, arma::mat &Y_sim_workspace,
-                                   PoissonWorkspace &ws);
+                                   PoissonWorkspace &ws, bool inner_parallel);
 
 PoissonPlResult glm_poisson_pl_cpp(const arma::mat &X, const arma::vec &y,
                                    const arma::vec &mle_coefs, double mle_val,
                                    const arma::vec &beta_vals, int m,
-                                   bool approx, bool radial,
-
-                                   uint32_t base_seed, int eval_index,
-                                   arma::mat &Y_sim_workspace);
+                                   bool approx, uint32_t base_seed,
+                                   int eval_index, arma::mat &Y_sim_workspace,
+                                   bool inner_parallel);
 
 double glm_gamma_pl_cpp(const arma::mat &X, const arma::mat &XtX,
                         const arma::vec &y, const arma::vec &mle_coefs,
                         const double mle_val, const arma::vec &beta_vals, int m,
-                        bool approx, bool radial, uint32_t base_seed,
-                        int eval_index, const arma::vec &eta_hat,
-                        arma::mat &Y_sim_workspace, GammaWorkspace &ws);
+                        bool approx, uint32_t base_seed, int eval_index,
+                        const arma::vec &eta_hat, arma::mat &Y_sim_workspace,
+                        GammaWorkspace &ws, bool inner_parallel);
 
 // All scratch space needed by the logistic IRLS fit and the simulation loop, so
 // that nothing is allocated inside the hot loops. `ensure()` is a no-op when
@@ -160,34 +159,35 @@ LogisticPlResult glm_logis_pl_from_uniforms(const arma::mat &X,
 LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
                                   const arma::vec &mle_coefs, double mle_val,
                                   const arma::vec &beta_vals, int m,
-                                  bool approx, bool radial, uint32_t base_seed,
+                                  bool approx, uint32_t base_seed,
                                   int eval_index, arma::mat &Y_sim_workspace,
-                                  LogisticWorkspace &ws);
+                                  LogisticWorkspace &ws, bool inner_parallel);
 
 double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs, double mle_val,
                            const arma::vec &beta_vals, int m, bool approx,
-                           bool radial, uint32_t base_seed, int eval_index,
-                           double sigma, arma::mat &Y_sim_workspace,
-                           GaussianWorkspace &ws);
+                           uint32_t base_seed, int eval_index, double sigma,
+                           arma::mat &Y_sim_workspace, GaussianWorkspace &ws,
+                           bool inner_parallel);
 
 double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs, double mle_val,
                            const arma::vec &beta_vals, int m, bool approx,
-                           bool radial, uint32_t base_seed, int eval_index,
-                           arma::mat &Y_sim_workspace, GaussianWorkspace &ws);
+                           uint32_t base_seed, int eval_index,
+                           arma::mat &Y_sim_workspace, GaussianWorkspace &ws,
+                           bool inner_parallel);
 
 double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs, double mle_val,
                            const arma::vec &beta_vals, int m, bool approx,
-                           bool radial, uint32_t base_seed, int eval_index,
+                           uint32_t base_seed, int eval_index,
                            const arma::vec &mu_hat, arma::mat &Y_sim_workspace,
-                           InvGaussWorkspace &ws);
+                           InvGaussWorkspace &ws, bool inner_parallel);
 
 double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs, double mle_val,
                            const arma::vec &beta_vals, int m, bool approx,
-                           bool radial, uint32_t base_seed, int eval_index,
-                           arma::mat &Y_sim_workspace);
+                           uint32_t base_seed, int eval_index,
+                           arma::mat &Y_sim_workspace, bool inner_parallel);
 
 #endif

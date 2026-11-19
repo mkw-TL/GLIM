@@ -183,9 +183,9 @@ LogisticPlResult glm_logis_pl_from_uniforms(const arma::mat &X,
 LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
                                   const arma::vec &mle_coefs, double mle_val,
                                   const arma::vec &beta_vals, int m,
-                                  bool approx, bool radial, uint32_t base_seed,
+                                  bool approx, uint32_t base_seed,
                                   int eval_index, arma::mat &Y_sim_workspace,
-                                  LogisticWorkspace &ws) {
+                                  LogisticWorkspace &ws, bool inner_parallel) {
 
   const arma::uword n = X.n_rows;
 
@@ -193,7 +193,7 @@ LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
 #ifdef _OPENMP
   is_already_parallel = omp_in_parallel();
 #endif
-  const bool run_inner_parallel = (radial || approx) && !is_already_parallel;
+  const bool run_inner_parallel = inner_parallel && !is_already_parallel;
   const uint64_t eval_seed = static_cast<uint64_t>(base_seed) +
                              10007ULL * static_cast<uint64_t>(eval_index);
 
@@ -203,6 +203,8 @@ LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
   }
   fill_uniforms(Y_sim_workspace, eval_seed, m, run_inner_parallel);
 
+  // CHANGED: no extra trailing argument. run_inner_parallel already carries
+  // the decision, so the original signature of the helper is unchanged.
   return glm_logis_pl_from_uniforms(X, y, mle_val, beta_vals, Y_sim_workspace,
                                     m, run_inner_parallel, ws);
 }
@@ -211,17 +213,19 @@ LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
 LogisticPlResult glm_logis_pl_cpp(const arma::mat &X, const arma::vec &y,
                                   const arma::vec &mle_coefs,
                                   const arma::vec &beta_vals, int m,
-                                  bool approx, bool radial,
+                                  bool approx,
 
                                   uint32_t base_seed, int eval_index,
-                                  arma::mat &Y_sim_workspace) {
+                                  arma::mat &Y_sim_workspace,
+                                  bool inner_parallel) {
 
   arma::vec eta_hat = X * mle_coefs;
   double mle_val = arma::dot(y, eta_hat) - sum_softplus(eta_hat);
 
   LogisticWorkspace ws(X.n_rows, X.n_cols);
   return glm_logis_pl_cpp(X, y, mle_coefs, mle_val, beta_vals, m, approx,
-                          radial, base_seed, eval_index, Y_sim_workspace, ws);
+                          base_seed, eval_index, Y_sim_workspace, ws,
+                          inner_parallel);
 }
 
 static double logistic_ll_impl(const arma::mat &X, const arma::vec &y,

@@ -19,66 +19,6 @@ NULL
 # Distributed under the terms of the GNU General Public License,
 # version 3.
 
-#' Fits GLIM (Raw Implementation)
-#'
-#' Evaluates possibility for beta/dispersion values.
-#'
-#' @param X Input predictor matrix. If a data frame is provided, it will be coerced to a model matrix.
-#' @param y Response vector.
-#' @param family A string indicating the error distribution. Options include `"gaussian"`, `"poisson"`, `"gamma"`, `"binomial"`.
-#' @param betas A grid of beta values to evaluate, where each column is a new beta vector. Not required if `approx = TRUE`.
-#' @param mle_coefs Maximum likelihood estimates of the coefficients.
-#' @param ll_mle_original_data The log-likelihood value at the maximum likelihood estimates.
-#' @param m Number of evaluations per beta (number of samples).
-#' @param parallel Logical indicating whether to run in parallel (primarily for debugging).
-#' @param approx Logical indicating whether to use the elliptical approximation.
-#' @param ... A way to pass in .Random.seed
-#' @return A matrix of evaluated possibility outputs.
-#' @noRd
-glim_raw <- function(
-  X,
-  y,
-  family = "gaussian",
-  betas,
-  mle_coefs,
-  ll_mle_original_data,
-  m,
-  parallel,
-  approx,
-  show_progress
-) {
-  if (parallel) {
-    num_omp_threads <- max(1, parallel::detectCores() - 1)
-
-    # We change the number of blas threads down to 1 so that the parallelization doesn't
-    # request even more threads.
-    if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
-      original_blas_threads <- RhpcBLASctl::blas_get_num_procs()
-      RhpcBLASctl::blas_set_num_threads(1)
-      # If we get a function crash (or not!), reset the threads back to what it originally was
-      on.exit(RhpcBLASctl::blas_set_num_threads(original_blas_threads), add = TRUE)
-    }
-  } else {
-    num_omp_threads <- 1
-  }
-
-  output <- fit_glm_omp_cpp(
-    X = X,
-    y = y,
-    mle_coefs = mle_coefs,
-    mle_val = ll_mle_original_data,
-    betas = betas,
-    family = family, # Pass the string straight down
-    num_threads = num_omp_threads,
-    m = m,
-    parallel = parallel,
-    approx = approx,
-    show_progress = show_progress
-  )
-  return(output)
-}
-
-
 gradient <- function(family, X, y, beta, dispersion = 1) {
   # Calculate the linear predictor vector for all observations
   eta <- as.vector(X %*% beta)
@@ -140,7 +80,7 @@ generate_marginal_object <- function(
   alpha = 0.05,
   step = NULL,
   m = 50,
-  parallel = FALSE,
+  parallel = TRUE,
   max_iter = 500
 ) {
   margins <- list()
@@ -205,7 +145,7 @@ generate_marginal_object <- function(
           mle_coefs = mle_coefs,
           ll_mle_original_data = ll_mle_original_data,
           m = m,
-          parallel = FALSE,
+          parallel = TRUE,
           approx = FALSE,
           show_progress = FALSE
         )
@@ -259,96 +199,6 @@ generate_marginal_object <- function(
   return(obj_to_return)
 }
 
-#' Generates a grid of parameter values (cut by imvar)
-#'
-#' Aligned in parameter grid, rather than eigen-vector space for easier marginalization
-#' @noRd
-generate_grid <- function(
-  X,
-  y,
-  family,
-  mle_coefs,
-  eigen_vecs,
-  eigen_vals,
-  dispersion,
-  ll_mle_original_data,
-  trim = FALSE,
-  n_grid_evals = 25,
-  m = 1000
-) {
-  initial_xi <- rep(1, length(mle_coefs))
-
-  alpha_target <- 0.01
-
-  imvar_xi <- imvar(
-    X,
-    y,
-    initial_xi,
-    family,
-    alpha_target,
-    mle_coefs,
-    ll_mle_original_data,
-    eigen_vecs,
-    eigen_vals,
-    dispersion,
-    generate_grid = TRUE,
-    tol = .005, # the tolerance value
-    a_val = 2, # found through a grid search
-    b_val = .65, # found through a grid search
-    max_it = 25,
-    parallel = FALSE,
-    m = m # This is our m value
-  )
-  q_val <- qchisq(1 - alpha_target, df = length(mle_coefs)) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
-  base_scale <- sqrt(dispersion * q_val * (1 / eigen_vals))
-  semi_axes <- base_scale * sqrt(imvar_xi)
-  transformed_mat <- eigen_vecs %*% diag(as.vector(semi_axes)) # Takes the principle axes (through diag) and scales them (by semi_axes), then rotate to eigen_vector span
-
-  # To make the beta coordinate the largest, we have our transformation matrix (times u, where u is a unit sphere).
-  # Then, for a particular coordinate, we have b1 = row_1 * u, where this is maximized if u is in the direction of row_1.
-  # Is component-wise squaring
-  H <- sqrt(rowSums(transformed_mat^2))
-
-  # Generate the Axis-Aligned Grid using the bounding box widths
-  beta <- list()
-  n_left <- floor((n_grid_evals - 1) / 2)
-  n_right <- n_grid_evals - 1 - n_left # if n_grid_evals is even, right side gets one more data point
-  approx_grid_resolution <- c()
-  for (i in 1:length(mle_coefs)) {
-    beta[[i]] <- c(
-      # Allocate half the points to the left, half to the right
-      seq(mle_coefs[i] - H[i], mle_coefs[i], length.out = n_left + 1)[-(n_left + 1)], # Left side excluding MLE. Need to do length.out + 1 because we're going to get rid of one
-      mle_coefs[i], # Exact MLE
-      seq(mle_coefs[i], mle_coefs[i] + H[i], length.out = n_right + 1)[-1] # Right side excluding MLE
-    )
-    approx_grid_resolution[i] <- 2 * H[i] / n_grid_evals # only approximate because of the MLE, and depending on if even or odd. Used later for extending out parameter space
-  }
-
-  betas <- as.matrix(expand.grid(beta))
-  colnames(betas) <- colnames(X)
-  # Written by Gemini
-  shifted_points <- sweep(betas, 2, mle_coefs, FUN = "-") # 2 means that it applies along the columns. Betas - mle_coefs for each column
-  rotated_points <- shifted_points %*% eigen_vecs
-  scaled_sq_points <- sweep(rotated_points^2, 2, semi_axes^2, FUN = "/")
-  inside_indices <- rowSums(scaled_sq_points) <= 1.001 # allowing for machine tolerance.
-  # Check if they are inside the unit sphere (i.e. inside the ellipse)
-  if (!any(inside_indices)) {
-    stop(
-      "GLIM error: no grid points fell inside the confidence ellipse. ",
-      "Try increasing 'n_grid_evals' or check that the model fit ",
-      "(mle_coefs / eigen decomposition) is not degenerate.",
-      call. = FALSE
-    )
-  }
-  # Check if they are inside the unit sphere (i.e. inside the ellipse)
-  # From betas, select all the columns (proposed betas) that are inside
-  if (trim == TRUE) {
-    points_inside <- betas[inside_indices, ]
-    return(list(betas = points_inside, approx_grid_resolution = approx_grid_resolution))
-  }
-  return(list(betas = betas, approx_grid_resolution = approx_grid_resolution))
-}
-
 
 #' Generate Elliptical Approximation Samples (Inner Probability)
 #'
@@ -378,19 +228,18 @@ glim_inner_prob_approx_samples <- function(
   max_it,
   tol
 ) {
+  n_threads <- 1
   if (parallel) {
-    num_omp_threads <- max(1, parallel::detectCores() - 1)
-
-    # We change the number of blas threads down to 1 so that the parallelization doesn't
-    # request even more threads.
-    if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
-      original_blas_threads <- RhpcBLASctl::blas_get_num_procs()
-      RhpcBLASctl::blas_set_num_threads(1)
-      # If we get a function crash, reset the threads back to what it originally was
-      on.exit(RhpcBLASctl::blas_set_num_threads(original_blas_threads), add = TRUE)
+    cores <- parallel::detectCores(logical = FALSE)
+    if (is.na(cores)) {
+      cores <- parallel::detectCores()
     }
-  } else {
-    num_omp_threads <- 1
+    n_threads <- max(1L, cores - 1L)
+  }
+  if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+    old <- RhpcBLASctl::blas_get_num_procs()
+    RhpcBLASctl::blas_set_num_threads(1)
+    on.exit(RhpcBLASctl::blas_set_num_threads(old), add = TRUE)
   }
   B <- 99
   AA <- seq(0.01, 0.99, length.out = B)
@@ -425,7 +274,9 @@ glim_inner_prob_approx_samples <- function(
       b_val = b_val,
       max_it = max_it,
       parallel = TRUE,
-      m = m
+      m = m,
+      base_seed = 31,
+      num_threads = n_threads
     )
     prev_xi <- xi[[i]]
     q_val <- qchisq(1 - alpha, df = length(mle_coefs)) # This is the first guess at our quantile distance, which we need to modify slightly by xi.
@@ -584,6 +435,11 @@ correct_profile_point <- function(
   return(beta)
 }
 
+# ---- extend_profile ----------------------------------------------------------
+# Geometric step growth until plausibility drops below alpha, then bisection
+# on the bracket. Stepping uses a smaller m_ext and a fresh seed per step; all
+# accepted points are then re-evaluated once at full m. Signature is backward
+# compatible (new arguments are at the end).
 extend_profile <- function(
   direction,
   needs_extension,
@@ -602,61 +458,131 @@ extend_profile <- function(
   m,
   parallel,
   approx,
-  max_steps = 200
+  max_steps = 40,
+  n_bisect = 6,
+  growth = 1.5,
+  m_ext = min(m, 300),
+  seed0 = 7919L
 ) {
   p <- length(mle_coefs)
   off_idx <- setdiff(seq_len(p), col)
-  out_betas <- matrix(nrow = 0, ncol = p)
-  out_plaus <- numeric(0)
-
-  if (needs_extension) {
-    edge_val <- if (direction > 0) max(betas[, col]) else min(betas[, col])
-    edge_rows <- which(betas[, col] == edge_val)
-    seed <- edge_rows[which.max(possibilities[edge_rows])]
-    new_beta <- betas[seed, ]
-    current_plaus <- possibilities[seed]
-  } else {
-    return(list(betas = out_betas, plaus = out_plaus)) # nothing to extend
+  empty <- list(betas = matrix(nrow = 0, ncol = p), plaus = numeric(0))
+  if (!needs_extension) {
+    return(empty)
   }
 
-  for (k in seq_len(max_steps)) {
-    if (!is.finite(current_plaus) || current_plaus <= alpha - tolerance) {
-      break
-    }
+  edge_val <- if (direction > 0) max(betas[, col]) else min(betas[, col])
+  edge_rows <- which(betas[, col] == edge_val)
+  seed_row <- edge_rows[which.max(possibilities[edge_rows])]
+  prev_beta <- betas[seed_row, ]
 
-    tang <- profile_tangent(family, X, new_beta, col, dispersion)
-    if (is.null(tang)) {
-      warning(sprintf("Column %d: profile tangent failed; extension stopped.", col))
-      break
-    }
-    cand <- new_beta
-    cand[col] <- cand[col] + direction * step
-    cand[off_idx] <- cand[off_idx] + direction * step * tang
-    if (!is.finite(compute_ll(family, y, X, cand, mle_coefs))) {
-      warning(sprintf("Column %d: step left the valid parameter domain; extension stopped.", col))
-      break
-    }
-
-    new_beta <- correct_profile_point(family, X, y, cand, col, dispersion, mle_coefs)
-    current_plaus <- as.numeric(glim_raw(
+  eval_plaus <- function(b, tag, mm) {
+    as.numeric(glim_raw(
       X,
       y,
       family = family,
-      betas = matrix(new_beta, nrow = 1),
+      betas = matrix(b, nrow = 1),
+      mle_coefs = mle_coefs,
+      ll_mle_original_data = ll_mle_original_data,
+      m = mm,
+      parallel = parallel,
+      approx = approx,
+      show_progress = FALSE,
+      base_seed = as.integer(seed0 + 1009L * tag)
+    ))
+  }
+
+  out_betas <- list()
+  out_plaus <- numeric(0)
+  tag <- 0L
+  h <- step
+  bracket <- NULL
+  stop_reason <- NULL
+
+  # ---- Phase 1: grow until plausibility falls below alpha --------------------
+  for (k in seq_len(max_steps)) {
+    tang <- profile_tangent(family, X, prev_beta, col, dispersion)
+    if (is.null(tang)) {
+      stop_reason <- "profile tangent failed"
+      break
+    }
+    cand <- prev_beta
+    cand[col] <- cand[col] + direction * h
+    cand[off_idx] <- cand[off_idx] + direction * h * tang
+    if (!is.finite(compute_ll(family, y, X, cand, mle_coefs))) {
+      stop_reason <- "step left the valid parameter domain"
+      break
+    }
+    new_beta <- correct_profile_point(family, X, y, cand, col, dispersion, mle_coefs)
+    tag <- tag + 1L
+    pl <- eval_plaus(new_beta, tag, m_ext)
+    if (!is.finite(pl)) {
+      stop_reason <- "non-finite plausibility"
+      break
+    }
+    out_betas[[length(out_betas) + 1L]] <- unname(new_beta)
+    out_plaus <- c(out_plaus, pl)
+
+    if (pl < alpha) {
+      bracket <- list(lo = prev_beta, hi = new_beta) # lo above alpha, hi below
+      break
+    }
+    prev_beta <- new_beta
+    h <- h * growth
+  }
+
+  if (is.null(bracket) && is.null(stop_reason)) {
+    warning(sprintf("Column %d: no crossing of alpha within %d steps.", col, max_steps))
+  } else if (!is.null(stop_reason)) {
+    warning(sprintf("Column %d: %s; extension stopped.", col, stop_reason))
+  }
+
+  # ---- Phase 2: bisect the bracket ------------------------------------------
+  if (!is.null(bracket)) {
+    lo <- bracket$lo
+    hi <- bracket$hi
+    for (b in seq_len(n_bisect)) {
+      mid <- (lo + hi) / 2
+      mid <- correct_profile_point(family, X, y, mid, col, dispersion, mle_coefs)
+      tag <- tag + 1L
+      pl <- eval_plaus(mid, tag, m_ext)
+      if (!is.finite(pl)) {
+        break
+      }
+      out_betas[[length(out_betas) + 1L]] <- unname(mid)
+      out_plaus <- c(out_plaus, pl)
+      if (abs(pl - alpha) <= tolerance) {
+        break
+      }
+      if (pl >= alpha) lo <- mid else hi <- mid
+    }
+  }
+
+  if (length(out_betas) == 0L) {
+    return(empty)
+  }
+
+  out_betas <- do.call(rbind, out_betas)
+
+  # ---- Re-evaluate everything accepted at full m (one batched call) ----------
+  if (m_ext < m) {
+    out_plaus <- as.numeric(glim_raw(
+      X,
+      y,
+      family = family,
+      betas = out_betas,
       mle_coefs = mle_coefs,
       ll_mle_original_data = ll_mle_original_data,
       m = m,
       parallel = parallel,
       approx = approx,
-      show_progress = FALSE
+      show_progress = FALSE,
+      base_seed = as.integer(seed0 + 104729L)
     ))
-    out_betas <- rbind(out_betas, unname(new_beta))
-    out_plaus <- c(out_plaus, current_plaus)
   }
-  if (k == max_steps) {
-    warning(sprintf("Column %d: hit max_steps while extending.", col))
-  }
-  list(betas = out_betas, plaus = out_plaus)
+
+  ord <- order(direction * out_betas[, col])
+  list(betas = out_betas[ord, , drop = FALSE], plaus = out_plaus[ord])
 }
 
 .is_flag <- function(x) is.logical(x) && length(x) == 1 && !is.na(x)
@@ -798,7 +724,7 @@ glim <- function(
       stop("Input Error: n_grid_evals must be an integer greater than 1")
     }
   } else {
-    n_grid_evals <- 25 # Is this a good number?
+    n_grid_evals <- 17 # Is this a good number?
   }
 
   if ("max_it" %in% names(args)) {
@@ -870,7 +796,45 @@ glim <- function(
     env <- parent.frame()
   }
   mf <- eval(mf, env)
+  n_dropped <- length(attr(mf, "na.action"))
+  if (n_dropped > 0L) {
+    message(sprintf(
+      ngettext(
+        n_dropped,
+        "%d row has been dropped from the analysis due to missing values.",
+        "%d rows have been dropped from the analysis due to missing values."
+      ),
+      n_dropped
+    ))
+  }
   mt <- attr(mf, "terms")
+
+  # Check if any predictor (including columns inside a matrix predictor) is all 1s
+  if (attr(mt, "intercept") == 1L && ncol(mf) > 1L) {
+    has_explicit_intercept <- FALSE
+
+    # Loop over predictor variables (skipping column 1, which is the response)
+    for (j in 2:ncol(mf)) {
+      col_data <- mf[[j]]
+      if (is.matrix(col_data)) {
+        # Check each column of a matrix predictor (e.g., X_poisson)
+        if (any(apply(col_data, 2L, function(x) is.numeric(x) && all(x == 1)))) {
+          has_explicit_intercept <- TRUE
+          break
+        }
+      } else if (is.numeric(col_data) && all(col_data == 1)) {
+        # Also catches a standalone vector of 1s (e.g., y ~ x1 + x2)
+        has_explicit_intercept <- TRUE
+        break
+      }
+    }
+
+    # Drop the automatic intercept from the terms object if an explicit one exists
+    if (has_explicit_intercept) {
+      attr(mt, "intercept") <- 0L
+    }
+  }
+
   X <- model.matrix(mt, mf, NULL)
   y <- model.response(mf, "any")
   if (any(is.na(y))) {
@@ -1114,15 +1078,12 @@ glim <- function(
         ll_mle_original_data,
         n_grid_evals = n_grid_evals,
         trim = trim,
-        m = m
+        m = m,
+        parallel = parallel
       )
       betas <- generated_grid$betas
       step <- generated_grid$approx_grid_resolution
-      message(sprintf(
-        "There are (up to) %d grid points to evaluate. Each grid point requires %d glm fits\n",
-        n_grid_evals^length(mle_coefs),
-        m
-      ))
+      message(sprintf("Evaluating %d grid points, %d glm fits each.\n", nrow(betas), m))
       if (n_grid_evals^length(mle_coefs) > 100000) {
         message(sprintf(
           "Be warned of crashes due to lack of memory For 5+ predictors, use approx = TRUE"
@@ -1365,19 +1326,14 @@ glim <- function(
   if (radial == TRUE && approx == TRUE) {
     stop("Radial and Elliptical approximation methods cannot both be used")
   }
+  if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+    old <- RhpcBLASctl::blas_get_num_procs()
+    RhpcBLASctl::blas_set_num_threads(1)
+    on.exit(RhpcBLASctl::blas_set_num_threads(old), add = TRUE)
+  }
   # radial and elliptical ALWAYS calculate actual marginals
   if (radial == TRUE && approx == FALSE) {
     message("For 5+ predictors, the elliptical (approx) method is recommended")
-    num_omp_threads <- max(1, parallel::detectCores() - 1)
-
-    # We change the number of blas threads down to 1 so that the parallelization doesn't
-    # request even more threads.
-    if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
-      original_blas_threads <- RhpcBLASctl::blas_get_num_procs()
-      RhpcBLASctl::blas_set_num_threads(1)
-      # If we get a function crash (or not!), reset the threads back to what it originally was
-      on.exit(RhpcBLASctl::blas_set_num_threads(original_blas_threads), add = TRUE)
-    }
     radial_list <- radial(
       num_samps,
       X,
@@ -1688,7 +1644,8 @@ radial <- function(
     ll_mle_original_data = ll_mle_original_data,
     trim = FALSE,
     n_grid_evals = n_grid_evals,
-    m = m
+    m = m,
+    parallel = parallel
   )
   return(list(output_samples = output_samples, betas_evaluated = grid))
 }
@@ -1723,6 +1680,15 @@ prob2poss_poisson <- function(X, y, mle, samples, the_compared_theta) {
   ll_val_samps <- as.vector(compute_poisson_ll_r(y, X %*% samples))
   ll_val <- as.vector(compute_poisson_ll_r(y, X %*% theta))
   sapply(ll_val, function(x) mean(ll_val_samps <= x))
+}
+
+.ext_points <- function(g, col) {
+  b <- rbind(
+    if (NROW(g$extended_in_neg_betas[[col]])) g$extended_in_neg_betas[[col]],
+    if (NROW(g$extended_in_pos_betas[[col]])) g$extended_in_pos_betas[[col]]
+  )
+  p <- c(g$extended_in_neg_plaus[[col]], g$extended_in_pos_plaus[[col]])
+  list(betas = b, plaus = as.vector(p))
 }
 
 # TODO figure out 2d marginalization for the elliptical case (if at all)
@@ -1785,9 +1751,9 @@ plot.glim_object <- function(x, ...) {
       ys <- ys[ord]
       xlab <- ""
       family <- ""
-      if ("extra_info" %in% names(x)) {
-        xlab <- colnames(x[["extra_info"]]$X)[col]
-        family <- x[["extra_info"]]$family
+      if ("grid_data" %in% names(x)) {
+        xlab <- colnames(x[["grid_data"]]$X)[col]
+        family <- x[["grid_data"]]$family
       } else if ("elliptical_data" %in% names(x)) {
         xlab <- colnames(x[["margin"]][["extra_info"]]$X)[col]
         family <- x[["margin"]][["extra_info"]]$family
@@ -1819,38 +1785,51 @@ plot.glim_object <- function(x, ...) {
       font = 2
     )
   } else if ("grid_data" %in% names(x)) {
-    x <- x$grid_data
-    betas <- x$betas_evaluated
-    poss <- x$possibilities
-    family <- x$family
-    alphas <- NULL
-
-    if ("alphas" %in% names(x)) {
-      alphas <- x$alphas
-    }
-    # Evaluated betas grid case (Pairs Matrix Layout)
+    g <- x$grid_data
+    betas <- g$betas_evaluated
+    poss <- as.vector(g$possibilities)
+    family <- g$family
     num_predictors <- ncol(betas)
     col_names <- colnames(betas)
     if (is.null(col_names)) {
       col_names <- paste0("Beta_", 1:num_predictors)
     }
+    alpha_line <- if (alpha != -1) alpha else 0.05
+
+    # Stack the grid with all extension points (each is a full beta vector)
+    ext <- do.call(
+      rbind,
+      lapply(seq_len(num_predictors), function(k) {
+        e <- .ext_points(g, k)
+        if (is.null(e$betas)) {
+          return(NULL)
+        }
+        cbind(e$betas, plaus = e$plaus)
+      })
+    )
+    ext_betas <- if (!is.null(ext)) ext[, seq_len(num_predictors), drop = FALSE] else NULL
+
+    # One shared range per coefficient, covering the grid and its extensions
+    lims <- lapply(seq_len(num_predictors), function(k) {
+      vals <- betas[, k]
+      if (!is.null(ext_betas)) {
+        vals <- c(vals, ext_betas[, k])
+      }
+      range(vals[is.finite(vals)])
+    })
 
     old_par <- par(no.readonly = TRUE)
     on.exit(par(old_par))
-
-    # Dynamically scale font size according to matrix size
     cex_val <- max(0.6, 1.15 - 0.08 * num_predictors)
-
     par(
       mfrow = c(num_predictors, num_predictors),
-      mar = c(3, 3, 1.5, 0.8), # Tightened per panel
-      oma = c(1, 1, 3.5, 0), # Outer margin space for title and exterior axis labels
-      mgp = c(1.8, 0.5, 0), # Moves axis titles && tick labels closer to the axis
+      mar = c(3, 3, 1.5, 0.8),
+      oma = c(1, 1, 3.5, 0),
+      mgp = c(1.8, 0.5, 0),
       cex.lab = cex_val * 1.2,
       cex.axis = cex_val * 1.2
     )
 
-    # Helper function for max handling empty NA slices
     max_or_na <- function(v) {
       v <- v[!is.na(v)]
       if (length(v) == 0) NA_real_ else max(v)
@@ -1859,331 +1838,89 @@ plot.glim_object <- function(x, ...) {
     for (row in 1:num_predictors) {
       for (col in 1:num_predictors) {
         if (row == col) {
-          # --- DIAGONAL: 1D Profile Plot ---
-          max_plaus <- tapply(poss, betas[, col], max_or_na)
+          # DIAGONAL: profile uses grid AND extension points
+          own <- .ext_points(g, col)
+          b_d <- betas[, col]
+          p_d <- poss
+          if (!is.null(own$betas)) {
+            b_d <- c(b_d, own$betas[, col])
+            p_d <- c(p_d, own$plaus)
+          }
+          max_plaus <- tapply(p_d, b_d, max_or_na)
           beta_vals <- as.numeric(names(max_plaus))
-          valid <- is.finite(max(beta_vals)) && is.finite(min(beta_vals)) && is.finite(max_plaus)
-
-          if (any(valid)) {
-            ord <- order(beta_vals[valid])
+          ok <- is.finite(beta_vals) & is.finite(max_plaus)
+          if (any(ok)) {
+            ord <- order(beta_vals[ok])
             plot.default(
-              beta_vals[valid][ord],
-              max_plaus[valid][ord],
-              type = 'l',
+              beta_vals[ok][ord],
+              max_plaus[ok][ord],
+              type = "l",
               xlab = col_names[col],
               ylab = "Profile Plausibility",
+              xlim = lims[[col]],
               ylim = c(0, 1)
             )
-            if (alpha != -1) {
-              abline(h = alpha, col = "red", lty = 3)
-            }
+            abline(h = alpha_line, col = "red", lty = 3)
             grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
           } else {
-            plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
+            plot.default(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "No Data")
           }
         } else {
-          # --- OFF-DIAGONAL: 2D Marginal Profile (Contour Plot) ---
+          # OFF-DIAGONAL: contour from the grid, extension path overlaid
           z_mat <- tapply(poss, list(betas[, col], betas[, row]), max_or_na)
-
           x_vals <- as.numeric(rownames(z_mat))
           y_vals <- as.numeric(colnames(z_mat))
-
           x_ord <- order(x_vals)
           y_ord <- order(y_vals)
-
           x_vals <- x_vals[x_ord]
           y_vals <- y_vals[y_ord]
           z_mat <- z_mat[x_ord, y_ord, drop = FALSE]
+          z_mat[is.na(z_mat)] <- 0 # cells outside the trimmed ellipse
 
-          if (length(x_vals) >= 2 && length(y_vals) >= 2 && any(is.finite(z_mat))) {
+          if (length(x_vals) >= 2 && length(y_vals) >= 2) {
             contour(
-              x = x_vals,
-              y = y_vals,
-              z = z_mat,
+              x_vals,
+              y_vals,
+              z_mat,
+              levels = c(0.05, 0.1, 0.25, 0.5, 0.75, 0.9),
+              xlim = lims[[col]],
+              ylim = lims[[row]],
+              drawlabels = TRUE,
+              labcex = cex_val,
               xlab = col_names[col],
               ylab = col_names[row],
-              main = "",
-              drawlabels = TRUE,
-              labcex = cex_val
+              main = ""
             )
-            if (alpha != -1) {
-              contour(
-                x = x_vals,
-                y = y_vals,
-                z = z_mat,
-                levels = c(alpha),
-                col = "red",
-                lty = 3,
-                add = TRUE,
-                drawlabels = FALSE
+            if (!is.null(ext)) {
+              points(
+                ext_betas[, col],
+                ext_betas[, row],
+                pch = 20,
+                cex = 0.5,
+                col = ifelse(ext[, "plaus"] > alpha_line, "blue", "grey60")
               )
             }
             grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
           } else {
-            plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
+            plot.default(1, type = "n", axes = FALSE, xlab = "", ylab = "", main = "No Data")
           }
         }
       }
     }
 
-    # Outer Title
     fam_title <- if (!is.null(family) && nchar(family) > 0) {
       paste0(toupper(substr(family, 1, 1)), substr(family, 2, nchar(family)))
     } else {
       ""
     }
     mtext(
-      text = paste0(fam_title, " Possibility contours (marginalized)"),
+      paste0(fam_title, " Possibility contours (marginalized)"),
       side = 3,
       outer = TRUE,
-      line = 1, # Fits cleanly inside top outer margin
+      line = 1,
       cex = 1.2,
       font = 2
     )
-    # } else if ("radial_data" %in% names(x)) {
-    #   x <- x$radial_data
-    #   betas <- x$betas_evaluated
-    #   poss <- x$possibilities
-    #   family <- x$family
-    #   alphas <- NULL
-
-    #   if ("alphas" %in% names(x)) {
-    #     alphas <- x$alphas
-    #   }
-    #   # Evaluated betas grid case (Pairs Matrix Layout)
-    #   num_predictors <- ncol(betas)
-    #   col_names <- colnames(betas)
-    #   if (is.null(col_names)) {
-    #     col_names <- paste0("Beta_", 1:num_predictors)
-    #   }
-
-    #   old_par <- par(no.readonly = TRUE)
-    #   on.exit(par(old_par))
-
-    #   # Dynamically scale font size according to matrix size
-    #   cex_val <- max(0.6, 1.15 - 0.08 * num_predictors)
-
-    #   par(
-    #     mfrow = c(num_predictors, num_predictors),
-    #     mar = c(3, 3, 1.5, 0.8), # Tightened per panel
-    #     oma = c(1, 1, 3.5, 0), # Outer margin space for title and exterior axis labels
-    #     mgp = c(1.8, 0.5, 0), # Moves axis titles && tick labels closer to the axis
-    #     cex.lab = cex_val * 1.2,
-    #     cex.axis = cex_val * 1.2
-    #   )
-
-    #   # Helper function for max handling empty NA slices
-    #   max_or_na <- function(v) {
-    #     v <- v[!is.na(v)]
-    #     if (length(v) == 0) NA_real_ else max(v)
-    #   }
-
-    #   for (row in 1:num_predictors) {
-    #     for (col in 1:num_predictors) {
-    #       if (row == col) {
-    #         # --- DIAGONAL: 1D Profile Plot ---
-    #         max_plaus <- tapply(poss, betas[, col], max_or_na)
-    #         beta_vals <- as.numeric(names(max_plaus))
-    #         valid <- is.finite(beta_vals) && is.finite(max_plaus)
-
-    #         if (any(valid)) {
-    #           ord <- order(beta_vals[valid])
-    #           plot.default(
-    #             beta_vals[valid][ord],
-    #             max_plaus[valid][ord],
-    #             type = 'l',
-    #             xlab = col_names[col],
-    #             ylab = "Profile Plausibility",
-    #             ylim = c(0, 1)
-    #           )
-    #           if (alpha != -1) {
-    #             abline(h = alpha, col = "red", lty = 3)
-    #           }
-    #           grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
-    #         } else {
-    #           plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
-    #         }
-    #       } else {
-    #         # --- OFF-DIAGONAL: 2D Marginal Profile (Contour Plot) ---
-    #         z_mat <- tapply(poss, list(betas[, col], betas[, row]), max_or_na)
-
-    #         x_vals <- as.numeric(rownames(z_mat))
-    #         y_vals <- as.numeric(colnames(z_mat))
-
-    #         x_ord <- order(x_vals)
-    #         y_ord <- order(y_vals)
-
-    #         x_vals <- x_vals[x_ord]
-    #         y_vals <- y_vals[y_ord]
-    #         z_mat <- z_mat[x_ord, y_ord, drop = FALSE]
-
-    #         if (length(x_vals) >= 2 &&  length(y_vals) >= 2 &&  any(is.finite(z_mat))) {
-    #           contour(
-    #             x = x_vals,
-    #             y = y_vals,
-    #             z = z_mat,
-    #             xlab = col_names[col],
-    #             ylab = col_names[row],
-    #             main = "",
-    #             drawlabels = TRUE,
-    #             labcex = cex_val
-    #           )
-    #           if (alpha != -1) {
-    #             contour(
-    #               x = x_vals,
-    #               y = y_vals,
-    #               z = z_mat,
-    #               levels = c(alpha),
-    #               col = "red",
-    #               lty = 3,
-    #               add = TRUE,
-    #               drawlabels = FALSE
-    #             )
-    #           }
-    #           grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
-    #         } else {
-    #           plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
-    #         }
-    #       }
-    #     }
-    #   }
-
-    #   # Outer Title
-    #   fam_title <- if (!is.null(family) &&  nchar(family) > 0) {
-    #     paste0(toupper(substr(family, 1, 1)), substr(family, 2, nchar(family)))
-    #   } else {
-    #     ""
-    #   }
-    #   mtext(
-    #     text = paste0(fam_title, " Possibility contours (marginalized)"),
-    #     side = 3,
-    #     outer = TRUE,
-    #     line = 1, # Fits cleanly inside top outer margin
-    #     cex = 1.2,
-    #     font = 2
-    #   )
-    # } else if ("elliptical_data" %in% names(x)) {
-    #   x <- x$elliptical_data
-    #   betas <- x$betas_evaluated
-    #   poss <- x$possibilities
-    #   family <- x$family
-    #   alphas <- NULL
-
-    #   if ("alphas" %in% names(x)) {
-    #     alphas <- x$alphas
-    #   }
-    #   # Evaluated betas grid case (Pairs Matrix Layout)
-    #   num_predictors <- ncol(betas)
-    #   col_names <- colnames(betas)
-    #   if (is.null(col_names)) {
-    #     col_names <- paste0("Beta_", 1:num_predictors)
-    #   }
-
-    #   old_par <- par(no.readonly = TRUE)
-    #   on.exit(par(old_par))
-
-    #   # Dynamically scale font size according to matrix size
-    #   cex_val <- max(0.6, 1.15 - 0.08 * num_predictors)
-
-    #   par(
-    #     mfrow = c(num_predictors, num_predictors),
-    #     mar = c(3, 3, 1.5, 0.8), # Tightened per panel
-    #     oma = c(1, 1, 3.5, 0), # Outer margin space for title and exterior axis labels
-    #     mgp = c(1.8, 0.5, 0), # Moves axis titles && tick labels closer to the axis
-    #     cex.lab = cex_val * 1.2,
-    #     cex.axis = cex_val * 1.2
-    #   )
-
-    #   # Helper function for max handling empty NA slices
-    #   max_or_na <- function(v) {
-    #     v <- v[!is.na(v)]
-    #     if (length(v) == 0) NA_real_ else max(v)
-    #   }
-
-    #   for (row in 1:num_predictors) {
-    #     for (col in 1:num_predictors) {
-    #       if (row == col) {
-    #         # --- DIAGONAL: 1D Profile Plot ---
-    #         max_plaus <- tapply(poss, betas[, col], max_or_na)
-    #         beta_vals <- as.numeric(names(max_plaus))
-    #         valid <- is.finite(beta_vals) && is.finite(max_plaus)
-
-    #         if (any(valid)) {
-    #           ord <- order(beta_vals[valid])
-    #           plot.default(
-    #             beta_vals[valid][ord],
-    #             max_plaus[valid][ord],
-    #             type = 'l',
-    #             xlab = col_names[col],
-    #             ylab = "Profile Plausibility",
-    #             ylim = c(0, 1)
-    #           )
-    #           if (alpha != -1) {
-    #             abline(h = alpha, col = "red", lty = 3)
-    #           }
-    #           grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
-    #         } else {
-    #           plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
-    #         }
-    #       } else {
-    #         # --- OFF-DIAGONAL: 2D Marginal Profile (Contour Plot) ---
-    #         z_mat <- tapply(poss, list(betas[, col], betas[, row]), max_or_na)
-
-    #         x_vals <- as.numeric(rownames(z_mat))
-    #         y_vals <- as.numeric(colnames(z_mat))
-
-    #         x_ord <- order(x_vals)
-    #         y_ord <- order(y_vals)
-
-    #         x_vals <- x_vals[x_ord]
-    #         y_vals <- y_vals[y_ord]
-    #         z_mat <- z_mat[x_ord, y_ord, drop = FALSE]
-
-    #         if (length(x_vals) >= 2 &&  length(y_vals) >= 2 &&  any(is.finite(z_mat))) {
-    #           contour(
-    #             x = x_vals,
-    #             y = y_vals,
-    #             z = z_mat,
-    #             xlab = col_names[col],
-    #             ylab = col_names[row],
-    #             main = "",
-    #             drawlabels = TRUE,
-    #             labcex = cex_val
-    #           )
-    #           if (alpha != -1) {
-    #             contour(
-    #               x = x_vals,
-    #               y = y_vals,
-    #               z = z_mat,
-    #               levels = c(alpha),
-    #               col = "red",
-    #               lty = 3,
-    #               add = TRUE,
-    #               drawlabels = FALSE
-    #             )
-    #           }
-    #           grid(nx = NULL, ny = NULL, col = "lightgrey", lty = "dashed")
-    #         } else {
-    #           plot.default(1, type = 'n', axes = FALSE, xlab = "", ylab = "", main = "No Data")
-    #         }
-    #       }
-    #     }
-    #   }
-
-    #   # Outer Title
-    #   fam_title <- if (!is.null(family) &&  nchar(family) > 0) {
-    #     paste0(toupper(substr(family, 1, 1)), substr(family, 2, nchar(family)))
-    #   } else {
-    #     ""
-    #   }
-    #   mtext(
-    #     text = paste0(fam_title, " Possibility contours (marginalized)"),
-    #     side = 3,
-    #     outer = TRUE,
-    #     line = 1, # Fits cleanly inside top outer margin
-    #     cex = 1.2,
-    #     font = 2
-    #   )
   }
 }
 
@@ -2796,4 +2533,465 @@ prob2poss <- function(family, X, y, mle, samples, the_compared_theta) {
   }
   out <- p2p_function(X, y, mle, samples, t(the_compared_theta))
   return(out)
+}
+
+
+# ============================================================================
+# glim_prof.R -- R side of the profiler. Source/include this in the package.
+# Usage:
+#   glim_prof_start("prof_out")
+#   fit <- glim(...)                 # your normal call
+#   glim_prof_report()
+#   glim_prof_stop()
+# Everything is a no-op unless glim_prof_start() has been called.
+# ============================================================================
+
+.glim_prof <- new.env(parent = emptyenv())
+.glim_prof$on <- FALSE
+.glim_prof$dir <- NULL
+.glim_prof$last <- list() # most recent duration per label
+.glim_prof$tot <- list() # cumulative duration per label
+.glim_prof$cnt <- list() # call counts per label
+
+#' @export
+glim_prof_start <- function(dir = "glim_prof") {
+  dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+  dir <- normalizePath(dir)
+  for (f in list.files(dir, pattern = "\\.csv$", full.names = TRUE)) {
+    file.remove(f)
+  }
+  .glim_prof$dir <- dir
+  .glim_prof$on <- TRUE
+  .glim_prof$last <- list()
+  .glim_prof$tot <- list()
+  .glim_prof$cnt <- list()
+  prof_cpp_start(dir)
+  invisible(dir)
+}
+
+#' @export
+glim_prof_stop <- function() {
+  prof_cpp_stop()
+  .glim_prof$on <- FALSE
+  invisible(NULL)
+}
+
+# Time an expression, accumulate by label, return its value.
+.glim_timed <- function(label, expr) {
+  if (!isTRUE(.glim_prof$on)) {
+    return(expr)
+  }
+  t0 <- proc.time()[["elapsed"]]
+  val <- expr # forces the promise
+  dt <- proc.time()[["elapsed"]] - t0
+  .glim_prof$last[[label]] <- dt
+  prev <- .glim_prof$tot[[label]]
+  .glim_prof$tot[[label]] <- (if (is.null(prev)) 0 else prev) + dt
+  prevn <- .glim_prof$cnt[[label]]
+  .glim_prof$cnt[[label]] <- (if (is.null(prevn)) 0L else prevn) + 1L
+  val
+}
+
+.glim_last <- function(label) {
+  v <- .glim_prof$last[[label]]
+  if (is.null(v)) NA_real_ else v
+}
+
+# Append one row to <dir>/<event>.csv (header written on first use).
+.glim_log <- function(event, ...) {
+  if (!isTRUE(.glim_prof$on)) {
+    return(invisible(NULL))
+  }
+  f <- file.path(.glim_prof$dir, paste0(event, ".csv"))
+  new <- !file.exists(f)
+  row <- as.data.frame(list(...), stringsAsFactors = FALSE)
+  utils::write.table(row, f, sep = ",", append = !new, col.names = new, row.names = FALSE)
+  invisible(NULL)
+}
+
+#' Fits GLIM (Raw Implementation)
+#'
+#' Evaluates possibility for beta/dispersion values.
+#'
+#' @param X Input predictor matrix. If a data frame is provided, it will be coerced to a model matrix.
+#' @param y Response vector.
+#' @param family A string indicating the error distribution. Options include `"gaussian"`, `"poisson"`, `"gamma"`, `"binomial"`.
+#' @param betas A grid of beta values to evaluate, where each column is a new beta vector. Not required if `approx = TRUE`.
+#' @param mle_coefs Maximum likelihood estimates of the coefficients.
+#' @param ll_mle_original_data The log-likelihood value at the maximum likelihood estimates.
+#' @param m Number of evaluations per beta (number of samples).
+#' @param parallel Logical indicating whether to run in parallel (primarily for debugging).
+#' @param approx Logical indicating whether to use the elliptical approximation.
+#' @param ... A way to pass in .Random.seed
+#' @return A matrix of evaluated possibility outputs.
+#' @noRd
+glim_raw <- function(
+  X,
+  y,
+  family = "gaussian",
+  betas,
+  mle_coefs,
+  ll_mle_original_data,
+  m,
+  parallel,
+  approx,
+  show_progress,
+  base_seed = 31415L
+) {
+  num_omp_threads <- 1
+  if (parallel) {
+    cores <- parallel::detectCores(logical = FALSE)
+    if (is.na(cores)) {
+      cores <- parallel::detectCores()
+    }
+    num_omp_threads <- max(1L, cores - 1L)
+  }
+  if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+    old <- RhpcBLASctl::blas_get_num_procs()
+    RhpcBLASctl::blas_set_num_threads(1)
+    on.exit(RhpcBLASctl::blas_set_num_threads(old), add = TRUE)
+  }
+
+  out <- .glim_timed(
+    "glim_raw_total",
+    fit_glm_omp_cpp(
+      X = X,
+      y = y,
+      mle_coefs = mle_coefs,
+      mle_val = ll_mle_original_data,
+      betas = betas,
+      family = family,
+      num_threads = num_omp_threads,
+      m = m,
+      parallel = parallel,
+      approx = approx,
+      show_progress = show_progress,
+      base_seed = as.integer(base_seed)
+    )
+  )
+  .glim_log(
+    "glim_raw",
+    n_evals = nrow(betas),
+    m = m,
+    parallel = parallel,
+    approx = approx,
+    elapsed = .glim_last("glim_raw_total")
+  )
+  out
+}
+
+# ---------------------------------------------------------------------------
+# glim_raw: time the C++ call from the R side. Compare with wall_s in
+# calls.csv; a big gap means R<->C++ overhead (argument copies, conversions).
+# Change the last statement of glim_raw to:
+#
+#   out <- .glim_timed("glim_raw_total", fit_glm_omp_cpp(...))
+#   .glim_log("glim_raw", n_evals = nrow(betas), m = m, parallel = parallel,
+#             approx = approx, elapsed = .glim_last("glim_raw_total"))
+#   out
+# ---------------------------------------------------------------------------
+
+# ---- generate_grid -----------------------------------------------------------
+# Changes: imvar runs with a smaller m and a noise-aware tolerance, can use
+# threads, and trimming returns a matrix (drop = FALSE). Default trim = TRUE:
+# corners of the bounding box outside the ellipse are not worth evaluating.
+generate_grid <- function(
+  X,
+  y,
+  family,
+  mle_coefs,
+  eigen_vecs,
+  eigen_vals,
+  dispersion,
+  ll_mle_original_data,
+  trim = TRUE,
+  n_grid_evals = 25,
+  m = 1000,
+  parallel = FALSE
+) {
+  initial_xi <- rep(1, length(mle_coefs))
+  alpha_target <- 0.01
+
+  # A rough scale factor does not need m = 1000. Keep the tolerance above the
+  # Monte Carlo standard error of a proportion near alpha.
+  m_imvar <- min(m, 500)
+  se_alpha <- sqrt(alpha_target * (1 - alpha_target) / m_imvar)
+  tol_imvar <- max(0.005, 1.5 * se_alpha)
+
+  n_threads <- if (parallel) {
+    cores <- parallel::detectCores(logical = FALSE)
+    if (is.na(cores)) {
+      cores <- parallel::detectCores()
+    }
+    max(1L, cores - 1L)
+  } else {
+    1L
+  }
+
+  imvar_xi <- imvar(
+    X,
+    y,
+    initial_xi,
+    family,
+    alpha_target,
+    mle_coefs,
+    ll_mle_original_data,
+    eigen_vecs,
+    eigen_vals,
+    dispersion,
+    generate_grid = TRUE,
+    tol = tol_imvar,
+    a_val = 2,
+    b_val = .65,
+    max_it = 25,
+    parallel = parallel,
+    m = m_imvar,
+    base_seed = 31,
+    num_threads = n_threads
+  )
+
+  q_val <- qchisq(1 - alpha_target, df = length(mle_coefs))
+  base_scale <- sqrt(dispersion * q_val * (1 / eigen_vals))
+  semi_axes <- base_scale * sqrt(imvar_xi)
+  transformed_mat <- eigen_vecs %*% diag(as.vector(semi_axes), nrow = length(semi_axes))
+  H <- sqrt(rowSums(transformed_mat^2))
+
+  p <- length(mle_coefs)
+  beta <- vector("list", p)
+  n_left <- floor((n_grid_evals - 1) / 2)
+  n_right <- n_grid_evals - 1 - n_left
+  approx_grid_resolution <- numeric(p)
+  for (i in seq_len(p)) {
+    beta[[i]] <- c(
+      seq(mle_coefs[i] - H[i], mle_coefs[i], length.out = n_left + 1)[-(n_left + 1)],
+      mle_coefs[i],
+      seq(mle_coefs[i], mle_coefs[i] + H[i], length.out = n_right + 1)[-1]
+    )
+    approx_grid_resolution[i] <- 2 * H[i] / n_grid_evals
+  }
+
+  betas <- as.matrix(expand.grid(beta))
+  colnames(betas) <- colnames(X)
+
+  shifted_points <- sweep(betas, 2, mle_coefs, FUN = "-")
+  rotated_points <- shifted_points %*% eigen_vecs
+  scaled_sq_points <- sweep(rotated_points^2, 2, semi_axes^2, FUN = "/")
+  inside_indices <- rowSums(scaled_sq_points) <= 1.001
+
+  if (!any(inside_indices)) {
+    stop(
+      "GLIM error: no grid points fell inside the confidence ellipse. ",
+      "Try increasing 'n_grid_evals' or check that the model fit ",
+      "(mle_coefs / eigen decomposition) is not degenerate.",
+      call. = FALSE
+    )
+  }
+
+  if (isTRUE(trim)) {
+    betas <- betas[inside_indices, , drop = FALSE]
+  }
+  list(betas = betas, approx_grid_resolution = approx_grid_resolution)
+}
+
+# ---------------------------------------------------------------------------
+# generate_grid: wrap imvar and record what it produced.
+#
+#   imvar_xi <- .glim_timed("imvar", imvar(...))
+#   ... after betas / inside_indices are computed:
+#   .glim_log("grid", n_points_full = nrow(betas), n_inside = sum(inside_indices),
+#             frac_inside = mean(inside_indices), imvar_sec = .glim_last("imvar"),
+#             xi = paste(round(imvar_xi, 4), collapse = " "),
+#             H = paste(signif(H, 4), collapse = " "))
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Main function: wrap the three stages.
+#
+#   generated_grid <- .glim_timed("stage_grid_gen",  generate_grid(...))
+#   possibils      <- .glim_timed("stage_grid_eval", glim_raw(...))
+#   (extension loop)                                  ^ wrap the whole
+#   `for (col in seq_len(ncol(X))) { ... }` in:
+#        .glim_timed("stage_extend", { for (...) {...} })
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# extend_profile: per-step log. Wrap the three costly calls and log each step.
+# In the growth loop, replace the corresponding lines with:
+#
+#   tang <- .glim_timed("ext_tangent", profile_tangent(family, X, prev_beta, col, dispersion))
+#   ...
+#   new_beta <- .glim_timed("ext_correct",
+#       correct_profile_point(family, X, y, cand, col, dispersion, mle_coefs))
+#   tag <- tag + 1L
+#   pl <- .glim_timed("ext_eval", eval_plaus(new_beta, tag, m_ext))
+#   .glim_log("extend", col = col, dir = direction, phase = "grow", k = k,
+#             h = h, beta_col = new_beta[col], plaus = pl,
+#             t_tangent = .glim_last("ext_tangent"),
+#             t_correct = .glim_last("ext_correct"),
+#             t_eval = .glim_last("ext_eval"))
+#
+# and in the bisection loop:
+#
+#   mid <- .glim_timed("ext_correct", correct_profile_point(...))
+#   pl  <- .glim_timed("ext_eval", eval_plaus(mid, tag, m_ext))
+#   .glim_log("extend", col = col, dir = direction, phase = "bisect", k = b,
+#             h = NA_real_, beta_col = mid[col], plaus = pl,
+#             t_tangent = NA_real_, t_correct = .glim_last("ext_correct"),
+#             t_eval = .glim_last("ext_eval"))
+#
+# Finally log why it stopped (before the return):
+#   .glim_log("extend_end", col = col, dir = direction, n_points = length(out_betas),
+#             crossed_alpha = !is.null(bracket),
+#             reason = if (is.null(stop_reason)) NA_character_ else stop_reason)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Report: summarise everything that was logged.
+# ---------------------------------------------------------------------------
+#' @export
+glim_prof_report <- function(dir = .glim_prof$dir) {
+  if (is.null(dir)) {
+    stop("Run glim_prof_start() first.")
+  }
+  rd <- function(name) {
+    f <- file.path(dir, name)
+    if (file.exists(f) && file.size(f) > 0) utils::read.csv(f) else NULL
+  }
+
+  cat("\n== R-level timings (cumulative seconds) ==\n")
+  if (length(.glim_prof$tot)) {
+    tot <- unlist(.glim_prof$tot)
+    cnt <- unlist(.glim_prof$cnt)
+    print(data.frame(
+      label = names(tot),
+      seconds = round(tot, 3),
+      calls = cnt[names(tot)],
+      mean_s = round(tot / cnt[names(tot)], 4),
+      row.names = NULL
+    )[order(-tot), ])
+  } else {
+    cat("(none; add .glim_timed() wrappers)\n")
+  }
+
+  calls <- rd("calls.csv")
+  if (!is.null(calls)) {
+    calls$kind <- ifelse(calls$n_evals == 1, "single-point", "grid")
+    cat("\n== C++ calls (fit_glm_omp_cpp) ==\n")
+    agg <- do.call(
+      rbind,
+      lapply(split(calls, calls$kind), function(d) {
+        data.frame(
+          calls = nrow(d),
+          total_wall_s = round(sum(d$wall_s), 2),
+          total_fits = sum(d$n_evals * d$m),
+          us_per_fit = round(1e6 * sum(d$wall_s) / sum(d$n_evals * d$m), 1),
+          eff_cores = round(sum(d$cpu_s) / sum(d$wall_s), 2),
+          threads = max(d$threads),
+          outer_frac = round(mean(d$outer), 2),
+          inner_frac = round(mean(d$inner), 2),
+          imbalance = round(mean(d$imbalance), 2)
+        )
+      })
+    )
+    print(agg)
+
+    cat(
+      "\nPlausibility summary (all calls): ",
+      sprintf(
+        "min=%.4f max=%.4f; exact zeros in %.1f%% of evals; NaN in %d\n",
+        min(calls$plaus_min, na.rm = TRUE),
+        max(calls$plaus_max, na.rm = TRUE),
+        100 * sum(calls$n_zero) / sum(calls$n_evals),
+        sum(calls$n_nan)
+      )
+    )
+
+    # Automatic hints
+    sp <- calls[calls$kind == "single-point" & calls$threads > 1, ]
+    if (nrow(sp) && sum(sp$cpu_s) / sum(sp$wall_s) < 1.5) {
+      cat("HINT: single-point calls use ~1 core despite threads > 1: inner loop not parallel.\n")
+    }
+    gr <- calls[calls$kind == "grid" & calls$outer == 1, ]
+    if (nrow(gr) && sum(gr$cpu_s) / sum(gr$wall_s) < 0.6 * max(gr$threads)) {
+      cat("HINT: grid eval uses < 60% of threads: check BLAS oversubscription / imbalance.\n")
+    }
+    if (nrow(gr) && mean(gr$imbalance) > 1.3) {
+      cat("HINT: load imbalance > 1.3: try schedule(dynamic) in the outer loop.\n")
+    }
+    if (
+      any(calls$n_evals > 1) &&
+        mean(calls$n_zero[calls$n_evals > 1] / calls$n_evals[calls$n_evals > 1]) > 0.3
+    ) {
+      cat("HINT: >30% of grid points have plausibility exactly 0: grid is too wide / untrimmed.\n")
+    }
+  }
+
+  cat("\n== C++ phase totals (thread-seconds) ==\n")
+  s <- prof_cpp_summary()
+  print(unlist(lapply(s, signif, 4)))
+  ph <- c(simulate = s$thread_sec_simulate, fit = s$thread_sec_fit, loglik = s$thread_sec_loglik)
+  if (sum(ph) > 0) {
+    cat(
+      "\nShare of time: ",
+      paste(names(ph), sprintf("%.0f%%", 100 * ph / sum(ph)), collapse = ", "),
+      "\n"
+    )
+  }
+  if (!is.na(s$frac_nonconverged) && s$frac_nonconverged > 0.01) {
+    cat("HINT: >1% of GLM refits hit the iteration cap.\n")
+  }
+
+  iv <- rd("imvar.csv")
+  if (!is.null(iv)) {
+    cat("\n== imvar iterations ==\n")
+    print(
+      do.call(
+        rbind,
+        lapply(split(iv, iv$d), function(d) {
+          data.frame(
+            d = d$d[1],
+            iterations = nrow(d),
+            last_g = round(d$g_xi[nrow(d)], 4),
+            sign_flips = sum(diff(sign(d$g_xi)) != 0),
+            secs = round(sum(d$wall_s), 2)
+          )
+        })
+      ),
+      row.names = FALSE
+    )
+  }
+
+  ex <- rd("extend.csv")
+  if (!is.null(ex)) {
+    cat("\n== extend_profile ==\n")
+    print(
+      do.call(
+        rbind,
+        lapply(split(ex, list(ex$col, ex$dir)), function(d) {
+          data.frame(
+            col = d$col[1],
+            dir = d$dir[1],
+            steps = nrow(d),
+            last_plaus = round(d$plaus[nrow(d)], 4),
+            t_tangent = round(sum(d$t_tangent, na.rm = TRUE), 2),
+            t_correct = round(sum(d$t_correct, na.rm = TRUE), 2),
+            t_eval = round(sum(d$t_eval, na.rm = TRUE), 2)
+          )
+        })
+      ),
+      row.names = FALSE
+    )
+  }
+  ee <- rd("extend_end.csv")
+  if (!is.null(ee)) {
+    cat("\nExtension stop reasons:\n")
+    print(ee, row.names = FALSE)
+  }
+
+  gd <- rd("grid.csv")
+  if (!is.null(gd)) {
+    cat("\n== grid ==\n")
+    print(gd, row.names = FALSE)
+  }
+  invisible(NULL)
 }

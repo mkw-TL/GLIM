@@ -21,9 +21,9 @@ double compute_gaussian_ll(const arma::vec &y, const arma::vec &mu,
 double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs, const double mle_val,
                            const arma::vec &beta_vals, int m, bool approx,
-                           bool radial, uint32_t base_seed, int eval_index,
-                           double sigma, arma::mat &Y_sim_workspace,
-                           GaussianWorkspace &ws) {
+                           uint32_t base_seed, int eval_index, double sigma,
+                           arma::mat &Y_sim_workspace, GaussianWorkspace &ws,
+                           bool inner_parallel) {
   const int n = X.n_rows;
   const int P = X.n_cols;
 
@@ -56,7 +56,7 @@ double glm_gaussian_pl_cpp(const arma::mat &X, const arma::vec &y,
 #ifdef _OPENMP
   is_already_parallel = omp_in_parallel();
 #endif
-  const bool run_inner_parallel = (radial || approx) && !is_already_parallel;
+  const bool run_inner_parallel = inner_parallel && !is_already_parallel;
   const uint32_t eval_seed =
       base_seed + static_cast<uint32_t>(eval_index * 10007);
 

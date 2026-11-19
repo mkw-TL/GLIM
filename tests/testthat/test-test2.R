@@ -95,54 +95,6 @@ skip_if_glim_missing <- function() {
   testthat::skip_if_not_installed("GLIM")
 }
 
-test_that("fit_glm_omp_cpp enforces strict dimension matching", {
-  trace_crash("21")
-  dat <- generate_mock_data(n = 100, p = 3)
-  betas <- matrix(rnorm(30), ncol = 3) # 10 rows, 3 cols
-
-  # Mismatched y length
-  expect_error(
-    fit_glm_omp_cpp(
-      dat$X,
-      dat$y[-1],
-      c(0, 0, 0),
-      0,
-      betas,
-      "gaussian",
-      1,
-      10,
-      FALSE,
-      FALSE,
-      FALSE,
-      FALSE,
-      245
-    ),
-    "Dimension mismatch"
-  )
-
-  # Mismatched betas columns
-  bad_betas <- matrix(rnorm(40), ncol = 4)
-  expect_error(
-    fit_glm_omp_cpp(
-      dat$X,
-      dat$y,
-      c(0, 0, 0),
-      0,
-      bad_betas,
-      "gaussian",
-      1,
-      10,
-      FALSE,
-      FALSE,
-      FALSE,
-      FALSE,
-      2454
-    ),
-    "Dimension mismatch"
-  )
-  trace_crash("21")
-})
-
 # test_that("Progress bar prints to console when approx = FALSE", {
 #   dat <- generate_mock_data()
 #   betas <- matrix(rnorm(300), ncol = 3) # Need enough rows to trigger the 2% milestone

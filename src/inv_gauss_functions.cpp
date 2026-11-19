@@ -1,3 +1,4 @@
+#include "glim_prof.h"
 #include "headers.h"
 // [[Rcpp::depends(RcppArmadillo)]]
 // [[Rcpp::plugins(openmp)]]
@@ -7,31 +8,194 @@ using namespace arma;
 
 // =====================================================================
 // INVERSE GAUSSIAN REGRESSION (1/MU^2 LINK)
+//
+// Key identity used throughout. With eta = 1/mu^2 (so 1/mu = sqrt(eta)) the
+// inverse Gaussian deviance is
+//     Dev(y; eta) = sum( y/mu^2 - 2/mu + 1/y ) = sum(y*eta) - 2*sum(sqrt(eta))
+//     + sum(1/y)
+// and the log-likelihood is  const - (gamma/2) * Dev.   Two consequences:
+//   * sum(1/y) and gamma both cancel in the comparison the plausibility makes
+//     (llX_j - mle_sim <= f_x  <=>  D_j >= D_obs, D = Dev(eta_beta) -
+//     Dev(eta_hat)), so no log(y), no 1/y, no per-observation likelihood is
+//     needed;
+//   * gamma only enters through the simulation.
 // =====================================================================
+
+namespace {
+
+// Michael, Schucany & Haas (1976) draw with the normal / uniform generators
+// supplied by the caller (constructing std::normal_distribution per draw, as
+// before, throws away half of every polar-method pair).
+//   x = mu + mu^2 v^2/(2 lambda) - mu/(2 lambda) sqrt(4 mu lambda v^2 + mu^2
+//   v^4)
+// is rewritten as  x = mu / (1 + a/2 + sqrt(a (a + 4)) / 2),  a = mu v^2 /
+// lambda, which is algebraically identical (p^2 - q^2 = 1) but does not cancel
+// catastrophically when a is large.
+inline double rinvgauss_fast(double mu, double lambda,
+                             std::normal_distribution<double> &rnorm,
+                             std::uniform_real_distribution<double> &runif,
+                             std::mt19937 &gen) {
+  const double v = rnorm(gen);
+  const double a = mu * v * v / lambda;
+  const double x = mu / (1.0 + 0.5 * a + 0.5 * std::sqrt(a * (a + 4.0)));
+  const double u = runif(gen);
+  return (u <= mu / (mu + x)) ? x : (mu * mu) / x;
+}
+
+constexpr double kEtaFloor = 1e-6;  // eta is clamped to >= this inside the fit
+constexpr double kStepTol = 1e-6;   // convergence: ||step|| < kStepTol
+constexpr double kDevSlack = 1e-10; // relative slack on the descent check
+constexpr int kMaxIter = 30;
+constexpr int kMaxHalve = 20;
+
+// out = X b  (column passes; no BLAS call, no allocation)
+inline void ig_matvec(const arma::mat &X, const double *__restrict b,
+                      double *__restrict out) {
+  const arma::uword n = X.n_rows, P = X.n_cols;
+  const double *__restrict x0 = X.colptr(0);
+  const double b0 = b[0];
+#pragma omp simd
+  for (arma::uword i = 0; i < n; ++i)
+    out[i] = x0[i] * b0;
+  for (arma::uword a = 1; a < P; ++a) {
+    const double *__restrict xa = X.colptr(a);
+    const double ba = b[a];
+#pragma omp simd
+    for (arma::uword i = 0; i < n; ++i)
+      out[i] += xa[i] * ba;
+  }
+}
+
+// sum(y*e) - 2*sum(sqrt(e)),  e = max(eta, kEtaFloor)   (= Dev minus sum(1/y))
+// Also returns min(eta) so positivity is checked in the same pass.
+inline double ig_dev(const double *__restrict y, const double *__restrict eta,
+                     arma::uword n, double &min_eta) {
+  double s = 0.0, mn = eta[0];
+#pragma omp simd reduction(+ : s) reduction(min : mn)
+  for (arma::uword i = 0; i < n; ++i) {
+    const double ei = eta[i];
+    const double e = ei > kEtaFloor ? ei : kEtaFloor;
+    s += y[i] * e - 2.0 * std::sqrt(e);
+    mn = ei < mn ? ei : mn;
+  }
+  min_eta = mn;
+  return s;
+}
+
+// Fisher scoring for the 1/mu^2 link. `beta` is the start on entry and the
+// fit on return. On return ws.eta = X * beta, dev_out = ig_dev at the fit.
+// Same update as before:  step = (X'WX)^{-1} * (-2 X'(y - mu)),  W =
+// diag(mu^3), but (a) one fused pass builds w and the residual vector, (b) X'WX
+// and the gradient are accumulated column-wise (no n x P copy of X per
+// iteration), (c) the half-step reuses eta by linearity (no second X*b), and
+// (d) a deviance-descent check is added to the positivity check.
+void fit_invgauss_core(const arma::mat &X, const double *__restrict y,
+                       arma::vec &beta, InvGaussWorkspace &ws, double &dev_out,
+                       int &iters, bool &converged) {
+  const arma::uword n = X.n_rows, P = X.n_cols;
+  ws.eta.set_size(n);
+  ws.new_eta.set_size(n);
+  ws.w.set_size(n);
+  ws.mu.set_size(n); // reused as the scaled residual vector
+  ws.XTWX.set_size(P, P);
+  ws.grad.set_size(P);
+  ws.step.set_size(P);
+  ws.new_beta.set_size(P);
+
+  double *eta = ws.eta.memptr();
+  double *new_eta = ws.new_eta.memptr();
+
+  ig_matvec(X, beta.memptr(), eta);
+  double min_eta;
+  double cur_dev = ig_dev(y, eta, n, min_eta);
+
+  converged = false;
+  int it = 0;
+  for (; it < kMaxIter; ++it) {
+    double *__restrict w = ws.w.memptr();
+    double *__restrict g = ws.mu.memptr();
+
+#pragma omp simd
+    for (arma::uword i = 0; i < n; ++i) {
+      const double ei = eta[i] > kEtaFloor ? eta[i] : kEtaFloor;
+      const double mu = 1.0 / std::sqrt(ei);
+      double wi = mu * mu * mu;
+      wi = wi < 1e-8 ? 1e-8 : (wi > 1e8 ? 1e8 : wi);
+      w[i] = wi;
+      g[i] = -2.0 * (y[i] - mu);
+    }
+
+    for (arma::uword a = 0; a < P; ++a) {
+      const double *__restrict xa = X.colptr(a);
+      double gs = 0.0;
+#pragma omp simd reduction(+ : gs)
+      for (arma::uword i = 0; i < n; ++i)
+        gs += g[i] * xa[i];
+      ws.grad[a] = gs;
+      for (arma::uword b = 0; b <= a; ++b) {
+        const double *__restrict xb = X.colptr(b);
+        double s = 0.0;
+#pragma omp simd reduction(+ : s)
+        for (arma::uword i = 0; i < n; ++i)
+          s += w[i] * xa[i] * xb[i];
+        ws.XTWX(a, b) = s;
+        ws.XTWX(b, a) = s;
+      }
+    }
+
+    bool ok = arma::solve(ws.step, ws.XTWX, ws.grad,
+                          arma::solve_opts::fast + arma::solve_opts::no_approx);
+    if (!ok)
+      ok = arma::solve(ws.step, ws.XTWX, ws.grad, arma::solve_opts::no_approx);
+    if (!ok)
+      ws.step = arma::pinv(ws.XTWX) * ws.grad;
+
+    for (arma::uword a = 0; a < P; ++a)
+      ws.new_beta[a] = beta[a] + ws.step[a];
+    ig_matvec(X, ws.new_beta.memptr(), new_eta);
+    double new_dev = ig_dev(y, new_eta, n, min_eta);
+
+    // Step halving: keep eta > 0 (as before) and do not let the deviance rise.
+    int halves = 0;
+    while ((min_eta <= 0.0 ||
+            !(new_dev <= cur_dev + kDevSlack * (1.0 + std::abs(cur_dev)))) &&
+           halves < kMaxHalve) {
+      ws.step *= 0.5;
+      for (arma::uword a = 0; a < P; ++a)
+        ws.new_beta[a] = beta[a] + ws.step[a];
+      for (arma::uword i = 0; i < n; ++i) // eta is linear in beta
+        new_eta[i] = 0.5 * (eta[i] + new_eta[i]);
+      new_dev = ig_dev(y, new_eta, n, min_eta);
+      ++halves;
+    }
+
+    const double step_norm = arma::norm(ws.step);
+    beta = ws.new_beta;
+    ws.eta.swap(ws.new_eta);
+    eta = ws.eta.memptr();
+    new_eta = ws.new_eta.memptr();
+    cur_dev = new_dev;
+
+    if (step_norm < kStepTol) {
+      converged = true;
+      ++it;
+      break;
+    }
+  }
+  iters = it;
+  dev_out = cur_dev;
+}
+
+} // namespace
 
 // R does not have a native rinvgauss. Implemented is the Michael,
 // Schucany, and Haas (1976) algorithm to simulate it via C++.
-// Pass the pointer to the random number generator
-// Don't need to export it as an R object, because R doesn't know what the
-// mercene twister generator is
+// Kept (same signature) for any other callers; the hot loop below uses
+// rinvgauss_fast with generators that persist across draws.
 double rinvgauss_single(double mu, double lambda, std::mt19937 &gen) {
-  // <> denotes the type expected out of this template
-  // Loosely, templates can be thought of an instance of a class
   std::normal_distribution<double> rnorm(0.0, 1.0);
   std::uniform_real_distribution<double> runif(0.0, 1.0);
-  double v = rnorm(gen);
-
-  double y_sq = v * v;
-  double x = mu + (mu * mu * y_sq) / (2.0 * lambda) -
-             (mu / (2.0 * lambda)) *
-                 std::sqrt(4.0 * mu * lambda * y_sq + mu * mu * y_sq * y_sq);
-
-  double u = runif(gen);
-  if (u <= mu / (mu + x)) {
-    return x;
-  } else {
-    return (mu * mu) / x;
-  }
+  return rinvgauss_fast(mu, lambda, rnorm, runif, gen);
 }
 
 // Non-allocating log-likelihood (the exported version just calls this)
@@ -55,161 +219,32 @@ double mle_estimate_dispersion_inv_gauss(const arma::vec &y,
          (arma::accu(ybar * ybar * y / arma::dot((y - ybar), (y - ybar))));
 }
 
-// IRLS Inverse Gaussian regression solver (1/mu^2 link)
-// [[Rcpp::export]]
-arma::vec fit_invgauss_cpp(const arma::mat &X, const arma::vec &y,
-                           const arma::vec &initial_beta, bool approx) {
-  arma::vec proposed_beta = initial_beta;
-  for (int i = 0; i < 30; i++) {
-    arma::vec eta = X * proposed_beta;
-    // Enforce strict positivity constraint for the link function
-    eta.elem(arma::find(eta < 1e-6)).fill(1e-6);
-
-    arma::vec mu = arma::pow(eta, -0.5);
-
-    // For Inverse Gaussian 1/mu^2 link:
-    // W = diag(mu^3) as opposed to diag(mu^3 / 4) for canonical link
-    // Modified gradient step RHS = -2 * X^T (y - mu)
-    arma::vec w = arma::pow(mu, 3.0);
-
-    // Clamp extreme weights to preserve numerical stability
-    w.elem(arma::find(w < 1e-8)).fill(1e-8);
-    w.elem(arma::find(w > 1e8)).fill(1e8);
-    // -2 is pulled out front to make computations nicer
-    arma::mat XTWX = X.t() * arma::diagmat(w) * X;
-    arma::vec grad = -2.0 * X.t() * (y - mu);
-
-    arma::vec step;
-    bool success = arma::solve(step, XTWX, grad, arma::solve_opts::no_approx);
-    if (!success) {
-      step = arma::pinv(XTWX) * grad;
-    }
-
-    // Line search (step halving) to ensure eta remains > 0
-    arma::vec new_beta = proposed_beta + step;
-    arma::vec new_eta = X * new_beta;
-    int iter_halve = 0;
-    while (arma::any(new_eta <= 0.0) && iter_halve < 10) {
-      step /= 2.0;
-      new_beta = proposed_beta + step;
-      new_eta = X * new_beta;
-      iter_halve++;
-    }
-
-    proposed_beta = new_beta;
-    if (arma::norm(step) < 1e-6)
-      break;
-  }
-  return proposed_beta;
-}
-
 // [[Rcpp::export]]
 double compute_invgauss_ll(const arma::vec &y, const arma::vec &mu,
                            double gamma_val) {
   return invgauss_ll_raw(y, mu, gamma_val);
 }
 
+// IRLS Inverse Gaussian regression solver (1/mu^2 link), workspace version.
 arma::vec fit_invgauss_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &initial_beta, bool approx,
-
-                           InvGaussWorkspace &ws) {
+                           InvGaussWorkspace &ws, bool inner_parallel) {
+  (void)approx;
+  (void)inner_parallel;
   arma::vec beta = initial_beta;
-  ws.eta = X * beta;
-
-  for (int i = 0; i < 30; i++) {
-    ws.eta = arma::clamp(ws.eta, 1e-6, arma::datum::inf);
-    ws.mu = arma::pow(ws.eta, -0.5);
-    ws.w = arma::clamp(ws.mu % ws.mu % ws.mu, 1e-8, 1e8);
-
-    ws.XW = X;
-    ws.XW.each_col() %= ws.w;
-    ws.XTWX = X.t() * ws.XW;
-    ws.grad = -2.0 * (X.t() * (y - ws.mu));
-
-    if (!arma::solve(ws.step, ws.XTWX, ws.grad, arma::solve_opts::no_approx)) {
-      ws.step = arma::pinv(ws.XTWX) * ws.grad;
-    }
-
-    ws.new_beta = beta + ws.step;
-    ws.new_eta = X * ws.new_beta;
-    int iter_halve = 0;
-    while (arma::any(ws.new_eta <= 0.0) && iter_halve < 10) {
-      ws.step *= 0.5;
-      ws.new_beta = beta + ws.step;
-      ws.new_eta = X * ws.new_beta;
-      iter_halve++;
-    }
-
-    beta = ws.new_beta;
-    ws.eta.swap(ws.new_eta); // next iteration's X*beta is already computed
-    if (arma::norm(ws.step) < 1e-6)
-      break;
-  }
+  double dev;
+  int iters;
+  bool converged;
+  fit_invgauss_core(X, y.memptr(), beta, ws, dev, iters, converged);
   return beta;
 }
 
-double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
-                           const arma::vec &mle_coefs, double mle_val,
-                           const arma::vec &beta_vals, int m, bool approx,
-                           bool radial, uint32_t base_seed, int eval_index,
-                           const arma::vec &mu_hat, arma::mat &Y_sim_workspace,
-                           InvGaussWorkspace &ws) {
-  const int n = X.n_rows;
-  const int P = X.n_cols;
-
-  // Local (not ws.*): the fitter overwrites ws.eta / ws.mu in the serial path
-  const arma::vec eta = X * beta_vals;
-  const arma::vec mu = arma::pow(eta, -0.5);
-
-  double sbar = arma::accu(2 * mu % (y - mu) / (mu % mu)) / y.n_elem;
-  double estimated_dispersion = arma::accu(
-      ((y - mu) % (y - mu)) /
-      (((mu % mu % mu) * (y.n_elem - beta_vals.n_elem)) * (1 + sbar)));
-  double gamma = 1.0 / estimated_dispersion;
-
-  mle_val = compute_invgauss_ll(y, mu_hat, gamma);
-  const double f_x =
-      invgauss_ll_raw(y, mu, gamma) - invgauss_ll_raw(y, mu_hat, gamma);
-
-  bool is_already_parallel = false;
-#ifdef _OPENMP
-  is_already_parallel = omp_in_parallel();
-#endif
-  bool run_inner_parallel = (radial || approx) && !is_already_parallel;
-
-  // is_already_parallel / run_inner_parallel / eval_seed as before
-
-  // generation loop as before (uses mu, gamma, eval_seed)
-
-  int count_less = 0;
-
-#pragma omp parallel if (run_inner_parallel) reduction(+ : count_less)
-  {
-    InvGaussWorkspace local_ws;
-    if (run_inner_parallel)
-      local_ws = InvGaussWorkspace(n, P);
-    InvGaussWorkspace &fit_ws = run_inner_parallel ? local_ws : ws;
-
-#pragma omp for schedule(guided)
-    for (int j = 0; j < m; ++j) {
-      const arma::vec y_sim(Y_sim_workspace.colptr(j), n, false, true);
-
-      arma::vec coefs = fit_invgauss_cpp(X, y_sim, beta_vals, approx, fit_ws);
-
-      fit_ws.eta = arma::clamp(X * coefs, 1e-6, arma::datum::inf);
-      fit_ws.mu = arma::pow(fit_ws.eta, -0.5);
-
-      const double mle_sim = invgauss_ll_raw(y_sim, fit_ws.mu, gamma);
-      const double llX_j = invgauss_ll_raw(y_sim, mu, gamma);
-
-      if (llX_j - mle_sim <= f_x)
-        count_less++;
-    }
-  }
-  return static_cast<double>(count_less) / m;
+// [[Rcpp::export]]
+arma::vec fit_invgauss_cpp(const arma::mat &X, const arma::vec &y,
+                           const arma::vec &initial_beta, bool approx) {
+  InvGaussWorkspace ws(X.n_rows, X.n_cols);
+  return fit_invgauss_cpp(X, y, initial_beta, approx, ws, false);
 }
-
-// Wrapper: add `InvGaussWorkspace ws(X.n_rows, X.n_cols);` and pass it through.
 
 // [[Rcpp::export]]
 arma::vec compute_invgauss_ll_mat(const arma::vec &y, const arma::mat &mu,
@@ -222,67 +257,145 @@ arma::vec compute_invgauss_ll_mat(const arma::vec &y, const arma::mat &mu,
 }
 
 // 1. Core Engine (Accepts precomputed mu_hat AND workspace)
-double
-glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
-                    const arma::vec &mle_coefs, const double mle_val,
-                    const arma::vec &beta_vals, int m, bool approx, bool radial,
-                    uint32_t base_seed, int eval_index,
-                    const arma::vec &mu_hat,      // <-- Precomputed passed in
-                    arma::mat &Y_sim_workspace) { // <-- Passed by reference!
-  int n = X.n_rows;
+//    Y_sim_workspace is no longer used: each replicate is simulated into a
+//    small per-thread vector right before it is fitted (stays in cache, no
+//    n x m matrix). The parameter is kept so callers need not change.
+double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
+                           const arma::vec &mle_coefs, double mle_val,
+                           const arma::vec &beta_vals, int m, bool approx,
+                           uint32_t base_seed, int eval_index,
+                           const arma::vec &mu_hat, arma::mat &Y_sim_workspace,
+                           InvGaussWorkspace &ws, bool inner_parallel) {
+  (void)mle_coefs;
+  (void)mle_val;
+  (void)Y_sim_workspace;
+  (void)approx;
+  const arma::uword n = X.n_rows;
+  const arma::uword P = X.n_cols;
+  const double *yp = y.memptr();
 
-  arma::vec eta = X * beta_vals;
-  arma::vec mu = arma::pow(eta, -0.5);
+  // ---- per-evaluation constants (fixed beta): computed once, reused for all m
+  arma::vec eta0 = X * beta_vals;
+  const double *e0 = eta0.memptr();
+  double min_e0 = e0[0];
+  for (arma::uword i = 1; i < n; ++i)
+    min_e0 = e0[i] < min_e0 ? e0[i] : min_e0;
+  // eta must be positive for mu = eta^(-1/2) to exist; such a beta has no
+  // likelihood (the old code produced NaNs here and counted 0).
+  if (!(min_e0 > 0.0))
+    return 0.0;
 
-  double sbar = arma::accu(2 * mu % (y - mu) / (mu % mu)) / y.n_elem;
-  double estimated_dispersion = arma::accu(
-      ((y - mu) % (y - mu)) /
-      (((mu % mu % mu) * (y.n_elem - beta_vals.n_elem)) * (1 + sbar)));
-  double gamma = 1.0 / estimated_dispersion;
+  arma::vec mu0(n);
+  double *mu0p = mu0.memptr();
+  double S0 = 0.0, ye0 = 0.0, sbar_sum = 0.0, pearson = 0.0;
+  for (arma::uword i = 0; i < n; ++i) {
+    const double s = std::sqrt(e0[i]); // 1/mu
+    const double r = yp[i] - 1.0 / s;
+    mu0p[i] = 1.0 / s;
+    S0 += s;
+    ye0 += yp[i] * e0[i];
+    sbar_sum += yp[i] * s - 1.0;
+    pearson += r * r * e0[i] * s; // (y-mu)^2 / mu^3
+  }
+  // Fletcher-corrected Pearson dispersion (unchanged)
+  const double sbar = 2.0 * sbar_sum / static_cast<double>(n);
+  const double est_disp =
+      pearson /
+      ((static_cast<double>(n) - static_cast<double>(P)) * (1.0 + sbar));
+  const double gamma = 1.0 / est_disp;
+  if (!std::isfinite(gamma) || !(gamma > 0.0))
+    return 0.0; // invalid dispersion: the old code produced NaNs and counted 0
 
-  double true_ll = compute_invgauss_ll(y, mu, gamma);
-  double f_x = true_ll - mle_val;
+  // Observed deviance difference D_obs = Dev(eta_beta) - Dev(eta_hat)
+  double S_hat = 0.0, ye_hat = 0.0;
+  for (arma::uword i = 0; i < n; ++i) {
+    const double s = 1.0 / mu_hat[i];
+    S_hat += s;
+    ye_hat += yp[i] * s * s;
+  }
+  const double D_obs = (ye0 - ye_hat) - 2.0 * (S0 - S_hat);
 
   bool is_already_parallel = false;
 #ifdef _OPENMP
   is_already_parallel = omp_in_parallel();
 #endif
-  bool run_inner_parallel = (radial || approx) && !is_already_parallel;
-  uint32_t eval_seed = base_seed + static_cast<uint32_t>(eval_index * 10007);
+  const bool run_inner_parallel = inner_parallel && !is_already_parallel;
+  const uint32_t eval_seed =
+      base_seed + static_cast<uint32_t>(eval_index * 10007);
 
-  // --- 1. Deterministic Parallel Data Generation ---
-  // Reuses thread workspace instead of allocating a new matrix
-#pragma omp parallel for schedule(static) if (run_inner_parallel)
-  for (int j = 0; j < m; ++j) {
-    std::mt19937 gen(eval_seed + j);
-    for (int i = 0; i < n; i++) {
-      Y_sim_workspace(i, j) = rinvgauss_single(mu(i), gamma, gen);
-    }
-  }
+  const bool prof = glim_prof::enabled.load(std::memory_order_relaxed); // PROF
 
   int count_less = 0;
+  uint64_t sim_ns = 0, fit_ns = 0, ll_ns = 0, iter_sum = 0, n_nonconv = 0;
 
-  // --- 2. Parallel Model Fitting & Likelihood Evaluation ---
-#pragma omp parallel for schedule(guided)                                      \
-    reduction(+ : count_less) if (run_inner_parallel)
-  for (int j = 0; j < m; ++j) {
-    arma::vec y_sim = Y_sim_workspace.col(j);
+#pragma omp parallel if (run_inner_parallel)                                   \
+    reduction(+ : count_less, sim_ns, fit_ns, ll_ns, iter_sum, n_nonconv)
+  {
+    // Threads get private scratch; the serial path reuses ws (no allocation).
+    InvGaussWorkspace local_ws;
+    if (run_inner_parallel)
+      local_ws = InvGaussWorkspace(n, P);
+    InvGaussWorkspace &fit_ws = run_inner_parallel ? local_ws : ws;
 
-    arma::vec coefs = fit_invgauss_cpp(X, y_sim, beta_vals, approx);
-    arma::vec eta_hat_sim = X * coefs;
+    arma::vec y_sim(n);
+    arma::vec beta_hat(P);
+    double *ys = y_sim.memptr();
+    std::mt19937 gen;
+    std::normal_distribution<double> rnorm(0.0, 1.0);
+    std::uniform_real_distribution<double> runif(0.0, 1.0);
 
-    // Validate eta_hat to compute simulated MLE likelihood
-    eta_hat_sim.elem(arma::find(eta_hat_sim < 1e-6)).fill(1e-6);
-    arma::vec mu_hat_sim = arma::pow(eta_hat_sim, -0.5);
+#pragma omp for schedule(guided)
+    for (int j = 0; j < m; ++j) {
+      const uint64_t t0 = prof ? glim_prof::now_ns() : 0; // PROF
 
-    double mle_sim = compute_invgauss_ll(y_sim, mu_hat_sim, gamma);
-    double llX_j = compute_invgauss_ll(y_sim, mu, gamma);
+      // ---- simulate replicate j (deterministic in (eval_seed, j)) ----
+      gen.seed(eval_seed + j);
+      rnorm.reset(); // drop the cached normal so replicate j depends only on
+                     // its seed
+      for (arma::uword i = 0; i < n; ++i)
+        ys[i] = rinvgauss_fast(mu0p[i], gamma, rnorm, runif, gen);
 
-    double f_X_j = llX_j - mle_sim;
+      const uint64_t t1 = prof ? glim_prof::now_ns() : 0; // PROF
 
-    if (f_X_j <= f_x) {
-      count_less++;
+      // ---- refit; also returns Dev(eta_hat_sim) (minus the sum(1/y) term)
+      // ----
+      beta_hat = beta_vals;
+      double dev_hat;
+      int iters;
+      bool converged;
+      fit_invgauss_core(X, ys, beta_hat, fit_ws, dev_hat, iters, converged);
+
+      const uint64_t t2 = prof ? glim_prof::now_ns() : 0; // PROF
+
+      // D_j = Dev(eta_beta) - Dev(eta_hat_sim) >= 0 by construction.
+      double ye = 0.0;
+#pragma omp simd reduction(+ : ye)
+      for (arma::uword i = 0; i < n; ++i)
+        ye += ys[i] * e0[i];
+      double D_j = (ye - 2.0 * S0) - dev_hat;
+      if (D_j < 0.0)
+        D_j = 0.0;
+      if (D_j >= D_obs)
+        count_less++;
+
+      if (prof) { // PROF
+        const uint64_t t3 = glim_prof::now_ns();
+        sim_ns += (t1 - t0);
+        fit_ns += (t2 - t1);
+        ll_ns += (t3 - t2);
+        iter_sum += static_cast<uint64_t>(iters);
+        if (!converged)
+          n_nonconv++;
+      }
     }
+  }
+  if (prof) { // PROF
+    glim_prof::ns_sim.fetch_add(sim_ns, std::memory_order_relaxed);
+    glim_prof::ns_fit.fetch_add(fit_ns, std::memory_order_relaxed);
+    glim_prof::ns_ll.fetch_add(ll_ns, std::memory_order_relaxed);
+    glim_prof::newton_iters.fetch_add(iter_sum, std::memory_order_relaxed);
+    glim_prof::nonconverged.fetch_add(n_nonconv, std::memory_order_relaxed);
+    glim_prof::n_fits.fetch_add(m, std::memory_order_relaxed);
   }
 
   return static_cast<double>(count_less) / m;
@@ -292,14 +405,14 @@ glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
 double glm_invgauss_pl_cpp(const arma::mat &X, const arma::vec &y,
                            const arma::vec &mle_coefs, const double mle_val,
                            const arma::vec &beta_vals, int m, bool approx,
-                           bool radial, uint32_t base_seed, int eval_index,
-                           arma::mat &Y_sim_workspace, InvGaussWorkspace &ws) {
-
+                           uint32_t base_seed, int eval_index,
+                           arma::mat &Y_sim_workspace, InvGaussWorkspace &ws,
+                           bool inner_parallel) {
   // Precompute mu_hat once per evaluation
   arma::vec eta_hat = X * mle_coefs;
   arma::vec mu_hat = arma::pow(eta_hat, -0.5);
 
   return glm_invgauss_pl_cpp(X, y, mle_coefs, mle_val, beta_vals, m, approx,
-                             radial, base_seed, eval_index, mu_hat,
-                             Y_sim_workspace, ws);
+                             base_seed, eval_index, mu_hat, Y_sim_workspace, ws,
+                             inner_parallel);
 }

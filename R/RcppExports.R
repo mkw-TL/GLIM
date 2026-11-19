@@ -9,8 +9,8 @@ fit_glm_omp_cpp <- function(X, y, mle_coefs, mle_val, betas, family, num_threads
     .Call(`_GLIM_fit_glm_omp_cpp`, X, y, mle_coefs, mle_val, betas, family, num_threads, m, parallel, approx, radial, show_progress, base_seed)
 }
 
-imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, generate_grid, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, parallel = TRUE, m = 1000L, base_seed = 31L) {
-    .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, generate_grid, tol, a_val, b_val, max_it, parallel, m, base_seed)
+imvar <- function(X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, generate_grid, tol = 1e-2, a_val = 2.0, b_val = 0.65, max_it = 25L, parallel = TRUE, m = 1000L, base_seed = 31L, num_threads = 1L) {
+    .Call(`_GLIM_imvar`, X, y, xi, family, alpha, mle, mle_val, J_vectors, J_values, dispersion, generate_grid, tol, a_val, b_val, max_it, parallel, m, base_seed, num_threads)
 }
 
 radial_code <- function(num_samps, X, y, mle_val, mle_coefs, eig_vecs, eig_vals, family, dispersion, m, tol, max_it, a_val, b_val, num_omp_threads, base_seed = 0L) {
@@ -53,16 +53,28 @@ est_dispersion_normal <- function(y, mu, p) {
     .Call(`_GLIM_est_dispersion_normal`, y, mu, p)
 }
 
+prof_cpp_start <- function(dir) {
+    invisible(.Call(`_GLIM_prof_cpp_start`, dir))
+}
+
+prof_cpp_stop <- function() {
+    invisible(.Call(`_GLIM_prof_cpp_stop`))
+}
+
+prof_cpp_summary <- function() {
+    .Call(`_GLIM_prof_cpp_summary`)
+}
+
 mle_estimate_dispersion_inv_gauss <- function(y, ybar) {
     .Call(`_GLIM_mle_estimate_dispersion_inv_gauss`, y, ybar)
 }
 
-fit_invgauss_cpp <- function(X, y, initial_beta, approx) {
-    .Call(`_GLIM_fit_invgauss_cpp`, X, y, initial_beta, approx)
-}
-
 compute_invgauss_ll <- function(y, mu, gamma_val) {
     .Call(`_GLIM_compute_invgauss_ll`, y, mu, gamma_val)
+}
+
+fit_invgauss_cpp <- function(X, y, initial_beta, approx) {
+    .Call(`_GLIM_fit_invgauss_cpp`, X, y, initial_beta, approx)
 }
 
 compute_invgauss_ll_mat <- function(y, mu, gamma_val) {

@@ -3,6 +3,51 @@
 correct_profile_point <- internal("correct_profile_point")
 extend_profile <- internal("extend_profile")
 
+# ---- helpers for the extend_profile() tests ----------------------------------
+# A narrow band of the pre-computed grid, about one grid step either side of the
+# MLE, so the plausible region lies well beyond the band and the extension has
+# real work to do. The 1.5 absorbs floating-point error in the spacing.
+narrow_pois_band <- function(col = 2) {
+  gd <- fit_grid_pois()[["grid_data"]]
+  b <- gd$betas_evaluated
+  step <- median(diff(sort(unique(b[, col]))))
+  keep <- abs(b[, col] - gd$mle_coefs[col]) <= 1.5 * step
+  list(gd = gd, col = col, step = step, b = b[keep, , drop = FALSE], p = gd$possibilities[keep])
+}
+
+# extend_profile() on the narrow band. `...` carries the optional arguments
+# (max_steps, n_bisect, growth, m_ext, seed0). m_ext is left at its default
+# unless supplied; with m = 200 that is min(m, 300) = m, so nothing is
+# re-evaluated at the end and the stored plausibilities are exactly the ones the
+# walk saw.
+call_extend <- function(band, dir, alpha = 0.05, tol = 0.01, m = 200, ...) {
+  gd <- band$gd
+  extend_profile(
+    dir,
+    TRUE,
+    band$b,
+    band$col,
+    band$p,
+    alpha,
+    tol,
+    band$step,
+    gd$family,
+    gd$X,
+    gd$y,
+    gd$dispersion,
+    gd$mle_coefs,
+    gd$logLik,
+    m,
+    FALSE,
+    FALSE,
+    ...
+  )
+}
+
+edge_of <- function(band, dir) {
+  if (dir > 0) max(band$b[, band$col]) else min(band$b[, band$col])
+}
+
 test_that("correct_profile_point() recovers the constrained optimum (poisson)", {
   d <- make_data("poisson")
   mle <- coef(glm(y ~ x, data = d$dat, family = poisson))
@@ -113,85 +158,188 @@ test_that("extend_profile() returns a p-column matrix plus matching plausibiliti
   expect_equal(ncol(res$betas), 2)
   expect_equal(nrow(res$betas), length(res$plaus))
   expect_gt(nrow(res$betas), 0)
-  expect_equal(res$betas[1, 2], mle[2] + 0.05, tolerance = 1e-10)
-})
-test_that("extend_profile walks outward and stops once plausibility falls below alpha", {
-  gd <- fit_grid_pois()[["grid_data"]]
-  col <- 2
-  alpha <- 0.05
-  tol <- 0.01
-  max_steps <- 200
-  b <- gd$betas_evaluated
 
-  # Cut the grid down to a narrow band around the MLE (about one step either
-  # side) so the plausible region lies well beyond the band and the extension
-  # has real work to do. The 1.5 absorbs floating-point error in the spacing.
-  step <- median(diff(sort(unique(b[, col]))))
-  keep <- abs(b[, col] - gd$mle_coefs[col]) <= 1.5 * step
-  b_small <- b[keep, , drop = FALSE]
-  p_small <- gd$possibilities[keep]
+  # Rows come back sorted outward from the edge, and every point is beyond it.
+  expect_false(is.unsorted(res$betas[, 2], strictly = TRUE))
+  expect_true(all(res$betas[, 2] > mle[2]))
+
+  # The first growth step is exactly one `step` out. It is not necessarily row 1
+  # any more: if the walk crosses alpha immediately, the bisection points land
+  # between the edge and that first step and sort in front of it.
+  expect_true(any(abs(res$betas[, 2] - (mle[2] + 0.05)) < 1e-10))
+})
+
+test_that("extend_profile grows geometrically from the edge until plausibility falls below alpha", {
+  band <- narrow_pois_band()
+  alpha <- 0.05
+  growth <- 1.5
+  max_steps <- 40
 
   # Precondition: both edges of the narrow grid are plausible, so extension is
   # requested in both directions.
-  edge_plaus <- function(v) max(p_small[b_small[, col] == v], na.rm = TRUE)
-  expect_gt(edge_plaus(min(b_small[, col])), alpha)
-  expect_gt(edge_plaus(max(b_small[, col])), alpha)
+  edge_plaus <- function(v) max(band$p[band$b[, band$col] == v], na.rm = TRUE)
+  expect_gt(edge_plaus(min(band$b[, band$col])), alpha)
+  expect_gt(edge_plaus(max(band$b[, band$col])), alpha)
 
   for (dir in c(-1, 1)) {
-    edge_val <- if (dir > 0) max(b_small[, col]) else min(b_small[, col])
-    ext <- extend_profile(
+    edge_val <- edge_of(band, dir)
+    label <- paste("direction", dir)
+
+    # n_bisect = 0 isolates the growth phase.
+    ext <- call_extend(
+      band,
       dir,
-      TRUE,
-      b_small,
-      col,
-      p_small,
-      alpha,
-      tol,
-      step,
-      gd$family,
-      gd$X,
-      gd$y,
-      gd$dispersion,
-      gd$mle_coefs,
-      gd$logLik,
-      200,
-      FALSE,
-      FALSE,
-      max_steps = max_steps
+      alpha = alpha,
+      max_steps = max_steps,
+      n_bisect = 0,
+      growth = growth
     )
     n <- nrow(ext$betas)
-    label <- paste("direction", dir)
 
     # The contract: at least one step is taken, and betas and plausibilities
     # line up.
     expect_gte(n, 1, label = label)
     expect_equal(length(ext$plaus), n)
 
-    # Each step moves the profiled coordinate exactly one step outward from the
-    # edge, in the requested direction.
-    path <- c(edge_val, ext$betas[, col])
-    expect_true(all(sign(diff(path)) == dir), info = label)
+    # Step k moves the profiled coordinate step * growth^(k - 1) further out
+    # from the previous point (the first from the edge), in the requested
+    # direction.
+    path <- c(edge_val, ext$betas[, band$col])
+    expect_equal(
+      diff(path),
+      dir * band$step * growth^(seq_len(n) - 1),
+      tolerance = 1e-8,
+      ignore_attr = TRUE,
+      label = label
+    )
 
-    # The walk only stops when a point is at or below alpha - tolerance. So
-    # every point except the last is still above that level, and the last point
-    # is the one that ended the walk (unless max_steps was exhausted).
+    # The walk stops at the first point below alpha: every earlier point is at
+    # or above it, and the last point is the one that crossed (unless the walk
+    # ran out of steps).
     if (n > 1) {
-      expect_true(all(ext$plaus[-n] > alpha - tol), info = label)
+      expect_true(all(ext$plaus[-n] >= alpha), info = label)
     }
     if (n < max_steps) {
-      expect_lte(ext$plaus[n], alpha - tol, label = paste("last plausibility,", label))
+      expect_lt(ext$plaus[n], alpha, label = paste("last plausibility,", label))
     }
   }
 })
 
-test_that("glim() extensions stop once plausibility drops below alpha - tolerance", {
+test_that("extend_profile bisects between the last two growth points", {
+  band <- narrow_pois_band()
+  alpha <- 0.05
+  tol <- 0.01
+  n_bisect <- 6
+  col <- band$col
+
+  for (dir in c(-1, 1)) {
+    edge_val <- edge_of(band, dir)
+    label <- paste("direction", dir)
+
+    # Same seeds and evaluation order for the growth phase in both runs (the
+    # seed depends only on the evaluation counter), so the n_bisect = 0 run is
+    # exactly the growth phase of the full run.
+    grow <- call_extend(band, dir, alpha = alpha, tol = tol, n_bisect = 0)
+    both <- call_extend(band, dir, alpha = alpha, tol = tol, n_bisect = n_bisect)
+
+    n <- nrow(grow$betas)
+    expect_gte(n, 1, label = label)
+
+    # Output is sorted outward from the edge, strictly.
+    expect_false(is.unsorted(dir * both$betas[, col], strictly = TRUE), label = label)
+
+    # Every growth point is in the full result with the same plausibility.
+    idx <- match(round(grow$betas[, col], 10), round(both$betas[, col], 10))
+    expect_false(anyNA(idx), label = label)
+    expect_equal(both$plaus[idx], grow$plaus, tolerance = 0, label = label)
+
+    # The extra points are the bisection points: at most n_bisect of them, all
+    # strictly between the last two growth points (or between the edge and the
+    # first one, if it was the first that crossed alpha).
+    extra <- setdiff(seq_len(nrow(both$betas)), idx)
+    expect_lte(length(extra), n_bisect)
+    expect_gte(length(extra), 1)
+    lo <- if (n >= 2) grow$betas[n - 1, col] else edge_val
+    hi <- grow$betas[n, col]
+    expect_true(
+      all(dir * both$betas[extra, col] > dir * lo & dir * both$betas[extra, col] < dir * hi),
+      info = label
+    )
+
+    # The farthest point is still the growth point that crossed alpha.
+    expect_equal(
+      both$betas[nrow(both$betas), col],
+      grow$betas[n, col],
+      ignore_attr = TRUE,
+      label = label
+    )
+
+    # Bisection stops early only when a point lands within tolerance of alpha.
+    if (length(extra) < n_bisect) {
+      expect_true(any(abs(both$plaus[extra] - alpha) <= tol), info = label)
+    }
+  }
+})
+
+test_that("extend_profile re-evaluates the accepted points at full m when m_ext < m", {
+  d <- make_data("poisson", n = 40)
+  glmfit <- glm(y ~ x, data = d$dat, family = poisson)
+  mle <- unname(coef(glmfit))
+  m <- 97 # chosen so that proportions out of m_ext = 20 are not proportions out of m
+  res <- extend_profile(
+    direction = 1,
+    needs_extension = TRUE,
+    betas = matrix(mle, 1),
+    col = 2,
+    possibilities = 1,
+    alpha = 0.05,
+    tolerance = 0.01,
+    step = 0.05,
+    family = "poisson",
+    X = d$X,
+    y = d$y,
+    dispersion = 1,
+    mle_coefs = mle,
+    ll_mle_original_data = as.numeric(logLik(glmfit)),
+    m = m,
+    parallel = FALSE,
+    approx = FALSE,
+    m_ext = 20
+  )
+  expect_gt(nrow(res$betas), 0)
+  expect_equal(nrow(res$betas), length(res$plaus))
+  expect_false(is.unsorted(res$betas[, 2], strictly = TRUE))
+  # Plausibilities are k / m with m = 97 (the stepping itself used 20 replicates;
+  # a value k / 20 is only also a multiple of 1 / 97 when it is 0 or 1).
+  expect_true(all(abs(res$plaus * m - round(res$plaus * m)) < 1e-8))
+})
+
+test_that("glim() extensions run outward from the grid edge and end near the cutoff", {
   gd <- fit_grid_pois()[["grid_data"]]
+  alpha <- 0.05
   for (col in 1:2) {
-    for (pl in list(gd$extended_in_pos_plaus[[col]], gd$extended_in_neg_plaus[[col]])) {
-      if (length(pl) > 1) {
-        # every point before the last must still be above the stopping threshold
-        expect_true(all(utils::head(pl, -1) > 0.05 - 0.01))
+    for (side in c("pos", "neg")) {
+      dir <- if (side == "pos") 1 else -1
+      edge <- if (side == "pos") {
+        max(gd$betas_evaluated[, col])
+      } else {
+        min(gd$betas_evaluated[, col])
       }
+      pl <- gd[[paste0("extended_in_", side, "_plaus")]][[col]]
+      bt <- gd[[paste0("extended_in_", side, "_betas")]][[col]]
+      if (length(pl) == 0) {
+        next
+      }
+      label <- paste("column", col, side)
+
+      expect_equal(nrow(bt), length(pl), label = label)
+      # sorted from the grid edge outward (growth points and bisection points)
+      expect_true(all(dir * diff(c(edge, bt[, col])) > 0), info = label)
+      expect_true(all(pl >= 0 & pl <= 1), info = label)
+      # The farthest point is the one that crossed alpha during the walk. The
+      # accepted points are re-evaluated at full m when m > 300, so allow Monte
+      # Carlo slack rather than requiring it to still be below alpha.
+      expect_lt(utils::tail(pl, 1), 2 * alpha, label = label)
     }
   }
 })
@@ -207,9 +355,9 @@ test_that("extend_profile() respects max_steps with a warning", {
       betas = matrix(mle, 1),
       col = 2,
       possibilities = 1,
-      alpha = -1,
+      alpha = -1, # plausibility is never below this, so alpha is never crossed
       tolerance = 0,
-      step = 1e-4, # never reaches alpha
+      step = 1e-4,
       family = "poisson",
       X = d$X,
       y = d$y,
@@ -221,7 +369,7 @@ test_that("extend_profile() respects max_steps with a warning", {
       approx = FALSE,
       max_steps = 3
     ),
-    "max_steps"
+    "no crossing of alpha"
   )
 })
 

@@ -1,6 +1,7 @@
 // Translated to c++ by Gemini
 // Thoroughly vetted
 
+#include "glim_prof.h"
 #include "headers.h"
 #include <atomic>
 #include <exception>
@@ -92,17 +93,39 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   arma::vec plausabilities(n_evals);
   arma::mat XtX = X.t() * X;
 
-  if (y.n_elem != X.n_rows || mle_coefs.n_elem != X.n_cols ||
-      betas.n_cols != X.n_cols) {
-    Rcpp::stop("Dimension mismatch: X is %d x %d, y has %d, mle_coefs has %d, "
-               "beta_vals has %d",
-               X.n_rows, X.n_cols, y.n_elem, mle_coefs.n_elem, betas.n_cols);
+  arma::vec eta_hat_gamma;
+  arma::vec mu_hat_invgauss;
+  double sigma_gauss = 0.0;
+  switch (fam) {
+  case GlmFamily::Gamma:
+    eta_hat_gamma = X * mle_coefs;
+    break;
+  case GlmFamily::InverseGaussian:
+    mu_hat_invgauss = arma::pow(X * mle_coefs, -0.5);
+    break;
+  case GlmFamily::Gaussian: {
+    arma::vec r = y - X * mle_coefs;
+    sigma_gauss = std::sqrt(arma::dot(r, r) / (y.n_elem - X.n_cols));
+    break;
+  }
+  default:
+    break;
   }
 
-  std::atomic<bool> interrupted(false);
+  // ---- parallel strategy ----------------------------------------------------
+  // Outer parallelism only pays off when every thread gets work.
+  const bool outer_parallel = !approx && !radial && parallel &&
+                              num_threads > 1 && n_evals >= num_threads;
+  // Otherwise let the m-simulation loop inside the pl function use the threads.
+  const bool inner_parallel =
+      (approx || radial || parallel) && !outer_parallel && num_threads > 1;
+#ifdef _OPENMP
+  if (inner_parallel)
+    omp_set_num_threads(num_threads);
+#endif
 
+  std::atomic<bool> interrupted(false);
   std::atomic<int> progress_count(0);
-  // Only update the console every 2% of total iterations to protect performance
   int tick_step = n_evals / 50;
   if (tick_step < 1)
     tick_step = 1;
@@ -115,110 +138,92 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
   std::atomic<bool> had_error(false);
   std::string err_msg;
 
-// X = scale_design_matrix_cpp(X);
-// The Parallel Loop. Schedule(static) means that each thread is assigned
-// roughly the same amount of work schedule(dynamic) has a bit more overhead
-// which we don't need here. Don't want the overhead of allocating different
-// threads if it is fast enough to execute on a single
-#pragma omp parallel num_threads(num_threads) if (approx == false &&           \
-                                                      parallel == true &&      \
-                                                      radial == false)
-  {
-    // 2. Allocate workspace ONCE per thread
-    arma::mat Y_sim_thread_workspace(X.n_rows, m);
+  // PROF ----------------------------------------------------------------
+  const bool prof = glim_prof::enabled.load(std::memory_order_relaxed);
+  const double prof_t0 = prof ? glim_prof::now() : 0.0;
+  const std::clock_t prof_c0 = prof ? std::clock() : 0;
+  std::vector<double> busy(num_threads, 0.0); // per-thread busy seconds
+  // ---------------------------------------------------------------------
 
-// 3. Divide the loop among the threads
-#pragma omp for schedule(guided)
-    for (int i = 0; i < n_evals; i++) {
+#pragma omp parallel num_threads(num_threads) if (outer_parallel)
+  {
+    // Allocated ONCE per thread
+    arma::mat Y_sim_thread_workspace(X.n_rows, m);
+    GammaWorkspace gamma_ws;
+    LogisticWorkspace logis_ws;
+    PoissonWorkspace pois_ws;
+    InvGaussWorkspace ig_ws;
+    GaussianWorkspace gauss_ws;
+    arma::vec beta_vals(X.n_cols);
+
+    int tid = 0; // PROF (also used for is_master)
 #ifdef _OPENMP
-      if (omp_get_thread_num() == 0) {
-        if (Progress::check_abort()) {
-          interrupted = true;
-        }
-      }
-#else
-      if (Progress::check_abort()) {
-        interrupted = true;
-      }
+    tid = omp_get_thread_num();
 #endif
 
+#pragma omp for schedule(guided)
+    for (int i = 0; i < n_evals; i++) {
+      bool is_master = true;
+#ifdef _OPENMP
+      is_master = (omp_get_thread_num() == 0);
+#endif
+      if (is_master && Progress::check_abort()) {
+        interrupted = true;
+      }
       if (interrupted || had_error) {
         continue;
       }
+      const double ti0 = prof ? glim_prof::now() : 0.0; // PROF
       try {
-        arma::vec beta_vals = betas.row(i).t();
+        beta_vals = betas.row(i).t();
         double pl;
-        // Ending colon is a part of the case statement.
         switch (fam) {
-        case GlmFamily::Gamma: {
-          GammaWorkspace gamma_ws;
-          arma::vec eta_hat = exp(
-              X *
-              mle_coefs); // Could put these computations outside even further,
-                          // but would decrease code legibility and the amount
-                          // of work spent to compute these are minimal.
-          pl = glm_gamma_pl_cpp(X, XtX, y, mle_coefs, mle_val, beta_vals, m,
-                                approx, false, base_seed, i, eta_hat,
-                                Y_sim_thread_workspace, gamma_ws);
+        case GlmFamily::Gamma:
+          pl = glm_gamma_pl_cpp(
+              X, XtX, y, mle_coefs, mle_val, beta_vals, m, approx, base_seed, i,
+              eta_hat_gamma, Y_sim_thread_workspace, gamma_ws, inner_parallel);
           break;
-        }
-
-        case GlmFamily::Binomial: {
-          LogisticWorkspace ws;
-          LogisticPlResult result =
-              glm_logis_pl_cpp(X, y, mle_coefs, mle_val, beta_vals, m, approx,
-                               false, base_seed, i, Y_sim_thread_workspace, ws);
-          pl = result.poss;
+        case GlmFamily::Binomial:
+          pl = glm_logis_pl_cpp(X, y, mle_coefs, mle_val, beta_vals, m, approx,
+                                base_seed, i, Y_sim_thread_workspace, logis_ws,
+                                inner_parallel)
+                   .poss;
           break;
-        }
-
-        case GlmFamily::Poisson: {
-          PoissonWorkspace ws;
-          PoissonPlResult result = glm_poisson_pl_cpp(
-              X, y, mle_coefs, mle_val, beta_vals, m, approx, false, base_seed,
-              i, Y_sim_thread_workspace, ws);
-          // if (result.prop_separated > 0) {
-          //   // Note that sim_separated is a percentage of how many sims (for
-          //   that
-          //   // beta value) went poorly. Don't have a conceptual idea on how
-          //   to pass
-          //   // this back out.
-          //   seperation_issues++;
-          // }
-          pl = result.poss;
+        case GlmFamily::Poisson:
+          pl = glm_poisson_pl_cpp(X, y, mle_coefs, mle_val, beta_vals, m,
+                                  approx, base_seed, i, Y_sim_thread_workspace,
+                                  pois_ws, inner_parallel)
+                   .poss;
           break;
-        }
-
-        case GlmFamily::InverseGaussian: {
-          InvGaussWorkspace ws;
-
-          arma::vec mu_hat_invgauss = arma::pow(X * mle_coefs, -0.5);
-
-          pl = glm_invgauss_pl_cpp(X, y, mle_coefs, mle_val, beta_vals, m,
-                                   approx, false, base_seed, i, mu_hat_invgauss,
-                                   Y_sim_thread_workspace, ws);
+        case GlmFamily::InverseGaussian:
+          pl = glm_invgauss_pl_cpp(
+              X, y, mle_coefs, mle_val, beta_vals, m, approx, base_seed, i,
+              mu_hat_invgauss, Y_sim_thread_workspace, ig_ws, inner_parallel);
           break;
-        }
-
-        case GlmFamily::Gaussian: {
-          GaussianWorkspace ws;
-          double sigma_gauss =
-              sqrt(arma::accu((y - X * mle_coefs) % (y - X * mle_coefs)) /
-                   (y.n_elem - X.n_cols));
-          pl = glm_gaussian_pl_cpp(X, y, mle_coefs, mle_val, beta_vals, m,
-                                   approx, false, base_seed, i, sigma_gauss,
-                                   Y_sim_thread_workspace, ws);
+        case GlmFamily::Gaussian:
+          pl = glm_gaussian_pl_cpp(
+              X, y, mle_coefs, mle_val, beta_vals, m, approx, base_seed, i,
+              sigma_gauss, Y_sim_thread_workspace, gauss_ws, inner_parallel);
           break;
-        }
-
         default:
           pl = -1;
-          // This should never be reached, since filtering occurs in R before
-          // being passed here.
           break;
         }
-        plausabilities(i) = pl;
-        p.increment();
+        plausabilities(i, 0) = pl;
+
+        if (prof) { // PROF
+          glim_prof::n_pl.fetch_add(1, std::memory_order_relaxed);
+          if (tid < (int)busy.size())
+            busy[tid] += glim_prof::now() - ti0;
+        }
+
+        if (show_progress) {
+          int done = ++progress_count;
+          if (done % tick_step == 0) {
+#pragma omp critical(glim_prog)
+            p.increment(tick_step);
+          }
+        }
       } catch (const std::exception &e) {
 #pragma omp critical(glim_err)
         {
@@ -238,15 +243,77 @@ arma::mat fit_glm_omp_cpp(arma::mat &X, const arma::vec &y,
       }
     }
   }
+
   if (had_error) {
     Rcpp::stop("glim: failed evaluating grid point: %s", err_msg);
   }
-
-  // We are now passed the OMP section
-
   if (interrupted) {
     Rcpp::stop("Computation aborted by user.");
   }
+
+  // PROF: write the per-call row ------------------------------------------
+  if (prof) {
+    const double wall = glim_prof::now() - prof_t0;
+    const double cpu = double(std::clock() - prof_c0) / CLOCKS_PER_SEC;
+
+    double pmin = R_PosInf, pmax = R_NegInf, psum = 0.0;
+    int n_zero = 0, n_nan = 0, n_ok = 0;
+    for (int i = 0; i < n_evals; i++) {
+      double v = plausabilities(i, 0);
+      if (!std::isfinite(v)) {
+        n_nan++;
+        continue;
+      }
+      pmin = std::min(pmin, v);
+      pmax = std::max(pmax, v);
+      psum += v;
+      n_ok++;
+      if (v == 0.0)
+        n_zero++;
+    }
+
+    double imbalance = 1.0;
+    if (outer_parallel) {
+      double bmax = 0.0, bsum = 0.0;
+      int nb = 0;
+      for (double b : busy) {
+        if (b > 0) {
+          bmax = std::max(bmax, b);
+          bsum += b;
+          nb++;
+        }
+      }
+      if (nb > 0 && bsum > 0)
+        imbalance = bmax / (bsum / nb);
+    }
+
+    glim_prof::Row r;
+    r.add(++glim_prof::call_id)
+        .add(prof_t0)
+        .add(n_evals)
+        .add(X.n_rows)
+        .add(X.n_cols)
+        .add(m)
+        .add(family)
+        .add((int)approx)
+        .add((int)radial)
+        .add((int)parallel)
+        .add(num_threads)
+        .add((int)outer_parallel)
+        .add((int)inner_parallel)
+        .add(wall)
+        .add(cpu)
+        .add(wall > 0 ? cpu / wall : 0.0)
+        .add(imbalance)
+        .add(n_ok ? pmin : NA_REAL)
+        .add(n_ok ? pmax : NA_REAL)
+        .add(n_ok ? psum / n_ok : NA_REAL)
+        .add(n_zero)
+        .add(n_nan)
+        .add(1e6 * wall / (double(n_evals) * m));
+    glim_prof::write_row(glim_prof::f_calls, r.str());
+  }
+
   return plausabilities;
 }
 
@@ -268,7 +335,7 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
                 const arma::vec &J_values, double dispersion,
                 bool generate_grid, double tol = 1e-2, double a_val = 2.0,
                 double b_val = 0.65, int max_it = 25, bool parallel = true,
-                int m = 1000, uint32_t base_seed = 31) {
+                int m = 1000, uint32_t base_seed = 31, int num_threads = 1) {
   int D = mle.size();
 
   // TODO maybe a seperation check? Or maybe can be done in R
@@ -294,6 +361,9 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
     arma::mat MMinus(D, 1);
     while (true) {
 
+      const double t_imvar_it0 =
+          glim_prof::enabled ? glim_prof::now() : 0.0; // PROF (top of loop)
+
       xi_d = std::max(-20.0, std::min(10.0, xi_d));
       // Xi scales singular values. exp parameterization avoids negative xi.
       posts_xi_d = posts_d * std::exp(xi_d / 2.0);
@@ -308,13 +378,27 @@ arma::vec imvar(arma::mat X, arma::vec y, arma::vec xi,
       uint32_t seed_minus = step_stride + 10000;
 
       double val1 =
-          fit_glm_omp_cpp(X, y, mle, mle_val, MPlus.t(), family, 1, m, parallel,
-                          true, false, false, seed_plus)(0, 0);
+          fit_glm_omp_cpp(X, y, mle, mle_val, MPlus.t(), family, num_threads, m,
+                          parallel, true, false, false, seed_plus)(0, 0);
       double val2 =
-          fit_glm_omp_cpp(X, y, mle, mle_val, MMinus.t(), family, 1, m,
-                          parallel, true, false, false, seed_minus)(0, 0);
+          fit_glm_omp_cpp(X, y, mle, mle_val, MMinus.t(), family, num_threads,
+                          m, parallel, true, false, false, seed_minus)(0, 0);
       double g_xi = std::max(val1, val2) - alpha;
-      if ((g_xi <= std::abs(tol)) || (it >= max_it)) {
+
+      if (glim_prof::enabled.load(std::memory_order_relaxed)) { // PROF
+        glim_prof::Row r;
+        r.add(glim_prof::call_id.load())
+            .add(d)
+            .add(it)
+            .add(xi_d)
+            .add(val1)
+            .add(val2)
+            .add(g_xi)
+            .add(glim_prof::now() - t_imvar_it0);
+        glim_prof::write_row(glim_prof::f_imvar, r.str());
+      }
+
+      if ((std::abs(g_xi) <= std::abs(tol)) || (it >= max_it)) {
         break;
       } else {
         xi_d = xi_d + w(a_val, b_val, it) * g_xi;
@@ -418,6 +502,8 @@ arma::mat radial_code(int num_samps, arma::mat &X, arma::vec &y, double mle_val,
   std::vector<double> diag_first_g(
       num_samps, 0.0); // g at iteration 1 = quality of the start
   std::vector<double> diag_secs(num_samps, 0.0);
+
+  bool inner_parallel = FALSE;
 
   // --- The Parallel Loop ---
 #pragma omp parallel num_threads(num_omp_threads)
@@ -523,34 +609,34 @@ arma::mat radial_code(int num_samps, arma::mat &X, arma::vec &y, double mle_val,
           // Uniforms were drawn above; only the threshold p(beta) changes here.
           // (The old call passed mle_val as `eval_index` by mistake.)
           val1 = glm_logis_pl_from_uniforms(X, y, mle_val, beta_proposal,
-                                            Y_sim_thread_workspace, m, false,
-                                            logis_ws)
+                                            Y_sim_thread_workspace, m,
+                                            inner_parallel, logis_ws)
                      .poss;
           break;
         }
         case GlmFamily::Gamma: {
-          val1 = glm_gamma_pl_cpp(X, XtX, y, mle_coefs, mle_val, beta_proposal,
-                                  m, approx, true, j, 0, eta_hat_gamma,
-                                  Y_sim_thread_workspace, gamma_ws);
+          val1 = glm_gamma_pl_cpp(
+              X, XtX, y, mle_coefs, mle_val, beta_proposal, m, approx, j, 0,
+              eta_hat_gamma, Y_sim_thread_workspace, gamma_ws, inner_parallel);
           break;
         }
         case GlmFamily::Poisson: {
           PoissonPlResult result = glm_poisson_pl_cpp(
-              X, y, mle_coefs, mle_val, beta_proposal, m, approx, false, j, 1,
-              Y_sim_thread_workspace, pois_ws);
+              X, y, mle_coefs, mle_val, beta_proposal, m, approx, j, 1,
+              Y_sim_thread_workspace, pois_ws, inner_parallel);
           val1 = result.poss;
           break;
         }
         case GlmFamily::InverseGaussian: {
-          val1 = glm_invgauss_pl_cpp(X, y, mle_coefs, mle_val, beta_proposal, m,
-                                     approx, true, j, 0, mu_hat_invgauss,
-                                     Y_sim_thread_workspace, ig_ws);
+          val1 = glm_invgauss_pl_cpp(
+              X, y, mle_coefs, mle_val, beta_proposal, m, approx, j, 0,
+              mu_hat_invgauss, Y_sim_thread_workspace, ig_ws, inner_parallel);
           break;
         }
         case GlmFamily::Gaussian: {
-          val1 = glm_gaussian_pl_cpp(X, y, mle_coefs, mle_val, beta_proposal, m,
-                                     approx, true, base_seed, j, sigma_gauss,
-                                     Y_sim_thread_workspace, gauss_ws);
+          val1 = glm_gaussian_pl_cpp(
+              X, y, mle_coefs, mle_val, beta_proposal, m, approx, base_seed, j,
+              sigma_gauss, Y_sim_thread_workspace, gauss_ws, inner_parallel);
           break;
         }
         default:
